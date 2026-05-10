@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dart analyze *)",
+      "Bash(flutter analyze *)",
+      "Bash(flutter test *)",
+      "Bash(dart test *)",
+      "Bash(grep -rn \"class.*JSChallengeSolver\\\\|extends BaseJSChallengeSolver\\\\|JsRuntimeJSChallengeSolver\\\\|_DefaultJsSolver\" \"C:/Users/razva/AppData/Local/Pub/Cache/hosted/pub.dev/youtube_explode_dart-3.1.0/lib/\" 2>&1 | head -10)"
+    ]
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "spice",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Spice — multi-platform music client (Flutter + Next.js backend).",
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@11.0.9",
+  "scripts": {
+    "backend:dev": "pnpm --filter @spice/backend dev",
+    "backend:build": "pnpm --filter @spice/backend build",
+    "backend:lint": "pnpm --filter @spice/backend lint",
+    "backend:typecheck": "pnpm --filter @spice/backend typecheck"
+  }
+}

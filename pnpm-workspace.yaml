@@ -1,0 +1,7 @@
+packages:
+  - "apps/backend"
+
+allowBuilds:
+  esbuild: true
+  sharp: false
+  unrs-resolver: false

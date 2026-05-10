@@ -1,0 +1,38 @@
+# Node
+node_modules/
+.npm/
+.pnpm-store/
+
+# Next.js / Vercel
+.next/
+.vercel/
+out/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Dart / Flutter (per-project .gitignores cover most; these are belt-and-suspenders)
+.dart_tool/
+.pub-cache/
+.pub/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+**/generated_plugin_registrant.*
+**/*.g.dart
+**/*.freezed.dart
+pubspec.lock
+
+# IDE / editors
+.idea/
+.vscode/
+*.iml
+*.swp
+.DS_Store
+Thumbs.db
+
+# OS / misc
+*.log
+coverage/
