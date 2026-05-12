@@ -43,19 +43,26 @@ class YtMusicNativeSource implements MusicSource {
 
   /// Stream-manifest API clients tried in sequence, with results merged.
   ///
-  /// Narrowed to two known-playable clients: `androidVr` serves high-bitrate
-  /// audio without a PO Token, `ios` provides pre-decoded URLs that don't
-  /// require signature decoding. The wider net (`androidMusic`,
-  /// `mediaConnect`, etc.) returned URLs that ExoPlayer rejected as
-  /// "source error 0" — they need either a matching User-Agent we can't
-  /// always provide, or signature decoding that needs the watch page (which
-  /// itself rate-limits).
+  /// **Order matters.** `getManifest` does a HEAD probe on each client's
+  /// *first* returned stream — if that 403s, it discards that client's
+  /// entire batch. So we lead with clients whose first stream is audio.
   ///
-  /// `tv` is the "bypass restrictions" client per the docs but requires a JS
-  /// challenge solver (Deno subprocess), which can't run on Android.
+  /// - `ios`           — first stream is m4a audio, pre-decoded URLs
+  /// - `androidVr`     — high-bitrate opus, but lists VP9 4K (itag 313) first;
+  ///                     its 4K URL 403s without a PO Token, dropping the
+  ///                     batch. Kept as a second attempt because if `ios` is
+  ///                     also dropped (rare) `androidVr`'s audio still works
+  ///                     for many videos.
+  /// - `androidMusic`  — music-only client, first stream is always audio.
+  ///                     Last-resort for Topic-channel / regional content
+  ///                     that the others reject.
+  ///
+  /// `tv` is the documented "bypass restrictions" client but it requires a JS
+  /// challenge solver (Deno subprocess) — can't run on Android.
   static final _streamClients = [
-    yt.YoutubeApiClient.androidVr,
     yt.YoutubeApiClient.ios,
+    yt.YoutubeApiClient.androidVr,
+    yt.YoutubeApiClient.androidMusic,
   ];
 
   static final _innertubeSearchUrl =
@@ -204,18 +211,28 @@ class YtMusicNativeSource implements MusicSource {
   /// short user-facing message. Lives here (not in the app) so the app
   /// doesn't have to depend on `youtube_explode_dart` directly.
   static String friendlyMessage(Object error) {
-    if (error is yt.VideoUnplayableException) {
-      return 'YouTube blocked this video on the clients we can use. '
-          'Try another result.';
-    }
+    // Order matters: check specific subtypes before their parents.
     if (error is yt.RequestLimitExceededException) {
       return 'YouTube is rate-limiting. Wait a minute and try again.';
     }
     if (error is yt.VideoUnavailableException) {
       return 'This video is unavailable.';
     }
-    // Unknown error type — surface the first line of `toString()` so we don't
-    // have to dig through the console to find out what broke.
+    // All of these signal "no client succeeded for this video" — usually
+    // the bot-check / PO-Token wall. Same user-facing meaning.
+    if (error is yt.VideoUnplayableException ||
+        error is yt.FatalFailureException ||
+        error is yt.TransientFailureException) {
+      return 'YouTube blocked this video on the clients we can use. '
+          'Try another result.';
+    }
+    // Other YT-explode exception types — surface the message verbatim, it's
+    // already meant to be human-readable.
+    if (error is yt.YoutubeExplodeException) {
+      final firstLine = error.toString().split('\n').first.trim();
+      return "Couldn't play: $firstLine";
+    }
+    // Truly unknown (e.g. just_audio PlayerException) — first line, truncated.
     final firstLine = error.toString().split('\n').first.trim();
     final truncated =
         firstLine.length > 140 ? '${firstLine.substring(0, 140)}…' : firstLine;

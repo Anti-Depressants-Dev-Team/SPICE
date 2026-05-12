@@ -38,6 +38,9 @@ dependencies:
   http: ^1.0.0
   dio: ^5.7.0
 
+  # IDs
+  uuid: ^4.0.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

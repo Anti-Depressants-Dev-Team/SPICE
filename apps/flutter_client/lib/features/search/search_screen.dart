@@ -7,7 +7,7 @@ import 'package:source_youtube/source_youtube.dart';
 
 import '../../services/audio/audio_providers.dart';
 import '../../services/source/source_providers.dart';
-import '../player/mini_player.dart';
+import '../library/track_actions_sheet.dart';
 import '../player/player_state.dart';
 import 'search_controller.dart';
 
@@ -68,95 +68,96 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     }
   }
 
+  void _showActions(Track track) {
+    showModalBottomSheet(
+      context: context,
+      showDragHandle: true,
+      builder: (_) => TrackActionsSheet(track: track),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final searchState = ref.watch(searchProvider);
     final loadingTrackId = ref.watch(loadingTrackIdProvider);
     return Scaffold(
       appBar: AppBar(title: const Text('Spice')),
-      // Mini-player sits at the bottom of the body (not in the bottomNavigationBar
-      // slot) so the keyboard pushes it up rather than covering it.
-      body: SafeArea(
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(12),
-              child: TextField(
-                controller: _controller,
-                autofocus: true,
-                textInputAction: TextInputAction.search,
-                decoration: const InputDecoration(
-                  prefixIcon: Icon(Icons.search),
-                  hintText: 'Search YouTube Music',
-                  border: OutlineInputBorder(),
-                ),
-                onChanged: _onChanged,
-                onSubmitted: (q) => ref.read(searchProvider.notifier).search(q),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: TextField(
+              controller: _controller,
+              autofocus: true,
+              textInputAction: TextInputAction.search,
+              decoration: const InputDecoration(
+                prefixIcon: Icon(Icons.search),
+                hintText: 'Search YouTube Music',
+                border: OutlineInputBorder(),
               ),
+              onChanged: _onChanged,
+              onSubmitted: (q) => ref.read(searchProvider.notifier).search(q),
             ),
-            Expanded(
-              child: searchState.when(
-                data: (r) => r.tracks.isEmpty
-                    ? const Center(
-                        child: Text('Type to search'),
-                      )
-                    : ListView.separated(
-                        itemCount: r.tracks.length,
-                        separatorBuilder: (_, _) => const Divider(height: 1),
-                        itemBuilder: (context, i) {
-                          final t = r.tracks[i];
-                          final isLoading = loadingTrackId == t.id;
-                          final blocked = loadingTrackId != null;
-                          return ListTile(
-                            enabled: !blocked,
-                            leading: t.artworkUrl != null
-                                ? ClipRRect(
-                                    borderRadius: BorderRadius.circular(4),
-                                    child: Image.network(
-                                      t.artworkUrl!,
-                                      width: 48,
-                                      height: 48,
-                                      fit: BoxFit.cover,
-                                      errorBuilder: (_, _, _) =>
-                                          const Icon(Icons.music_note),
-                                    ),
-                                  )
-                                : const Icon(Icons.music_note),
-                            title: Text(
-                              t.title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            subtitle: Text(
-                              t.artists.isEmpty
-                                  ? ''
-                                  : t.artists.map((a) => a.name).join(', '),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            trailing: isLoading
-                                ? const SizedBox(
-                                    width: 20,
-                                    height: 20,
-                                    child: CircularProgressIndicator(
-                                        strokeWidth: 2),
-                                  )
-                                : t.durationMs != null
-                                    ? Text(_fmtDuration(Duration(
-                                        milliseconds: t.durationMs!)))
-                                    : null,
-                            onTap: blocked ? null : () => _playTrack(t),
-                          );
-                        },
-                      ),
-                loading: () =>
-                    const Center(child: CircularProgressIndicator()),
-                error: (e, _) => Center(child: Text('Error: $e')),
-              ),
+          ),
+          Expanded(
+            child: searchState.when(
+              data: (r) => r.tracks.isEmpty
+                  ? const Center(child: Text('Type to search'))
+                  : ListView.separated(
+                      itemCount: r.tracks.length,
+                      separatorBuilder: (_, _) => const Divider(height: 1),
+                      itemBuilder: (context, i) {
+                        final t = r.tracks[i];
+                        final isLoading = loadingTrackId == t.id;
+                        final blocked = loadingTrackId != null;
+                        return ListTile(
+                          enabled: !blocked,
+                          leading: t.artworkUrl != null
+                              ? ClipRRect(
+                                  borderRadius: BorderRadius.circular(4),
+                                  child: Image.network(
+                                    t.artworkUrl!,
+                                    width: 48,
+                                    height: 48,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, _, _) =>
+                                        const Icon(Icons.music_note),
+                                  ),
+                                )
+                              : const Icon(Icons.music_note),
+                          title: Text(
+                            t.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: Text(
+                            t.artists.isEmpty
+                                ? ''
+                                : t.artists.map((a) => a.name).join(', '),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          trailing: isLoading
+                              ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2),
+                                )
+                              : t.durationMs != null
+                                  ? Text(_fmtDuration(Duration(
+                                      milliseconds: t.durationMs!)))
+                                  : null,
+                          onTap: blocked ? null : () => _playTrack(t),
+                          onLongPress: blocked ? null : () => _showActions(t),
+                        );
+                      },
+                    ),
+              loading: () => const Center(child: CircularProgressIndicator()),
+              error: (e, _) => Center(child: Text('Error: $e')),
             ),
-            const MiniPlayer(),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
