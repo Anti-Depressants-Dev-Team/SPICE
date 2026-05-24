@@ -12,11 +12,13 @@ let client = null;
 let isReady = false;
 let currentTrack = null;
 let reconnectTimeout = null;
+let isEnabled = false;
 
 /**
  * Initialize and connect to Discord
  */
 async function connect() {
+    isEnabled = true;
     if (client && isReady) {
         return;
     }
@@ -67,12 +69,15 @@ async function connect() {
 }
 
 function scheduleReconnect(delay) {
+    if (!isEnabled) return;
     if (reconnectTimeout) return;
 
     console.log(`[Discord RPC] Retry in ${delay / 1000}s...`);
     reconnectTimeout = setTimeout(() => {
         reconnectTimeout = null;
-        connect();
+        if (isEnabled) {
+            connect();
+        }
     }, delay);
 }
 
@@ -131,6 +136,7 @@ async function clearPresence() {
 }
 
 async function disconnect() {
+    isEnabled = false;
     if (reconnectTimeout) {
         clearTimeout(reconnectTimeout);
         reconnectTimeout = null;
@@ -145,8 +151,7 @@ async function disconnect() {
     }
 }
 
-// Auto-connect on load
-connect();
+// Connection is explicitly controlled by main process based on user settings
 
 module.exports = {
     connect,
