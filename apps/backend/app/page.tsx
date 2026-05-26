@@ -1,5 +1,5 @@
-import FlowbeatApp from './flowbeat-app';
+import SpiceApp from './spice-app';
 
 export default function Home() {
-  return <FlowbeatApp />;
+  return <SpiceApp />;
 }

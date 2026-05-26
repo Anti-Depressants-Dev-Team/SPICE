@@ -13,13 +13,13 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Flowbeat — Premium Music Streaming",
-  description: "A premium music streaming experience. Discover, stream, and enjoy millions of songs.",
+  title: "Spice — Premium Music Streaming",
+  description: "A crazier, closed-source premium music player. Discover, stream, and enjoy millions of songs.",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "Flowbeat",
+    title: "Spice",
   },
 };
 

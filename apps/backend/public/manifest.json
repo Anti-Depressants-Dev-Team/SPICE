@@ -1,7 +1,7 @@
 {
-  "name": "Flowbeat Music",
-  "short_name": "Flowbeat",
-  "description": "A premium music streaming experience. Discover, stream, and enjoy millions of songs.",
+  "name": "Spice Music",
+  "short_name": "Spice",
+  "description": "A crazier, closed-source premium music player. Discover, stream, and enjoy millions of songs.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#000000",

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'flowbeat-v1';
+const CACHE_NAME = 'spice-v1';
 const ASSETS_TO_CACHE = [
   '/',
   '/icon.svg',
