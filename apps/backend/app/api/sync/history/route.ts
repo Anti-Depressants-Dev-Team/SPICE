@@ -3,6 +3,7 @@ import { verifySession } from '@/lib/auth';
 import { db } from '@/db';
 import { history } from '@/db/schema';
 import { eq, desc } from 'drizzle-orm';
+import { getLocalHistory, saveLocalHistory } from '@/lib/local-db';
 
 export const runtime = 'nodejs';
 
@@ -11,10 +12,6 @@ export function OPTIONS() {
 }
 
 export async function GET(request: Request) {
-  if (!process.env.DATABASE_URL) {
-    return jsonResponse({ error: 'db_not_configured' }, { status: 503 });
-  }
-
   try {
     const auth = request.headers.get('Authorization');
     if (!auth || !auth.startsWith('Bearer ')) {
@@ -23,6 +20,12 @@ export async function GET(request: Request) {
 
     const token = auth.substring(7);
     const session = await verifySession(token);
+
+    if (!process.env.DATABASE_URL) {
+      // Use local fallback DB
+      const historyTracks = await getLocalHistory(session.userId);
+      return jsonResponse({ history: historyTracks, localFallback: true });
+    }
 
     const userHistory = await db.query.history.findMany({
       where: eq(history.userId, session.userId),
@@ -50,10 +53,6 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  if (!process.env.DATABASE_URL) {
-    return jsonResponse({ error: 'db_not_configured' }, { status: 503 });
-  }
-
   try {
     const auth = request.headers.get('Authorization');
     if (!auth || !auth.startsWith('Bearer ')) {
@@ -66,6 +65,12 @@ export async function POST(request: Request) {
 
     if (!Array.isArray(clientHistory)) {
       return jsonResponse({ error: 'invalid_payload', message: 'History payload must be an array.' }, { status: 400 });
+    }
+
+    if (!process.env.DATABASE_URL) {
+      // Use local fallback DB
+      await saveLocalHistory(session.userId, clientHistory);
+      return jsonResponse({ success: true, count: clientHistory.length, localFallback: true });
     }
 
     await db.transaction(async (tx: any) => {

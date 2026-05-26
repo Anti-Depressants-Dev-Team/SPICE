@@ -4,6 +4,7 @@ import { users } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { verifyPassword } from '@/lib/hash';
 import { signSession } from '@/lib/auth';
+import { findLocalUserByEmail } from '@/lib/local-db';
 
 export const runtime = 'nodejs';
 
@@ -12,16 +13,6 @@ export function OPTIONS() {
 }
 
 export async function POST(request: Request) {
-  if (!process.env.DATABASE_URL) {
-    return jsonResponse(
-      {
-        error: 'db_not_configured',
-        message: 'Postgres database connection is pending configuration in .env',
-      },
-      { status: 503 }
-    );
-  }
-
   try {
     const { email, password } = await request.json();
     if (!email || !password) {
@@ -34,8 +25,35 @@ export async function POST(request: Request) {
       );
     }
 
+    const normEmail = email.toLowerCase().trim();
+
+    if (!process.env.DATABASE_URL) {
+      // Use Local JSON DB Fallback
+      const user = await findLocalUserByEmail(normEmail);
+      if (!user || !verifyPassword(password, user.passwordHash)) {
+        return jsonResponse(
+          {
+            error: 'invalid_credentials',
+            message: 'Incorrect email or password. Please try again.',
+          },
+          { status: 401 }
+        );
+      }
+
+      const token = await signSession({ userId: user.id, email: user.email });
+
+      return jsonResponse({
+        token,
+        user: {
+          id: user.id,
+          email: user.email,
+        },
+        localFallback: true,
+      });
+    }
+
     const user = await db.query.users.findFirst({
-      where: eq(users.email, email.toLowerCase().trim()),
+      where: eq(users.email, normEmail),
     });
 
     if (!user || !user.passwordHash || !verifyPassword(password, user.passwordHash)) {

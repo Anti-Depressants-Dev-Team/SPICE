@@ -4,6 +4,7 @@ import { users } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { hashPassword } from '@/lib/hash';
 import { signSession } from '@/lib/auth';
+import { findLocalUserByEmail, addLocalUser } from '@/lib/local-db';
 
 export const runtime = 'nodejs';
 
@@ -12,16 +13,6 @@ export function OPTIONS() {
 }
 
 export async function POST(request: Request) {
-  if (!process.env.DATABASE_URL) {
-    return jsonResponse(
-      {
-        error: 'db_not_configured',
-        message: 'Postgres database connection is pending configuration in .env',
-      },
-      { status: 503 }
-    );
-  }
-
   try {
     const { email, password } = await request.json();
     if (!email || !password || password.length < 6) {
@@ -34,9 +25,38 @@ export async function POST(request: Request) {
       );
     }
 
+    const normEmail = email.toLowerCase().trim();
+
+    if (!process.env.DATABASE_URL) {
+      // Use Local JSON DB Fallback
+      const existing = await findLocalUserByEmail(normEmail);
+      if (existing) {
+        return jsonResponse(
+          {
+            error: 'email_exists',
+            message: 'An account with this email address already exists.',
+          },
+          { status: 409 }
+        );
+      }
+
+      const passwordHash = hashPassword(password);
+      const newUser = await addLocalUser(normEmail, passwordHash);
+      const token = await signSession({ userId: newUser.id, email: newUser.email });
+
+      return jsonResponse({
+        token,
+        user: {
+          id: newUser.id,
+          email: newUser.email,
+        },
+        localFallback: true,
+      });
+    }
+
     // Check if email already exists
     const existing = await db.query.users.findFirst({
-      where: eq(users.email, email.toLowerCase().trim()),
+      where: eq(users.email, normEmail),
     });
 
     if (existing) {
@@ -51,7 +71,7 @@ export async function POST(request: Request) {
 
     const passwordHash = hashPassword(password);
     const [newUser] = await db.insert(users).values({
-      email: email.toLowerCase().trim(),
+      email: normEmail,
       passwordHash,
     }).returning();
 

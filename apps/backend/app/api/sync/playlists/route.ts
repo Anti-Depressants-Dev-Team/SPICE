@@ -3,6 +3,7 @@ import { verifySession } from '@/lib/auth';
 import { db } from '@/db';
 import { playlists, playlistItems } from '@/db/schema';
 import { eq } from 'drizzle-orm';
+import { getLocalPlaylists, saveLocalPlaylists } from '@/lib/local-db';
 
 export const runtime = 'nodejs';
 
@@ -11,10 +12,6 @@ export function OPTIONS() {
 }
 
 export async function GET(request: Request) {
-  if (!process.env.DATABASE_URL) {
-    return jsonResponse({ error: 'db_not_configured' }, { status: 503 });
-  }
-
   try {
     const auth = request.headers.get('Authorization');
     if (!auth || !auth.startsWith('Bearer ')) {
@@ -23,6 +20,12 @@ export async function GET(request: Request) {
     
     const token = auth.substring(7);
     const session = await verifySession(token);
+
+    if (!process.env.DATABASE_URL) {
+      // Use local fallback DB
+      const results = await getLocalPlaylists(session.userId);
+      return jsonResponse({ playlists: results, localFallback: true });
+    }
 
     const userPlaylists = await db.query.playlists.findMany({
       where: eq(playlists.userId, session.userId),
@@ -64,10 +67,6 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  if (!process.env.DATABASE_URL) {
-    return jsonResponse({ error: 'db_not_configured' }, { status: 503 });
-  }
-
   try {
     const auth = request.headers.get('Authorization');
     if (!auth || !auth.startsWith('Bearer ')) {
@@ -80,6 +79,12 @@ export async function POST(request: Request) {
 
     if (!Array.isArray(clientPlaylists)) {
       return jsonResponse({ error: 'invalid_payload', message: 'Playlists payload must be an array.' }, { status: 400 });
+    }
+
+    if (!process.env.DATABASE_URL) {
+      // Use local fallback DB
+      await saveLocalPlaylists(session.userId, clientPlaylists);
+      return jsonResponse({ success: true, count: clientPlaylists.length, localFallback: true });
     }
 
     // Run clean transactions: wipe old entries and insert current synced records

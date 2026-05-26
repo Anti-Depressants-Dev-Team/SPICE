@@ -250,7 +250,7 @@ export async function getPlaylistTracks(playlistId: string) {
   const videos = [...(playlist.videos ?? [])] as any[];
   
   let continuations = 0;
-  while (playlist.has_continuation && continuations < 5) {
+  while (playlist.has_continuation && continuations < 50) {
     try {
       playlist = await playlist.getContinuation();
       if (playlist.videos) {

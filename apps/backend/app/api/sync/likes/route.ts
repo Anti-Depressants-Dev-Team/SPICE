@@ -3,6 +3,7 @@ import { verifySession } from '@/lib/auth';
 import { db } from '@/db';
 import { likes } from '@/db/schema';
 import { eq } from 'drizzle-orm';
+import { getLocalLikes, saveLocalLikes } from '@/lib/local-db';
 
 export const runtime = 'nodejs';
 
@@ -11,10 +12,6 @@ export function OPTIONS() {
 }
 
 export async function GET(request: Request) {
-  if (!process.env.DATABASE_URL) {
-    return jsonResponse({ error: 'db_not_configured' }, { status: 503 });
-  }
-
   try {
     const auth = request.headers.get('Authorization');
     if (!auth || !auth.startsWith('Bearer ')) {
@@ -23,6 +20,12 @@ export async function GET(request: Request) {
 
     const token = auth.substring(7);
     const session = await verifySession(token);
+
+    if (!process.env.DATABASE_URL) {
+      // Use local fallback DB
+      const likedTrackIds = await getLocalLikes(session.userId);
+      return jsonResponse({ likedTracks: likedTrackIds, localFallback: true });
+    }
 
     const userLikes = await db.query.likes.findMany({
       where: eq(likes.userId, session.userId),
@@ -43,10 +46,6 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  if (!process.env.DATABASE_URL) {
-    return jsonResponse({ error: 'db_not_configured' }, { status: 503 });
-  }
-
   try {
     const auth = request.headers.get('Authorization');
     if (!auth || !auth.startsWith('Bearer ')) {
@@ -59,6 +58,12 @@ export async function POST(request: Request) {
 
     if (!Array.isArray(likedTracks)) {
       return jsonResponse({ error: 'invalid_payload', message: 'Payload must be an array of track IDs.' }, { status: 400 });
+    }
+
+    if (!process.env.DATABASE_URL) {
+      // Use local fallback DB
+      await saveLocalLikes(session.userId, likedTracks);
+      return jsonResponse({ success: true, count: likedTracks.length, localFallback: true });
     }
 
     await db.transaction(async (tx: any) => {
