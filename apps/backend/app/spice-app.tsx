@@ -397,6 +397,9 @@ export default function SpiceApp() {
     }
     return 'bar';
   });
+  const [miniPlayerPos, setMiniPlayerPos] = useState<{ x: number; y: number } | null>(null);
+  const [isDraggingMini, setIsDraggingMini] = useState(false);
+  const dragStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const [isShuffle, setIsShuffle] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
       return localStorage.getItem('spice_is_shuffle') === 'true';
@@ -409,6 +412,7 @@ export default function SpiceApp() {
     }
     return 'all';
   });
+  const [expandedTab, setExpandedTab] = useState<'controls' | 'queue' | 'lyrics'>('controls');
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
@@ -827,6 +831,53 @@ export default function SpiceApp() {
           setIsPlaying(true);
         }).catch(handleAudioError);
       }
+    }
+  };
+
+  const handleMiniPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement;
+    if (target.closest('button') || target.closest('input')) return;
+
+    setIsDraggingMini(true);
+    e.currentTarget.setPointerCapture(e.pointerId);
+
+    const rect = e.currentTarget.getBoundingClientRect();
+    dragStartRef.current = {
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top,
+    };
+  };
+
+  const handleMiniPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isDraggingMini) return;
+
+    const x = e.clientX - dragStartRef.current.x;
+    const y = e.clientY - dragStartRef.current.y;
+
+    const maxX = typeof window !== 'undefined' ? window.innerWidth - 356 : 800;
+    const maxY = typeof window !== 'undefined' ? window.innerHeight - 124 : 600;
+
+    setMiniPlayerPos({
+      x: Math.max(16, Math.min(x, maxX)),
+      y: Math.max(16, Math.min(y, maxY)),
+    });
+  };
+
+  const handleMiniPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    setIsDraggingMini(false);
+    e.currentTarget.releasePointerCapture(e.pointerId);
+  };
+
+  const handleMiniPlayerSeek = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (duration <= 0) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const percentage = clickX / rect.width;
+    const newProgress = percentage * duration;
+
+    setProgress(newProgress);
+    if (audioRef.current) {
+      audioRef.current.currentTime = newProgress;
     }
   };
 
@@ -1411,6 +1462,9 @@ export default function SpiceApp() {
       .expanded-player__btn-play:hover {
         transform: scale(1.08);
         box-shadow: 0 12px 32px rgba(var(--accent-pink-rgb), 0.6) !important;
+      }
+      .mini-player:hover .mini-player__art-hover {
+        opacity: 1 !important;
       }
     `;
 
@@ -2895,6 +2949,18 @@ export default function SpiceApp() {
             {Icons.list}
           </button>
           
+          <button 
+            className="now-playing__btn" 
+            onClick={() => {
+              setPlayerViewMode('mini');
+              localStorage.setItem('spice_player_view_mode', 'mini');
+            }} 
+            style={{ color: '#fff', padding: '4px', cursor: 'pointer', outline: 'none', transition: 'all 0.15s ease' }}
+            title="Switch to Floating Mini Player"
+          >
+            🗗
+          </button>
+          
           <div className="now-playing__volume">
             <button className="now-playing__volume-btn" onClick={() => setVolume(volume === 0 ? 70 : 0)}>
               {Icons.volume}
@@ -2991,144 +3057,259 @@ export default function SpiceApp() {
               </p>
             </div>
 
-            {/* Column 2: Stream details, Waveform, Slider & Big transport controls */}
-            <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: '32px' }}>
+            {/* Column 2: Immersive Tabbed Controller (Controls / Up Next / Lyrics) */}
+            <div style={{ display: 'flex', flexDirection: 'column', height: '420px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '24px', padding: '24px', backdropFilter: 'blur(30px)', width: '100%', minWidth: 0 }}>
               
-              {/* Audio visualization mock */}
-              <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', height: '60px', width: '100%', padding: '12px 24px', background: 'rgba(255,255,255,0.02)', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.04)' }}>
-                {[...Array(24)].map((_, i) => {
-                  // Generate stable dummy visualization waves
-                  const baseVal = 20 + Math.abs(Math.sin((i + progress) * 0.5)) * 60;
-                  const randHeight = isPlaying ? baseVal + Math.random() * 20 : 15;
+              {/* Tab headers */}
+              <div style={{ display: 'flex', gap: '20px', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '12px', marginBottom: '20px' }}>
+                {[
+                  { id: 'controls', label: '🎧 Player Controls' },
+                  { id: 'queue', label: '🔀 Up Next Queue' },
+                  { id: 'lyrics', label: '🎤 Active Lyrics' }
+                ].map(t => {
+                  const isActive = expandedTab === t.id;
                   return (
-                    <div 
-                      key={i} 
+                    <button 
+                      key={t.id}
+                      onClick={() => setExpandedTab(t.id as any)}
                       style={{ 
-                        width: '3%', 
-                        height: `${Math.min(100, Math.max(5, randHeight))}%`, 
-                        background: 'var(--accent-pink)', 
-                        borderRadius: '4px',
-                        transition: 'height 0.1s ease',
-                        boxShadow: '0 0 8px var(--accent-pink)'
-                      }} 
-                    />
+                        background: 'none', 
+                        border: 'none', 
+                        color: isActive ? 'var(--accent-pink)' : 'var(--text-secondary)', 
+                        fontSize: '0.85rem', 
+                        fontWeight: 700, 
+                        textTransform: 'uppercase', 
+                        letterSpacing: '0.1em', 
+                        cursor: 'pointer', 
+                        paddingBottom: '8px', 
+                        borderBottom: isActive ? '2px solid var(--accent-pink)' : '2px solid transparent', 
+                        transition: 'all 0.15s ease',
+                        outline: 'none'
+                      }}
+                    >
+                      {t.label}
+                    </button>
                   );
                 })}
               </div>
 
-              {/* Progress seeker */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <div style={{ position: 'relative', height: '8px', width: '100%', background: 'rgba(255,255,255,0.1)', borderRadius: '4px', cursor: 'pointer' }} onClick={handleSeek}>
-                  <div 
-                    style={{ 
-                      position: 'absolute', 
-                      left: 0, 
-                      top: 0, 
-                      bottom: 0, 
-                      width: `${duration > 0 ? (progress / duration) * 100 : 0}%`, 
-                      background: 'var(--accent-pink)', 
-                      borderRadius: '4px',
-                      boxShadow: '0 0 10px var(--accent-pink)'
-                    }} 
-                  />
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                  <span>{formatTime(progress)}</span>
-                  <span>{formatTime(duration)}</span>
-                </div>
-              </div>
+              {/* Tab Content Panels */}
+              <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                {expandedTab === 'controls' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                    {/* Audio visualization mock */}
+                    <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', height: '60px', width: '100%', padding: '12px 24px', background: 'rgba(255,255,255,0.02)', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.04)' }}>
+                      {[...Array(24)].map((_, i) => {
+                        const baseVal = 20 + Math.abs(Math.sin((i + progress) * 0.5)) * 60;
+                        const randHeight = isPlaying ? baseVal + Math.abs(Math.sin(i * 12.9898 + progress)) * 20 : 15;
+                        return (
+                          <div 
+                            key={i} 
+                            style={{ 
+                              width: '3%', 
+                              height: `${Math.min(100, Math.max(5, randHeight))}%`, 
+                              background: 'var(--accent-pink)', 
+                              borderRadius: '4px',
+                              transition: 'height 0.1s ease',
+                              boxShadow: '0 0 8px var(--accent-pink)'
+                            }} 
+                          />
+                        );
+                      })}
+                    </div>
 
-              {/* Huge transport buttons */}
-              <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '32px' }}>
-                <button 
-                  onClick={() => {
-                    setIsShuffle(!isShuffle);
-                    localStorage.setItem('spice_is_shuffle', (!isShuffle).toString());
-                  }}
-                  style={{ background: 'none', border: 'none', color: isShuffle ? 'var(--accent-pink)' : '#fff', opacity: isShuffle ? 1 : 0.4, cursor: 'pointer', outline: 'none', fontSize: '1.5rem', transition: 'all 0.15s ease' }} 
-                  className="expanded-player__btn"
-                  title="Shuffle"
-                >
-                  🔀
-                </button>
+                    {/* Progress seeker */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <div style={{ position: 'relative', height: '8px', width: '100%', background: 'rgba(255,255,255,0.1)', borderRadius: '4px', cursor: 'pointer' }} onClick={handleSeek}>
+                        <div 
+                          style={{ 
+                            position: 'absolute', 
+                            left: 0, 
+                            top: 0, 
+                            bottom: 0, 
+                            width: `${duration > 0 ? (progress / duration) * 100 : 0}%`, 
+                            background: 'var(--accent-pink)', 
+                            borderRadius: '4px',
+                            boxShadow: '0 0 10px var(--accent-pink)'
+                          }} 
+                        />
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                        <span>{formatTime(progress)}</span>
+                        <span>{formatTime(duration)}</span>
+                      </div>
+                    </div>
 
-                <button 
-                  onClick={handlePrev} 
-                  style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', outline: 'none', transition: 'all 0.15s ease' }} 
-                  className="expanded-player__btn"
-                >
-                  <span style={{ transform: 'scale(1.5)', display: 'inline-block' }}>{Icons.prev}</span>
-                </button>
+                    {/* Huge transport buttons */}
+                    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '32px' }}>
+                      <button 
+                        onClick={() => {
+                          setIsShuffle(!isShuffle);
+                          localStorage.setItem('spice_is_shuffle', (!isShuffle).toString());
+                        }}
+                        style={{ background: 'none', border: 'none', color: isShuffle ? 'var(--accent-pink)' : '#fff', opacity: isShuffle ? 1 : 0.4, cursor: 'pointer', outline: 'none', fontSize: '1.5rem', transition: 'all 0.15s ease' }} 
+                        className="expanded-player__btn"
+                        title="Shuffle"
+                      >
+                        🔀
+                      </button>
 
-                <button 
-                  onClick={togglePlayPause} 
-                  style={{ 
-                    width: '80px', 
-                    height: '80px', 
-                    borderRadius: '50%', 
-                    background: 'var(--accent-pink)', 
-                    border: 'none', 
-                    color: '#fff', 
-                    cursor: 'pointer', 
-                    outline: 'none', 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    justifyContent: 'center',
-                    boxShadow: '0 8px 24px rgba(var(--accent-pink-rgb, 236, 72, 153), 0.4)',
-                    transition: 'all 0.15s ease'
-                  }}
-                  className="expanded-player__btn-play"
-                >
-                  <span style={{ transform: 'scale(2.0)', display: 'inline-block' }}>
-                    {isPlaying ? Icons.pause : Icons.play}
-                  </span>
-                </button>
+                      <button 
+                        onClick={handlePrev} 
+                        style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', outline: 'none', transition: 'all 0.15s ease' }} 
+                        className="expanded-player__btn"
+                      >
+                        <span style={{ transform: 'scale(1.5)', display: 'inline-block' }}>{Icons.prev}</span>
+                      </button>
 
-                <button 
-                  onClick={handleNext} 
-                  style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', outline: 'none', transition: 'all 0.15s ease' }} 
-                  className="expanded-player__btn"
-                >
-                  <span style={{ transform: 'scale(1.5)', display: 'inline-block' }}>{Icons.next}</span>
-                </button>
+                      <button 
+                        onClick={togglePlayPause} 
+                        style={{ 
+                          width: '80px', 
+                          height: '80px', 
+                          borderRadius: '50%', 
+                          background: 'var(--accent-pink)', 
+                          border: 'none', 
+                          color: '#fff', 
+                          cursor: 'pointer', 
+                          outline: 'none', 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          justifyContent: 'center',
+                          boxShadow: '0 8px 24px rgba(var(--accent-pink-rgb, 236, 72, 153), 0.4)',
+                          transition: 'all 0.15s ease'
+                        }}
+                        className="expanded-player__btn-play"
+                      >
+                        <span style={{ transform: 'scale(2.0)', display: 'inline-block' }}>
+                          {isPlaying ? Icons.pause : Icons.play}
+                        </span>
+                      </button>
 
-                <button 
-                  onClick={() => {
-                    const nextMode = repeatMode === 'none' ? 'all' : repeatMode === 'all' ? 'one' : 'none';
-                    setRepeatMode(nextMode);
-                    localStorage.setItem('spice_repeat_mode', nextMode);
-                  }}
-                  style={{ background: 'none', border: 'none', color: repeatMode !== 'none' ? 'var(--accent-pink)' : '#fff', opacity: repeatMode !== 'none' ? 1 : 0.4, cursor: 'pointer', outline: 'none', fontSize: '1.5rem', transition: 'all 0.15s ease' }} 
-                  className="expanded-player__btn"
-                  title={`Repeat Mode: ${repeatMode === 'none' ? 'Off' : repeatMode === 'all' ? 'Repeat All' : 'Repeat One'}`}
-                >
-                  {repeatMode === 'one' ? '🔂' : '🔁'}
-                </button>
-              </div>
+                      <button 
+                        onClick={handleNext} 
+                        style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', outline: 'none', transition: 'all 0.15s ease' }} 
+                        className="expanded-player__btn"
+                      >
+                        <span style={{ transform: 'scale(1.5)', display: 'inline-block' }}>{Icons.next}</span>
+                      </button>
 
-              {/* Volume and info footer in Column 2 */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px' }}>
-                <button
-                  className={`now-playing__like ${likedTracks.has(currentTrack.id) ? 'liked' : ''}`}
-                  onClick={() => toggleLike(currentTrack)}
-                  style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', padding: '10px', borderRadius: '50%', cursor: 'pointer' }}
-                >
-                  <span style={{ display: 'inline-flex', transform: 'scale(1.2)' }}>
-                    {likedTracks.has(currentTrack.id) ? Icons.heartFilled : Icons.heart}
-                  </span>
-                </button>
+                      <button 
+                        onClick={() => {
+                          const nextMode = repeatMode === 'none' ? 'all' : repeatMode === 'all' ? 'one' : 'none';
+                          setRepeatMode(nextMode);
+                          localStorage.setItem('spice_repeat_mode', nextMode);
+                        }}
+                        style={{ background: 'none', border: 'none', color: repeatMode !== 'none' ? 'var(--accent-pink)' : '#fff', opacity: repeatMode !== 'none' ? 1 : 0.4, cursor: 'pointer', outline: 'none', fontSize: '1.5rem', transition: 'all 0.15s ease' }} 
+                        className="expanded-player__btn"
+                        title={`Repeat Mode: ${repeatMode === 'none' ? 'Off' : repeatMode === 'all' ? 'Repeat All' : 'Repeat One'}`}
+                      >
+                        {repeatMode === 'one' ? '🔂' : '🔁'}
+                      </button>
+                    </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', width: '180px' }}>
-                  <span style={{ opacity: 0.6 }}>{Icons.volume}</span>
-                  <input
-                    type="range"
-                    min="0"
-                    max="100"
-                    value={volume}
-                    onChange={(e) => setVolume(Number(e.target.value))}
-                    style={{ width: '100%', cursor: 'pointer', accentColor: 'var(--accent-pink)' }}
-                  />
-                </div>
+                    {/* Volume and info footer */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }}>
+                      <button
+                        className={`now-playing__like ${likedTracks.has(currentTrack.id) ? 'liked' : ''}`}
+                        onClick={() => toggleLike(currentTrack)}
+                        style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', padding: '10px', borderRadius: '50%', cursor: 'pointer' }}
+                      >
+                        <span style={{ display: 'inline-flex', transform: 'scale(1.2)' }}>
+                          {likedTracks.has(currentTrack.id) ? Icons.heartFilled : Icons.heart}
+                        </span>
+                      </button>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', width: '180px' }}>
+                        <span style={{ opacity: 0.6 }}>{Icons.volume}</span>
+                        <input
+                          type="range"
+                          min="0"
+                          max="100"
+                          value={volume}
+                          onChange={(e) => setVolume(Number(e.target.value))}
+                          style={{ width: '100%', cursor: 'pointer', accentColor: 'var(--accent-pink)' }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {expandedTab === 'queue' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                    <div style={{ overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '310px', paddingRight: '4px' }} className="custom-scrollbar">
+                      {queue.map((song, idx) => {
+                        const isActive = idx === queueIndex;
+                        return (
+                          <div 
+                            key={`${song.id}-${idx}`}
+                            onClick={() => playTrack(song)}
+                            style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px', borderRadius: '12px', background: isActive ? 'rgba(255,255,255,0.06)' : 'transparent', border: isActive ? '1px solid var(--accent-pink)' : '1px solid transparent', cursor: 'pointer', transition: 'all 0.15s ease' }}
+                          >
+                            <img src={song.artworkUrl || '/icon.svg'} alt="" style={{ width: '40px', height: '40px', borderRadius: '6px', objectFit: 'cover' }} />
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: '0.85rem', fontWeight: 600, color: isActive ? 'var(--accent-pink)' : '#fff' }} className="truncate">{song.title}</div>
+                              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }} className="truncate">{song.artists.map(a => a.name).join(', ')}</div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {expandedTab === 'lyrics' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                    <div style={{ overflowY: 'auto', flex: 1, maxHeight: '310px', paddingRight: '4px', textAlign: 'center', display: 'flex', flexDirection: 'column', gap: '16px', padding: '10px 0' }} className="custom-scrollbar">
+                      {[
+                        `♫ [Instrumental Intro - Spice Audio Engine]`,
+                        `♫ Walking through the neon rain...`,
+                        `♫ Stream "${currentTrack.title}" in our brains...`,
+                        `♫ We feel the beat, we feel the glow,`,
+                        `♫ With closed-source player leading the show.`,
+                        ``,
+                        `♫ [Chorus]`,
+                        `♫ Spice is running through our veins,`,
+                        `♫ Unlimited tracks, no more chains!`,
+                        `♫ Synchronized lyrics on the screen,`,
+                        `♫ The premium player you've ever seen!`,
+                        ``,
+                        `♫ [Verse 2]`,
+                        `♫ Slide it up or keep it small,`,
+                        `♫ Mini-player handles it all.`,
+                        `♫ Spotify, YouTube, Tidal combined,`,
+                        `♫ Ultimate hybrid player refined!`,
+                        ``,
+                        `♫ [Outro]`,
+                        `♫ Spice tonight, everything is bright...`,
+                        `♫ Sustained playback shining light!`,
+                        `♫ [Fading Out]`
+                      ].map((line, idx) => {
+                        const isEmpty = line.trim() === '';
+                        const isChorus = line.includes('[Chorus]');
+                        const isInstrumental = line.includes('[Instrumental');
+                        
+                        return (
+                          <div 
+                            key={idx} 
+                            style={{ 
+                              fontSize: isChorus ? '1.15rem' : '1rem', 
+                              fontWeight: (isChorus || isInstrumental) ? 800 : 500, 
+                              color: isInstrumental ? 'var(--accent-pink)' : isChorus ? '#fff' : 'rgba(255,255,255,0.7)',
+                              fontFamily: 'Outfit, sans-serif',
+                              lineHeight: 1.4,
+                              opacity: isEmpty ? 0 : 1,
+                              textShadow: isChorus ? '0 0 10px rgba(255,255,255,0.2)' : 'none',
+                              margin: isEmpty ? '8px 0' : '0'
+                            }}
+                          >
+                            {line}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
 
             </div>
@@ -3149,109 +3330,270 @@ export default function SpiceApp() {
       {playerViewMode === 'mini' && (
         <div 
           className="mini-player animate-in" 
+          onPointerDown={handleMiniPointerDown}
+          onPointerMove={handleMiniPointerMove}
+          onPointerUp={handleMiniPointerUp}
           style={{
             position: 'fixed',
-            right: '24px',
-            bottom: '24px',
-            width: '320px',
-            height: '96px',
-            background: 'rgba(10, 10, 10, 0.9)',
+            left: miniPlayerPos ? `${miniPlayerPos.x}px` : 'auto',
+            top: miniPlayerPos ? `${miniPlayerPos.y}px` : 'auto',
+            right: miniPlayerPos ? 'auto' : '24px',
+            bottom: miniPlayerPos ? 'auto' : '24px',
+            width: '340px',
+            height: '108px',
+            background: 'rgba(10, 10, 10, 0.88)',
+            backgroundImage: `radial-gradient(circle at 10% 10%, rgba(var(--accent-pink-rgb, 236, 72, 153), 0.12), transparent 70%)`,
             border: '1px solid var(--border-color)',
-            borderRadius: '20px',
+            borderRadius: '24px',
             backdropFilter: 'blur(30px)',
             WebkitBackdropFilter: 'blur(30px)',
-            boxShadow: '0 12px 40px rgba(0, 0, 0, 0.6), 0 0 20px rgba(var(--accent-pink-rgb, 236, 72, 153), 0.1)',
+            boxShadow: '0 16px 48px rgba(0, 0, 0, 0.7), 0 0 20px rgba(var(--accent-pink-rgb, 236, 72, 153), 0.2)',
             zIndex: 99999,
             display: 'flex',
             alignItems: 'center',
-            padding: '12px',
+            padding: '14px',
             gap: '12px',
             fontFamily: 'Outfit, sans-serif',
             color: '#fff',
+            cursor: isDraggingMini ? 'grabbing' : 'grab',
+            userSelect: 'none',
+            touchAction: 'none'
           }}
         >
           {/* Artwork */}
-          <img 
-            src={currentTrack.artworkUrl || '/icon.svg'} 
-            alt="" 
-            style={{ width: '60px', height: '60px', borderRadius: '12px', objectFit: 'cover', flexShrink: 0, border: '1px solid rgba(255,255,255,0.06)' }} 
-          />
-
-          {/* Details */}
-          <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '2px' }}>
-            <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#fff' }} className="truncate">
-              {currentTrack.title}
-            </div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }} className="truncate">
-              {currentTrack.artists.map(a => a.name).join(', ')}
-            </div>
-          </div>
-
-          {/* Controls */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
-            <button 
-              onClick={togglePlayPause} 
-              style={{ 
-                width: '36px', 
-                height: '36px', 
-                borderRadius: '50%', 
-                background: 'var(--accent-pink)', 
-                border: 'none', 
-                color: '#fff', 
-                cursor: 'pointer', 
-                outline: 'none',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                boxShadow: '0 4px 12px rgba(var(--accent-pink-rgb, 236, 72, 153), 0.3)'
-              }}
-            >
-              <span style={{ transform: 'scale(1.1)', display: 'inline-flex' }}>
-                {isPlaying ? Icons.pause : Icons.play}
-              </span>
-            </button>
-            
-            <button 
-              onClick={() => {
-                setPlayerViewMode('expanded');
-                localStorage.setItem('spice_player_view_mode', 'expanded');
-              }}
-              style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', padding: '6px', borderRadius: '50%', cursor: 'pointer', outline: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-              title="Expand Player"
-            >
-              ⤢
-            </button>
-
-            <button 
-              onClick={() => {
-                setPlayerViewMode('bar');
-                localStorage.setItem('spice_player_view_mode', 'bar');
-              }}
-              style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', padding: '4px', cursor: 'pointer', fontSize: '1rem' }}
-              title="Back to bar"
-            >
-              ✕
-            </button>
-          </div>
-
-          {/* Minimal Seek Progress strip at the very bottom */}
           <div 
+            style={{ 
+              position: 'relative', 
+              width: '68px', 
+              height: '68px', 
+              borderRadius: '16px', 
+              overflow: 'hidden', 
+              flexShrink: 0, 
+              border: '1px solid rgba(255,255,255,0.08)',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+              cursor: 'pointer' 
+            }}
+            onClick={togglePlayPause}
+            title={isPlaying ? 'Pause' : 'Play'}
+          >
+            <img 
+              src={currentTrack.artworkUrl || '/icon.svg'} 
+              alt="" 
+              style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+            />
+            {/* Dynamic Hover Play/Pause overlay */}
+            <div style={{
+              position: 'absolute',
+              inset: 0,
+              background: 'rgba(0,0,0,0.5)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              opacity: 0,
+              transition: 'opacity 0.2s ease',
+            }}
+            className="mini-player__art-hover"
+            >
+              <span style={{ fontSize: '1.25rem' }}>
+                {isPlaying ? '❚❚' : '▶'}
+              </span>
+            </div>
+          </div>
+
+          {/* Details & Controls Column */}
+          <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {/* Top Row: Song Details & Compact Actions */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: '0.85rem', fontWeight: 800, color: '#fff', lineHeight: 1.2 }} className="truncate">
+                  {currentTrack.title}
+                </div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '2px' }} className="truncate">
+                  {currentTrack.artists.map(a => a.name).join(', ')}
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <button
+                  onClick={() => toggleLike(currentTrack)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: likedTracks.has(currentTrack.id) ? 'var(--accent-pink)' : 'rgba(255,255,255,0.4)',
+                    cursor: 'pointer',
+                    outline: 'none',
+                    padding: '4px',
+                    fontSize: '0.95rem',
+                    transition: 'all 0.15s ease'
+                  }}
+                  title={likedTracks.has(currentTrack.id) ? 'Unlike' : 'Like'}
+                >
+                  {likedTracks.has(currentTrack.id) ? '❤️' : '🤍'}
+                </button>
+
+                <button
+                  onClick={() => setVolume(volume === 0 ? 70 : 0)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: 'rgba(255,255,255,0.4)',
+                    cursor: 'pointer',
+                    outline: 'none',
+                    padding: '4px',
+                    fontSize: '0.95rem',
+                    transition: 'all 0.15s ease'
+                  }}
+                  title={volume === 0 ? 'Unmute' : 'Mute'}
+                >
+                  {volume === 0 ? '🔇' : '🔊'}
+                </button>
+              </div>
+            </div>
+
+            {/* Bottom Row: Transport controls & view switches */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <button
+                  onClick={handlePrev}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: 'rgba(255,255,255,0.6)',
+                    cursor: 'pointer',
+                    fontSize: '1rem',
+                    padding: '4px',
+                    outline: 'none',
+                    transition: 'color 0.15s'
+                  }}
+                  title="Previous"
+                >
+                  ⏮
+                </button>
+
+                <button 
+                  onClick={togglePlayPause} 
+                  style={{ 
+                    width: '30px', 
+                    height: '30px', 
+                    borderRadius: '50%', 
+                    background: 'var(--accent-pink)', 
+                    border: 'none', 
+                    color: '#fff', 
+                    cursor: 'pointer', 
+                    outline: 'none',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    boxShadow: '0 4px 12px rgba(var(--accent-pink-rgb, 236, 72, 153), 0.3)',
+                    transition: 'transform 0.15s ease'
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.1)'}
+                  onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
+                >
+                  <span style={{ fontSize: '0.75rem', display: 'inline-flex' }}>
+                    {isPlaying ? '❚❚' : '▶'}
+                  </span>
+                </button>
+
+                <button
+                  onClick={handleNext}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: 'rgba(255,255,255,0.6)',
+                    cursor: 'pointer',
+                    fontSize: '1rem',
+                    padding: '4px',
+                    outline: 'none',
+                    transition: 'color 0.15s'
+                  }}
+                  title="Next"
+                >
+                  ⏭
+                </button>
+              </div>
+
+              {/* View Switches */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <button 
+                  onClick={() => {
+                    setPlayerViewMode('expanded');
+                    localStorage.setItem('spice_player_view_mode', 'expanded');
+                  }}
+                  style={{ 
+                    background: 'rgba(255,255,255,0.05)', 
+                    border: '1px solid rgba(255,255,255,0.1)', 
+                    color: 'rgba(255,255,255,0.7)', 
+                    width: '28px',
+                    height: '28px',
+                    borderRadius: '8px', 
+                    cursor: 'pointer', 
+                    outline: 'none', 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'center',
+                    fontSize: '0.8rem',
+                    transition: 'all 0.15s ease' 
+                  }}
+                  title="Expand Player"
+                  onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.color = '#fff'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; e.currentTarget.style.color = 'rgba(255,255,255,0.7)'; }}
+                >
+                  ⤢
+                </button>
+
+                <button 
+                  onClick={() => {
+                    setPlayerViewMode('bar');
+                    localStorage.setItem('spice_player_view_mode', 'bar');
+                  }}
+                  style={{ 
+                    background: 'none', 
+                    border: 'none', 
+                    color: 'rgba(255,255,255,0.4)', 
+                    cursor: 'pointer', 
+                    fontSize: '0.95rem',
+                    padding: '4px',
+                    outline: 'none',
+                    transition: 'color 0.15s' 
+                  }}
+                  title="Minimize to Bar"
+                  onMouseEnter={(e) => e.currentTarget.style.color = '#f87171'}
+                  onMouseLeave={(e) => e.currentTarget.style.color = 'rgba(255,255,255,0.4)'}
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Interactive Seek Progress strip at the very bottom */}
+          <div 
+            onClick={handleMiniPlayerSeek}
             style={{ 
               position: 'absolute', 
               bottom: 0, 
-              left: '12px', 
-              right: '12px', 
-              height: '3px', 
+              left: 0, 
+              right: 0, 
+              height: '4px', 
               background: 'rgba(255,255,255,0.1)', 
-              borderRadius: '2px', 
-              overflow: 'hidden' 
+              borderBottomLeftRadius: '24px',
+              borderBottomRightRadius: '24px',
+              overflow: 'hidden',
+              cursor: 'pointer',
+              transition: 'height 0.15s ease'
             }}
+            onMouseEnter={(e) => e.currentTarget.style.height = '6px'}
+            onMouseLeave={(e) => e.currentTarget.style.height = '4px'}
+            title="Seek track"
           >
             <div 
               style={{ 
                 height: '100%', 
                 width: `${duration > 0 ? (progress / duration) * 100 : 0}%`, 
-                background: 'var(--accent-pink)' 
+                background: 'var(--accent-pink)',
+                transition: 'width 0.1s linear'
               }} 
             />
           </div>
