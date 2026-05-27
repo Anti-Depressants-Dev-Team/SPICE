@@ -5,7 +5,7 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 /* eslint-disable react-hooks/exhaustive-deps */
 
-import { type FormEvent, useEffect, useRef, useState } from 'react';
+import { type FormEvent, useEffect, useRef, useState, useCallback } from 'react';
 
 // ── Icons ──────────────────────────────────────────────────────────
 const Icons = {
@@ -369,6 +369,73 @@ export default function SpiceApp() {
   const [isSearching, setIsSearching] = useState(false);
   const [error, setError] = useState<string>();
 
+  const [debugLogs, setDebugLogs] = useState<string[]>([]);
+  const [selfTestRunning, setSelfTestRunning] = useState(false);
+  const [selfTestResults, setSelfTestResults] = useState<{
+    api: 'passed' | 'failed' | null;
+    db: 'passed' | 'failed' | 'disabled' | null;
+    latency: number | null;
+  }>({ api: null, db: null, latency: null });
+  const [terminalFilter, setTerminalFilter] = useState('');
+  const [terminalAutoScroll, setTerminalAutoScroll] = useState(true);
+  const [logsCopied, setLogsCopied] = useState(false);
+  const terminalEndRef = useRef<HTMLDivElement | null>(null);
+
+  const logDebug = useCallback((category: string, message: string) => {
+    const time = new Date().toLocaleTimeString();
+    setDebugLogs(prev => [...prev.slice(-99), `[${time}] [${category.toUpperCase()}] ${message}`]);
+  }, []);
+
+  useEffect(() => {
+    if (terminalAutoScroll && terminalEndRef.current) {
+      terminalEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [debugLogs, terminalAutoScroll]);
+
+  const runSelfTest = async () => {
+    setSelfTestRunning(true);
+    logDebug('diagnostics', 'Starting full-system diagnostics self-test...');
+    
+    let apiStatus: 'passed' | 'failed' = 'failed';
+    let dbStatus: 'passed' | 'failed' | 'disabled' = 'disabled';
+    const startTime = Date.now();
+    
+    try {
+      logDebug('diagnostics', 'Pinging YouTube InnerTube search endpoint...');
+      const apiPing = await fetch(`/api/yt/search?q=Top%20Hits&limit=1`);
+      if (apiPing.ok) {
+        apiStatus = 'passed';
+        logDebug('diagnostics', 'InnerTube API ping successful!');
+      } else {
+        logDebug('diagnostics', `InnerTube API ping failed with status ${apiPing.status}`);
+      }
+    } catch (err) {
+      logDebug('diagnostics', 'InnerTube API ping failed to connect.');
+    }
+    
+    try {
+      logDebug('diagnostics', 'Pinging server database sync endpoint...');
+      const dbPing = await fetch(`/api/sync/likes`);
+      if (dbPing.status === 501) {
+        dbStatus = 'disabled';
+        logDebug('diagnostics', 'Cloud database bypassed: server is running in offline LocalStorage mode.');
+      } else if (dbPing.ok) {
+        dbStatus = 'passed';
+        logDebug('diagnostics', 'Neon Cloud Database connection healthy!');
+      } else {
+        dbStatus = 'failed';
+        logDebug('diagnostics', `Cloud Database sync ping failed with status ${dbPing.status}`);
+      }
+    } catch (err) {
+      logDebug('diagnostics', 'Cloud Database connection failed.');
+    }
+    
+    const latency = Date.now() - startTime;
+    setSelfTestResults({ api: apiStatus, db: dbStatus, latency });
+    setSelfTestRunning(false);
+    logDebug('diagnostics', `Self-test completed in ${latency}ms. Status: API=${apiStatus}, DB=${dbStatus}`);
+  };
+
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -448,6 +515,7 @@ export default function SpiceApp() {
           setCurrentTrack(activeProf.history[0]);
           setQueue([activeProf.history[0]]);
         }
+        logDebug('system', `Loaded active profile "${activeProf.displayName}" successfully. Hydration secured.`);
       }
     }
   }, []);
@@ -527,6 +595,7 @@ export default function SpiceApp() {
     if (!token) return;
     setSyncingStatus('syncing');
     setDbError(null);
+    logDebug('database', 'Initiating full sync merge with Cloud Neon Database...');
     try {
       // 1. Pull likes
       const likesRes = await fetch('/api/sync/likes', {
@@ -630,10 +699,12 @@ export default function SpiceApp() {
         body: JSON.stringify({ playlists: mergedPlaylists })
       });
 
+      logDebug('database', `Merged state with cloud database successfully. Merged: ${mergedLikesArray.length} likes, ${mergedHistory.length} history items, ${mergedPlaylists.length} playlists.`);
       setSyncingStatus('success');
       setTimeout(() => setSyncingStatus(null), 3000);
     } catch (err: any) {
       console.error('Cloud synchronization error:', err);
+      logDebug('error', `Cloud synchronization failed: ${err.message || err}`);
       if (err.message === 'db_not_configured') {
         setDbError('DATABASE_URL is not set in backend environment.');
       }
@@ -674,11 +745,13 @@ export default function SpiceApp() {
       setCloudUser(data.user);
       setAuthEmail('');
       setAuthPassword('');
+      logDebug('auth', `User "${data.user.email}" authenticated successfully via ${authMode}. Token generated.`);
       
       // Auto sync after login
       await syncWithCloud(data.token);
     } catch (err: any) {
       console.error(err);
+      logDebug('error', `Authentication attempt failed: ${err.message || err}`);
       setAuthError(err.message || 'Server authentication failed.');
     } finally {
       setAuthLoading(false);
@@ -692,6 +765,7 @@ export default function SpiceApp() {
     setCloudUser(null);
     setDbError(null);
     setAuthError(null);
+    logDebug('auth', 'Logged out from Spice Cloud Account. Switched to offline database sandbox mode.');
   };
 
   // ── Listen Again Calculation Hook ──────────────────────────────
@@ -790,6 +864,7 @@ export default function SpiceApp() {
     setQueueIndex(updatedIndex);
 
     try {
+      logDebug('player', `Initiating format resolution for track "${track.title}" (ID: ${track.id})`);
       // Direct stream URL fetch from YouTube endpoint
       const resTrack = await fetch(`/api/yt/track/${encodeURIComponent(track.id)}`);
       if (!resTrack.ok) throw new Error('Could not resolve audio streams for this track.');
@@ -799,6 +874,7 @@ export default function SpiceApp() {
       if (streams.length === 0) throw new Error('No compatible stream format discovered.');
 
       const bestStream = streams[0];
+      logDebug('stream', `Resolved ${streams.length} formats. Selected itag ${bestStream.itag} (${bestStream.container}, bitrate: ${Math.round(bestStream.bitrate / 1000)}kbps)`);
       setStreamUrl(bestStream.url);
       setIsPlaying(true);
 
@@ -815,6 +891,7 @@ export default function SpiceApp() {
 
     } catch (err: any) {
       console.error(err);
+      logDebug('error', `Track streaming failed: ${err.message || err}`);
       setError(err.message ?? 'Playback connection failed.');
     } finally {
       setIsLoadingStream(false);
@@ -930,12 +1007,14 @@ export default function SpiceApp() {
 
   const toggleLike = (track: Track) => {
     const updated = new Set(likedTracks);
+    const isLiked = !updated.has(track.id);
     if (updated.has(track.id)) {
       updated.delete(track.id);
     } else {
       updated.add(track.id);
     }
     setLikedTracks(updated);
+    logDebug('database', `${isLiked ? 'Liked' : 'Unliked'} track "${track.title}" (ID: ${track.id}) - Synchronized to active profile.`);
 
     const savedLikedDetails = { ...likedTrackDetails };
     if (updated.has(track.id)) {
@@ -1075,6 +1154,7 @@ export default function SpiceApp() {
 
     setActiveProfileId(profileId);
     localStorage.setItem('spice_active_profile_id', profileId);
+    logDebug('profile', `Switched active profile to "${target.displayName}" (Playlists: ${target.customPlaylists?.length || 0}, Likes: ${target.likedTracks?.length || 0})`);
 
     // Synchronize states immediately to prevent cascading renders
     setLikedTracks(new Set(target.likedTracks));
@@ -2697,15 +2777,256 @@ export default function SpiceApp() {
                     </div>
                   </div>
 
-                  {/* System diagnostics */}
-                  <div style={{ background: 'rgba(168, 85, 247, 0.04)', border: '1px solid rgba(168, 85, 247, 0.1)', borderRadius: '16px', padding: '24px', marginBottom: '40px' }}>
-                    <h4 style={{ fontSize: '1rem', fontWeight: 700, margin: '0 0 8px 0', fontFamily: 'Outfit, sans-serif', color: 'var(--accent-pink)' }}>🔒 Security Sandboxing Active</h4>
-                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0 0 12px 0', lineHeight: 1.5 }}>
-                      Spice Media Core is verified and locked under secure PWA sandboxing. Upstream InnerTube signatures are validated automatically, seeks are supported, and data sync is enabled over client-safe transport channels.
-                    </p>
-                    <span style={{ fontSize: '0.75rem', background: 'rgba(255,255,255,0.04)', color: 'var(--text-secondary)', padding: '4px 10px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.06)' }}>
-                      Spice PWA version 1.0.4 (Phase 4 Build)
-                    </span>
+                  {/* System diagnostics & Monospace Live Log Terminal */}
+                  <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '40px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
+                      <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 800, color: '#fff', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        🛠️ System Diagnostics & Live Terminal
+                      </h3>
+                      <span style={{ fontSize: '0.75rem', background: 'rgba(255,255,255,0.04)', color: 'var(--text-secondary)', padding: '4px 10px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.06)' }}>
+                        Spice Media Core v1.0.5 (Phase 4 Diagnostics)
+                      </span>
+                    </div>
+
+                    {/* Diagnostics Status Cards Grid */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '12px', marginBottom: '24px' }}>
+                      {/* InnerTube API Card */}
+                      <div style={{ background: '#070707', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 500 }}>InnerTube API</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <div style={{
+                            width: '8px',
+                            height: '8px',
+                            borderRadius: '50%',
+                            background: selfTestRunning ? '#fb923c' : (selfTestResults.api === 'passed' ? '#4ade80' : (selfTestResults.api === 'failed' ? '#f87171' : '#52525b')),
+                            boxShadow: selfTestRunning ? '0 0 8px #fb923c' : (selfTestResults.api === 'passed' ? '0 0 8px #4ade80' : (selfTestResults.api === 'failed' ? '0 0 8px #f87171' : 'none')),
+                            animation: selfTestRunning ? 'blink 0.8s ease infinite alternate' : 'none'
+                          }}></div>
+                          <span style={{ fontSize: '0.85rem', fontWeight: 700, color: selfTestRunning ? '#fb923c' : (selfTestResults.api === 'passed' ? '#4ade80' : (selfTestResults.api === 'failed' ? '#f87171' : '#a1a1aa')) }}>
+                            {selfTestRunning ? 'ATTUNING' : (selfTestResults.api === 'passed' ? 'ONLINE (200)' : (selfTestResults.api === 'failed' ? 'ERROR / BAN' : 'UNTESTED'))}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Neon DB Sync Card */}
+                      <div style={{ background: '#070707', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 500 }}>Neon Cloud Sync</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <div style={{
+                            width: '8px',
+                            height: '8px',
+                            borderRadius: '50%',
+                            background: selfTestRunning ? '#fb923c' : (selfTestResults.db === 'passed' ? '#4ade80' : (selfTestResults.db === 'disabled' ? '#fb923c' : (selfTestResults.db === 'failed' ? '#f87171' : '#52525b'))),
+                            boxShadow: selfTestRunning ? '0 0 8px #fb923c' : (selfTestResults.db === 'passed' ? '0 0 8px #4ade80' : (selfTestResults.db === 'disabled' ? '0 0 8px #fb923c' : (selfTestResults.db === 'failed' ? '0 0 8px #f87171' : 'none'))),
+                            animation: selfTestRunning ? 'blink 0.8s ease infinite alternate' : 'none'
+                          }}></div>
+                          <span style={{ fontSize: '0.85rem', fontWeight: 700, color: selfTestRunning ? '#fb923c' : (selfTestResults.db === 'passed' ? '#4ade80' : (selfTestResults.db === 'disabled' ? '#fb923c' : (selfTestResults.db === 'failed' ? '#f87171' : '#a1a1aa'))) }}>
+                            {selfTestRunning ? 'CONNECTING' : (selfTestResults.db === 'passed' ? 'CONNECTED' : (selfTestResults.db === 'disabled' ? 'LOCAL PWA' : (selfTestResults.db === 'failed' ? 'SYNC ERROR' : 'UNTESTED')))}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Latency Meter Card */}
+                      <div style={{ background: '#070707', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 500 }}>Diagnostic Ping</span>
+                        <span style={{
+                          fontSize: '0.9rem',
+                          fontWeight: 800,
+                          color: !selfTestResults.latency ? '#a1a1aa' : (selfTestResults.latency < 250 ? '#4ade80' : (selfTestResults.latency < 600 ? '#fb923c' : '#f87171'))
+                        }}>
+                          {selfTestResults.latency ? `${selfTestResults.latency} ms` : '-- ms'}
+                        </span>
+                      </div>
+
+                      {/* Stream Protocol Context Card */}
+                      <div style={{ background: '#070707', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 500 }}>Active Transport</span>
+                        <span style={{ fontSize: '0.9rem', fontWeight: 800, color: '#22d3ee' }}>
+                          {streamProtocol === 'proxy' ? 'PROXY' : (streamProtocol === 'web' ? 'ATTESTATION' : 'EMBED')}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Terminal controls row */}
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+                      <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+                        <button
+                          className="btn btn--primary"
+                          onClick={runSelfTest}
+                          disabled={selfTestRunning}
+                          style={{
+                            padding: '8px 16px',
+                            fontSize: '0.85rem',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            borderColor: selfTestRunning ? '#52525b' : 'var(--accent-pink)',
+                            background: selfTestRunning ? 'rgba(255,255,255,0.02)' : 'var(--accent-gradient)',
+                            opacity: selfTestRunning ? 0.7 : 1,
+                            cursor: selfTestRunning ? 'not-allowed' : 'pointer'
+                          }}
+                        >
+                          {selfTestRunning ? (
+                            <>
+                              <svg className="animate-spin" style={{ width: '14px', height: '14px', marginRight: '4px', fill: 'none', stroke: '#fff', strokeWidth: 2 }} viewBox="0 0 24 24">
+                                <circle cx="12" cy="12" r="10" stroke="rgba(255,255,255,0.2)"></circle>
+                                <path d="M4 12a8 8 0 018-8v8H4z" fill="#fff"></path>
+                              </svg>
+                              Running Attestation...
+                            </>
+                          ) : 'Run Full Diagnostics'}
+                        </button>
+
+                        <button
+                          className="btn btn--ghost"
+                          onClick={() => {
+                            navigator.clipboard.writeText(debugLogs.join('\n'));
+                            setLogsCopied(true);
+                            setTimeout(() => setLogsCopied(false), 2000);
+                          }}
+                          style={{ padding: '8px 16px', fontSize: '0.85rem', color: logsCopied ? '#4ade80' : '#fff', borderColor: logsCopied ? '#4ade80' : 'var(--border-color)' }}
+                        >
+                          {logsCopied ? '✓ Copied Logs' : 'Copy Logs'}
+                        </button>
+
+                        <button
+                          className="btn btn--ghost"
+                          onClick={() => setDebugLogs([])}
+                          style={{ padding: '8px 16px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}
+                        >
+                          Clear
+                        </button>
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        {/* Auto scroll toggle checkbox */}
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', userSelect: 'none', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                          <input
+                            type="checkbox"
+                            checked={terminalAutoScroll}
+                            onChange={(e) => setTerminalAutoScroll(e.target.checked)}
+                            style={{ cursor: 'pointer', accentColor: 'var(--accent-pink)' }}
+                          />
+                          Auto-Scroll
+                        </label>
+
+                        {/* Search / Filter input */}
+                        <input
+                          type="text"
+                          placeholder="Filter logs..."
+                          value={terminalFilter}
+                          onChange={(e) => setTerminalFilter(e.target.value)}
+                          style={{
+                            padding: '8px 12px',
+                            background: '#0a0a0a',
+                            border: '1px solid var(--border-color)',
+                            borderRadius: '8px',
+                            fontSize: '0.8rem',
+                            color: '#fff',
+                            outline: 'none',
+                            width: '160px',
+                            transition: 'all 0.15s ease'
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Cyber Terminal Window */}
+                    <div style={{
+                      background: '#030303',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '12px',
+                      padding: '16px',
+                      height: '240px',
+                      overflowY: 'auto',
+                      fontFamily: 'Consolas, Menlo, Monaco, "Courier New", monospace',
+                      fontSize: '0.75rem',
+                      lineHeight: 1.5,
+                      boxShadow: 'inset 0 4px 20px rgba(0, 0, 0, 0.8)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '4px'
+                    }}>
+                      {/* Filter logic */}
+                      {(() => {
+                        const logs = debugLogs.filter(log =>
+                          log.toLowerCase().includes(terminalFilter.toLowerCase())
+                        );
+
+                        if (logs.length === 0) {
+                          return (
+                            <div style={{ color: 'var(--text-muted)', fontStyle: 'italic', padding: '8px 0' }}>
+                              -- No matching trace logs. Console active and waiting. --
+                            </div>
+                          );
+                        }
+
+                        return logs.map((log, index) => {
+                          // Extract timestamp, category, and message
+                          // e.g. [12:04:12 PM] [SYSTEM] Loaded active profile
+                          const timestampMatch = log.match(/^\[(.*?)\]/);
+                          const categoryMatch = log.match(/\]\s*\[(SYSTEM|PLAYER|STREAM|DATABASE|AUTH|DIAGNOSTICS|ERROR)\]/i);
+                          
+                          let timestamp = '';
+                          let category = 'SYSTEM';
+                          let message = log;
+
+                          if (timestampMatch) {
+                            timestamp = timestampMatch[0];
+                            message = message.substring(timestampMatch[0].length).trim();
+                          }
+
+                          if (categoryMatch) {
+                            category = categoryMatch[1].toUpperCase();
+                            // remove the [CATEGORY] part from message
+                            message = message.replace(`[${categoryMatch[1]}]`, '').trim();
+                          }
+
+                          // Get category colors
+                          let categoryColor = '#cbd5e1'; // slate/white
+                          let glowStyle = {};
+                          if (category === 'PLAYER') {
+                            categoryColor = '#22d3ee'; // cyan
+                          } else if (category === 'STREAM') {
+                            categoryColor = '#e879f9'; // purple/pink
+                          } else if (category === 'DATABASE') {
+                            categoryColor = '#fb923c'; // orange
+                          } else if (category === 'AUTH') {
+                            categoryColor = '#34d399'; // emerald
+                          } else if (category === 'DIAGNOSTICS') {
+                            categoryColor = '#4ade80'; // lime
+                            glowStyle = { textShadow: '0 0 4px rgba(74, 222, 128, 0.4)' };
+                          } else if (category === 'ERROR') {
+                            categoryColor = '#f87171'; // red
+                            glowStyle = { textShadow: '0 0 6px rgba(248, 113, 113, 0.6)', animation: 'blink 1.5s infinite alternate' };
+                          }
+
+                          return (
+                            <div key={index} style={{ display: 'flex', gap: '8px', wordBreak: 'break-all', alignItems: 'flex-start' }}>
+                              <span style={{ color: 'var(--text-muted)', flexShrink: 0 }}>{timestamp}</span>
+                              <span style={{ color: categoryColor, fontWeight: 700, flexShrink: 0, ...glowStyle }}>
+                                [{category}]
+                              </span>
+                              <span style={{ color: category === 'ERROR' ? '#f87171' : 'var(--text-primary)', ...glowStyle }}>
+                                {message}
+                              </span>
+                            </div>
+                          );
+                        });
+                      })()}
+                      
+                      {/* Anchor element for scrolling + blinking cursor */}
+                      <div ref={terminalEndRef} style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px' }}>
+                        <span style={{ color: '#4ade80', fontWeight: 700 }}>spice-core@diagnostics ~ %</span>
+                        <div style={{
+                          width: '6px',
+                          height: '12px',
+                          background: '#4ade80',
+                          animation: 'blink 1s step-end infinite',
+                          boxShadow: '0 0 6px #4ade80'
+                        }}></div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}
