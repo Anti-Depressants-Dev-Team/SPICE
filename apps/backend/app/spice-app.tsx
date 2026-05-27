@@ -238,52 +238,14 @@ export default function SpiceApp() {
   const [selectedPlaylist, setSelectedPlaylist] = useState<Playlist | null>(null);
 
   // Settings Configuration states
-  const [accentTheme, setAccentTheme] = useState<'pink' | 'blue' | 'orange' | 'green' | 'gold'>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('spice_accent_theme');
-      return (saved as 'pink' | 'blue' | 'orange' | 'green' | 'gold') || 'pink';
-    }
-    return 'pink';
-  });
-  const [audioQuality, setAudioQuality] = useState<'standard' | 'high' | 'low'>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('spice_audio_quality');
-      return (saved as 'standard' | 'high' | 'low') || 'standard';
-    }
-    return 'standard';
-  });
-  const [streamProtocol, setStreamProtocol] = useState<'proxy' | 'web' | 'embed'>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('spice_stream_protocol');
-      return (saved as 'proxy' | 'web' | 'embed') || 'proxy';
-    }
-    return 'proxy';
-  });
+  const [accentTheme, setAccentTheme] = useState<'pink' | 'blue' | 'orange' | 'green' | 'gold'>('pink');
+  const [audioQuality, setAudioQuality] = useState<'standard' | 'high' | 'low'>('standard');
+  const [streamProtocol, setStreamProtocol] = useState<'proxy' | 'web' | 'embed'>('proxy');
   const [showQueueDrawer, setShowQueueDrawer] = useState(false);
 
   // ── Multi-Profile Accounts Setup ──────────────────────────────────
-  const [profiles, setProfiles] = useState<UserProfile[]>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('spice_profiles_list');
-      if (saved) {
-        try {
-          const list = JSON.parse(saved);
-          if (list.length > 0) return list;
-        } catch (e) {
-          console.error(e);
-        }
-      }
-    }
-    return [initialDefaultProfile];
-  });
-
-  const [activeProfileId, setActiveProfileId] = useState<string>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('spice_active_profile_id');
-      return saved || 'default';
-    }
-    return 'default';
-  });
+  const [profiles, setProfiles] = useState<UserProfile[]>([initialDefaultProfile]);
+  const [activeProfileId, setActiveProfileId] = useState<string>('default');
 
   const activeProfile = profiles.find(p => p.id === activeProfileId) || profiles[0] || initialDefaultProfile;
 
@@ -379,39 +341,14 @@ export default function SpiceApp() {
   });
   const [syncingStatus, setSyncingStatus] = useState<'idle' | 'syncing' | 'success' | 'error' | null>(null);
   const [dbError, setDbError] = useState<string | null>(null);
-  const [isLocalDbFallback, setIsLocalDbFallback] = useState<boolean>(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('spice_local_db_fallback') === 'true';
-    }
-    return false;
-  });
-  const [playerPlacement, setPlayerPlacement] = useState<'bottom' | 'top'>(() => {
-    if (typeof window !== 'undefined') {
-      return (localStorage.getItem('spice_player_placement') as 'bottom' | 'top') || 'bottom';
-    }
-    return 'bottom';
-  });
-  const [playerViewMode, setPlayerViewMode] = useState<'bar' | 'expanded' | 'mini'>(() => {
-    if (typeof window !== 'undefined') {
-      return (localStorage.getItem('spice_player_view_mode') as 'bar' | 'expanded' | 'mini') || 'bar';
-    }
-    return 'bar';
-  });
+  const [isLocalDbFallback, setIsLocalDbFallback] = useState<boolean>(false);
+  const [playerPlacement, setPlayerPlacement] = useState<'bottom' | 'top'>('bottom');
+  const [playerViewMode, setPlayerViewMode] = useState<'bar' | 'expanded' | 'mini'>('bar');
   const [miniPlayerPos, setMiniPlayerPos] = useState<{ x: number; y: number } | null>(null);
   const [isDraggingMini, setIsDraggingMini] = useState(false);
   const dragStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-  const [isShuffle, setIsShuffle] = useState<boolean>(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('spice_is_shuffle') === 'true';
-    }
-    return false;
-  });
-  const [repeatMode, setRepeatMode] = useState<'none' | 'all' | 'one'>(() => {
-    if (typeof window !== 'undefined') {
-      return (localStorage.getItem('spice_repeat_mode') as 'none' | 'all' | 'one') || 'all';
-    }
-    return 'all';
-  });
+  const [isShuffle, setIsShuffle] = useState<boolean>(false);
+  const [repeatMode, setRepeatMode] = useState<'none' | 'all' | 'one'>('all');
   const [expandedTab, setExpandedTab] = useState<'controls' | 'queue' | 'lyrics'>('controls');
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
@@ -448,6 +385,73 @@ export default function SpiceApp() {
       return updated;
     });
   };
+
+  const [isMounted, setIsMounted] = useState(false);
+
+  // Load localStorage states safely on client mount to prevent SSR hydration mismatch
+  useEffect(() => {
+    setIsMounted(true);
+    if (typeof window !== 'undefined') {
+      const savedTheme = localStorage.getItem('spice_accent_theme');
+      if (savedTheme) setAccentTheme(savedTheme as any);
+
+      const savedQuality = localStorage.getItem('spice_audio_quality');
+      if (savedQuality) setAudioQuality(savedQuality as any);
+
+      const savedProtocol = localStorage.getItem('spice_stream_protocol');
+      if (savedProtocol) setStreamProtocol(savedProtocol as any);
+
+      const savedLocalDb = localStorage.getItem('spice_local_db_fallback');
+      if (savedLocalDb) setIsLocalDbFallback(savedLocalDb === 'true');
+
+      const savedPlacement = localStorage.getItem('spice_player_placement');
+      if (savedPlacement) setPlayerPlacement(savedPlacement as any);
+
+      const savedViewMode = localStorage.getItem('spice_player_view_mode');
+      if (savedViewMode) setPlayerViewMode(savedViewMode as any);
+
+      const savedShuffle = localStorage.getItem('spice_is_shuffle');
+      if (savedShuffle) setIsShuffle(savedShuffle === 'true');
+
+      const savedRepeat = localStorage.getItem('spice_repeat_mode');
+      if (savedRepeat) setRepeatMode(savedRepeat as any);
+
+      const savedProfiles = localStorage.getItem('spice_profiles_list');
+      const savedActiveId = localStorage.getItem('spice_active_profile_id') || 'default';
+      
+      let parsedProfiles = [initialDefaultProfile];
+      if (savedProfiles) {
+        try {
+          const list = JSON.parse(savedProfiles);
+          if (list.length > 0) {
+            parsedProfiles = list;
+            setProfiles(list);
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      }
+
+      const activeProf = parsedProfiles.find(p => p.id === savedActiveId) || parsedProfiles[0];
+      if (activeProf) {
+        setActiveProfileId(activeProf.id);
+        setLikedTracks(new Set(activeProf.likedTracks));
+        setLikedTrackDetails(activeProf.likedTrackDetails || {});
+        setCustomPlaylists(activeProf.customPlaylists || []);
+        setHistory(activeProf.history || []);
+        setEditName(activeProf.displayName);
+        setEditBio(activeProf.bio);
+        setEditGradient(activeProf.gradient);
+        setEditPasscode(activeProf.passcode || '');
+
+        if (activeProf.history && activeProf.history.length > 0) {
+          setCurrentTrack(activeProf.history[0]);
+          setQueue([activeProf.history[0]]);
+        }
+      }
+    }
+  }, []);
+
   // Fetch dynamic content on mount
   useEffect(() => {
     async function loadHomeContent() {
@@ -1619,7 +1623,7 @@ export default function SpiceApp() {
         </div>
 
         <div className="sidebar__playlists">
-          {customPlaylists.length === 0 ? (
+          {!isMounted || customPlaylists.length === 0 ? (
             <div className="sidebar__empty">No playlists yet</div>
           ) : (
             customPlaylists.map(pl => (
