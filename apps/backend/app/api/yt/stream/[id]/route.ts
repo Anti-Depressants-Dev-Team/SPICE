@@ -58,22 +58,19 @@ export async function GET(
   }
 
   try {
-    console.log(`[stream-proxy] Fetching upstream: ${upstreamUrl.substring(0, 100)}...`);
-    console.log(`[stream-proxy] Request headers:`, JSON.stringify(headers));
-    const upstream = await fetch(upstreamUrl, { headers });
-
-    console.log(`[stream-proxy] Upstream response status: ${upstream.status}`);
-    console.log(`[stream-proxy] Upstream response headers:`, JSON.stringify(Object.fromEntries(upstream.headers.entries())));
+    let upstream;
+    try {
+      console.log(`[stream-proxy] Fetching upstream: ${upstreamUrl.substring(0, 100)}...`);
+      upstream = await fetch(upstreamUrl, { headers });
+      console.log(`[stream-proxy] Upstream response status: ${upstream.status}`);
+    } catch (fetchErr) {
+      console.warn(`[stream-proxy] Proxy fetch failed. Falling back to HTTP 307 Redirect. Error:`, fetchErr);
+      return Response.redirect(upstreamUrl, 307);
+    }
 
     if (!upstream.ok && upstream.status !== 206) {
-      console.error(`[stream-proxy] Upstream failed with status ${upstream.status}`);
-      return jsonResponse(
-        {
-          error: 'upstream_failed',
-          message: `YouTube returned ${upstream.status}. The stream may have expired.`,
-        },
-        { status: 502 },
-      );
+      console.warn(`[stream-proxy] Upstream failed with status ${upstream.status}. Falling back to HTTP 307 Redirect.`);
+      return Response.redirect(upstreamUrl, 307);
     }
 
     // Build response headers for the browser.
