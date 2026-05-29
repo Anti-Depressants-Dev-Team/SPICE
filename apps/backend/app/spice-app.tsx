@@ -833,6 +833,10 @@ export default function SpiceApp() {
       const likesRes = await fetch('/api/sync/likes', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
+      if (!likesRes.ok) {
+        const errJson = await likesRes.json().catch(() => ({}));
+        throw new Error(errJson.message || `Failed to retrieve favorites (Status ${likesRes.status})`);
+      }
       const likesData = await likesRes.json();
       const serverLikes = likesData.likedTracks ?? [];
 
@@ -848,6 +852,10 @@ export default function SpiceApp() {
       const histRes = await fetch('/api/sync/history', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
+      if (!histRes.ok) {
+        const errJson = await histRes.json().catch(() => ({}));
+        throw new Error(errJson.message || `Failed to retrieve history (Status ${histRes.status})`);
+      }
       const histData = await histRes.json();
       const serverHistory = histData.history ?? [];
 
@@ -855,6 +863,10 @@ export default function SpiceApp() {
       const plRes = await fetch('/api/sync/playlists', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
+      if (!plRes.ok) {
+        const errJson = await plRes.json().catch(() => ({}));
+        throw new Error(errJson.message || `Failed to retrieve playlists (Status ${plRes.status})`);
+      }
       const plData = await plRes.json();
       const serverPlaylists = plData.playlists ?? [];
 
@@ -862,6 +874,10 @@ export default function SpiceApp() {
       const profRes = await fetch('/api/sync/profiles', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
+      if (!profRes.ok) {
+        const errJson = await profRes.json().catch(() => ({}));
+        throw new Error(errJson.message || `Failed to retrieve profiles (Status ${profRes.status})`);
+      }
       const profData = await profRes.json();
       const serverProfiles = profData.profiles ?? [];
 
@@ -969,7 +985,7 @@ export default function SpiceApp() {
       }
 
       // 4. Push Merged State to Cloud Database
-      await fetch('/api/sync/likes', {
+      const postLikesRes = await fetch('/api/sync/likes', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -977,8 +993,12 @@ export default function SpiceApp() {
         },
         body: JSON.stringify({ likedTracks: mergedLikesArray })
       });
+      if (!postLikesRes.ok) {
+        const errJson = await postLikesRes.json().catch(() => ({}));
+        throw new Error(errJson.message || `Failed to synchronize favorites (Status ${postLikesRes.status})`);
+      }
 
-      await fetch('/api/sync/history', {
+      const postHistRes = await fetch('/api/sync/history', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -986,8 +1006,12 @@ export default function SpiceApp() {
         },
         body: JSON.stringify({ history: mergedHistory })
       });
+      if (!postHistRes.ok) {
+        const errJson = await postHistRes.json().catch(() => ({}));
+        throw new Error(errJson.message || `Failed to synchronize history (Status ${postHistRes.status})`);
+      }
 
-      await fetch('/api/sync/playlists', {
+      const postPlRes = await fetch('/api/sync/playlists', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -995,8 +1019,12 @@ export default function SpiceApp() {
         },
         body: JSON.stringify({ playlists: mergedPlaylists })
       });
+      if (!postPlRes.ok) {
+        const errJson = await postPlRes.json().catch(() => ({}));
+        throw new Error(errJson.message || `Failed to synchronize playlists (Status ${postPlRes.status})`);
+      }
 
-      await fetch('/api/sync/profiles', {
+      const postProfRes = await fetch('/api/sync/profiles', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1004,6 +1032,10 @@ export default function SpiceApp() {
         },
         body: JSON.stringify({ profiles: finalProfiles })
       });
+      if (!postProfRes.ok) {
+        const errJson = await postProfRes.json().catch(() => ({}));
+        throw new Error(errJson.message || `Failed to synchronize profiles (Status ${postProfRes.status})`);
+      }
 
       logDebug('database', `Merged state with cloud database successfully. Merged: ${mergedLikesArray.length} likes, ${mergedHistory.length} history items, ${mergedPlaylists.length} playlists, ${finalProfiles.length} profiles.`);
       setSyncingStatus('success');
