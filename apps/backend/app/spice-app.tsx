@@ -554,9 +554,9 @@ export default function SpiceApp() {
     try {
       logDebug('system', 'Initializing YouTube Embed Player Instance...');
       ytPlayerRef.current = new (window as any).YT.Player('spice-yt-iframe-container', {
-        height: '1',
-        width: '1',
-        videoId: 'Starboy',
+        height: '100%',
+        width: '100%',
+        videoId: 'J7p4bzqLvCw',
         playerVars: {
           autoplay: 0,
           controls: 0,
@@ -632,10 +632,16 @@ export default function SpiceApp() {
       initializeYtPlayer();
     };
 
-    if ((window as any).YT && (window as any).YT.Player) {
-      logDebug('system', 'YouTube Iframe API libraries detected in window scope on boot. Initializing instances.');
-      initializeYtPlayer();
-    }
+    // Prevent race conditions where window.YT is defined but window.YT.Player is not yet populated
+    const checkInterval = setInterval(() => {
+      if ((window as any).YT && (window as any).YT.Player) {
+        logDebug('system', 'YouTube Iframe API libraries detected. Initializing instances.');
+        initializeYtPlayer();
+        clearInterval(checkInterval);
+      }
+    }, 100);
+
+    return () => clearInterval(checkInterval);
   }, [initializeYtPlayer]);
 
   // Track progress updates for Embed mode via standard interval
@@ -1869,19 +1875,53 @@ export default function SpiceApp() {
         />
       )}
 
-      {/* Hidden YouTube Iframe Player for Embed Fallback Mode */}
+      {/* Floating Picture-in-Picture YouTube Player for Embed Mode */}
       <div 
-        id="spice-yt-iframe-container" 
         style={{ 
-          position: 'absolute', 
-          width: '1px', 
-          height: '1px', 
-          opacity: 0, 
-          pointerEvents: 'none', 
-          left: '-9999px',
-          top: '-9999px'
-        }} 
-      />
+          position: 'fixed', 
+          bottom: '80px',
+          right: '16px',
+          width: '280px',
+          background: 'rgba(15, 15, 15, 0.85)',
+          border: '1px solid rgba(255, 255, 255, 0.1)',
+          borderRadius: '16px',
+          boxShadow: '0 16px 48px rgba(0, 0, 0, 0.6), 0 0 20px rgba(236, 72, 153, 0.15)',
+          backdropFilter: 'blur(24px)',
+          WebkitBackdropFilter: 'blur(24px)',
+          zIndex: 9998,
+          display: streamProtocol === 'embed' ? 'flex' : 'none',
+          flexDirection: 'column',
+          overflow: 'hidden',
+          transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)'
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', fontWeight: 600, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            <span style={{ display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%', background: isPlaying ? '#10b981' : '#f59e0b', boxShadow: isPlaying ? '0 0 8px #10b981' : 'none' }}></span>
+            YouTube Embed Player
+          </div>
+          <button 
+            onClick={() => {
+              setStreamProtocol('proxy');
+              localStorage.setItem('spice_stream_protocol', 'proxy');
+              logDebug('system', 'Switched stream endpoint back to direct proxy.');
+            }}
+            style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', fontSize: '0.75rem', padding: '2px', outline: 'none' }}
+            title="Switch to Proxy Mode"
+          >
+            ✕
+          </button>
+        </div>
+        <div 
+          id="spice-yt-iframe-container" 
+          style={{ 
+            width: '100%', 
+            height: '160px',
+            background: '#000',
+            pointerEvents: 'auto'
+          }} 
+        />
+      </div>
 
       {/* ═══ Sidebar Panel ═══ */}
       <aside className="sidebar">
