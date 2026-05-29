@@ -89,14 +89,19 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
+  console.log(`[LYRICS API] Received request for track ID: "${id}"`);
+
   try {
     // 1. Fetch details from YouTube
+    console.log(`[LYRICS API] Querying InnerTube for track ID: "${id}"`);
     const details = await getTrackDetails(id);
     const { title, artists, durationMs } = details.track;
     const durationSec = durationMs ? Math.round(durationMs / 1000) : 0;
 
     const primaryArtist = artists?.[0]?.name || '';
     const cleanedTitle = cleanTrackTitle(title);
+
+    console.log(`[LYRICS API] Resolved track info: Title="${title}" (Cleaned: "${cleanedTitle}"), Artist="${primaryArtist}", Duration=${durationSec}s`);
 
     let plainLyrics = '';
     let syncedLyrics = '';
@@ -115,42 +120,55 @@ export async function GET(
 
         // Attempt 1: Direct get endpoint
         const getUrl = `https://lrclib.net/api/get?${queryParams.toString()}`;
+        console.log(`[LYRICS API] Querying LrcLib GET: ${getUrl}`);
         const res = await fetch(getUrl, {
           headers: { 'User-Agent': 'SPICE-Music-Player/1.0 (GitHub/razva)' },
           signal: AbortSignal.timeout(4000), // 4s timeout
         });
 
         if (res.ok) {
+          console.log(`[LYRICS API] LrcLib GET status 200 OK. Parsing synced lyrics.`);
           const data = (await res.json()) as LrcLibTrack;
           if (data.syncedLyrics) {
             syncedLyrics = data.syncedLyrics;
             plainLyrics = data.plainLyrics || '';
           }
-        } else if (res.status === 404) {
-          // Attempt 2: Fallback search if direct get fails
-          const searchUrl = `https://lrclib.net/api/search?q=${encodeURIComponent(`${cleanedTitle} ${primaryArtist}`)}`;
-          const searchRes = await fetch(searchUrl, {
-            headers: { 'User-Agent': 'SPICE-Music-Player/1.0 (GitHub/razva)' },
-            signal: AbortSignal.timeout(4000),
-          });
+        } else {
+          console.log(`[LYRICS API] LrcLib GET failed with status: ${res.status}`);
+          if (res.status === 404) {
+            // Attempt 2: Fallback search if direct get fails
+            const searchUrl = `https://lrclib.net/api/search?q=${encodeURIComponent(`${cleanedTitle} ${primaryArtist}`)}`;
+            console.log(`[LYRICS API] LrcLib GET 404. Trying search query fallback: ${searchUrl}`);
+            const searchRes = await fetch(searchUrl, {
+              headers: { 'User-Agent': 'SPICE-Music-Player/1.0 (GitHub/razva)' },
+              signal: AbortSignal.timeout(4000),
+            });
 
-          if (searchRes.ok) {
-            const results = (await searchRes.json()) as LrcLibTrack[];
-            // Try to find the first result that has synced lyrics
-            const match = results.find((r) => r.syncedLyrics);
-            if (match && match.syncedLyrics) {
-              syncedLyrics = match.syncedLyrics;
-              plainLyrics = match.plainLyrics || '';
+            if (searchRes.ok) {
+              const results = (await searchRes.json()) as LrcLibTrack[];
+              console.log(`[LYRICS API] LrcLib Search status 200. Results count: ${results.length}`);
+              // Try to find the first result that has synced lyrics
+              const match = results.find((r) => r.syncedLyrics);
+              if (match && match.syncedLyrics) {
+                console.log(`[LYRICS API] Found synced lyrics match in search results: id=${match.id}`);
+                syncedLyrics = match.syncedLyrics;
+                plainLyrics = match.plainLyrics || '';
+              } else {
+                console.log(`[LYRICS API] No synced lyrics found in search result records.`);
+              }
+            } else {
+              console.log(`[LYRICS API] LrcLib Search query failed with status: ${searchRes.status}`);
             }
           }
         }
       } catch (err) {
-        console.error('Failed fetching from LrcLib:', err);
+        console.error('[LYRICS API] Failed fetching from LrcLib:', err);
       }
     }
 
     // 3. Fallback Generation if no synced lyrics found
     if (!syncedLyrics) {
+      console.log(`[LYRICS API] No synced lyrics located. Triggering dynamic, themed procedural lyric generation.`);
       isFallback = true;
       const fallback = generateThemedLyrics(title, primaryArtist, durationMs || 180000);
       plainLyrics = fallback.plainLyrics;
@@ -167,7 +185,7 @@ export async function GET(
       isFallback,
     });
   } catch (error) {
-    console.error('Lyrics API error:', error);
+    console.error('[LYRICS API] Fatal route processing error:', error);
     // If anything breaks, return a safe generated response so the app doesn't crash
     const fallback = generateThemedLyrics('Unknown Track', 'Unknown Artist', 180000);
     return jsonResponse({

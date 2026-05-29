@@ -474,7 +474,7 @@ export default function SpiceApp() {
     isFallback: boolean;
   } | null>(null);
   const [lyricsLoading, setLyricsLoading] = useState(false);
-  const [isKaraokeMode, setIsKaraokeMode] = useState(true);
+  const [isKaraokeMode, setIsKaraokeMode] = useState(false);
   const lyricsContainerRef = useRef<HTMLDivElement | null>(null);
 
   const [authEmail, setAuthEmail] = useState('');
@@ -1371,18 +1371,34 @@ export default function SpiceApp() {
 
     let active = true;
     setLyricsLoading(true);
+    logDebug('lyrics', `Initiated lyrics resolution flow for "${currentTrack.title}" (ID: ${currentTrack.id})`);
 
     const fetchLyrics = async () => {
       try {
-        const res = await fetch(`/api/yt/lyrics/${currentTrack.id}`);
-        if (!res.ok) throw new Error('Failed to fetch lyrics');
+        const fetchUrl = `/api/yt/lyrics/${currentTrack.id}`;
+        logDebug('lyrics', `Fetching lyrics from API endpoint: ${fetchUrl}`);
+        const res = await fetch(fetchUrl);
+        if (!res.ok) {
+          throw new Error(`HTTP error ${res.status}: ${res.statusText}`);
+        }
         const data = await res.json();
-        if (!active) return;
+        if (!active) {
+          logDebug('lyrics', `Skipping state commit for track "${currentTrack.title}" due to fast skip`);
+          return;
+        }
 
+        logDebug('lyrics', `API Response successfully parsed for "${data.title || currentTrack.title}". Fallback engine used: ${data.isFallback ? 'YES' : 'NO'}`);
         const totalSec = currentTrack.durationMs 
           ? currentTrack.durationMs / 1000 
           : (data.durationMs ? data.durationMs / 1000 : 180);
+        
+        logDebug('lyrics', `Parsing LRC time-tags (Total duration: ${Math.round(totalSec)}s)`);
         const parsedLines = parseLRC(data.syncedLyrics, totalSec);
+        logDebug('lyrics', `Successfully synchronized ${parsedLines.length} lyric lines with proportional word-timing`);
+
+        if (parsedLines.length > 0) {
+          logDebug('lyrics', `Sync sample: [Line 1 Time: ${formatTime(parsedLines[0].time)}] "${parsedLines[0].text}"`);
+        }
 
         setLyricsData({
           lines: parsedLines,
@@ -1391,8 +1407,10 @@ export default function SpiceApp() {
           isFallback: !!data.isFallback,
         });
       } catch (err) {
-        console.error('Error fetching lyrics on client:', err);
+        logDebug('lyrics', `Error during lyrics resolution: ${err instanceof Error ? err.message : String(err)}`);
         if (!active) return;
+        
+        logDebug('lyrics', `Invoking client-side local safety net to construct timed atmospheric wave flow`);
         const totalSec = currentTrack.durationMs ? currentTrack.durationMs / 1000 : 180;
         const fallbackText = `🎵 [Instrumental Vibe]\n✨ Now Streaming: ${currentTrack.title}\n💫 Let the rhythm wash over you...`;
         const parsedLines = parseLRC(fallbackText, totalSec);
