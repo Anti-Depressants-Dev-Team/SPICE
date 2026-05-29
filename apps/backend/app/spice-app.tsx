@@ -230,6 +230,27 @@ const formatTime = (seconds: number) => {
   return `${m}:${s.toString().padStart(2, '0')}`;
 };
 
+const sanitizePfpUrl = (url: string): string => {
+  let cleaned = url.trim();
+  if (!cleaned) return '';
+
+  // Imgur gallery/album URLs: https://imgur.com/a/abc123x or https://imgur.com/gallery/abc123x
+  const albumMatch = cleaned.match(/imgur\.com\/(?:a|gallery|r)\/([a-zA-Z0-9]+)/);
+  if (albumMatch && albumMatch[1]) {
+    return `https://i.imgur.com/${albumMatch[1]}.png`;
+  }
+
+  // Imgur direct image redirection helper: https://imgur.com/abc123x
+  if (cleaned.includes('imgur.com') && !cleaned.includes('i.imgur.com') && !/\.(png|jpg|jpeg|gif|webp)$/i.test(cleaned)) {
+    const idMatch = cleaned.match(/imgur\.com\/([a-zA-Z0-9]+)/);
+    if (idMatch && idMatch[1]) {
+      return `https://i.imgur.com/${idMatch[1]}.png`;
+    }
+  }
+
+  return cleaned;
+};
+
 const initialDefaultProfile: UserProfile = {
   id: 'default',
   displayName: 'Spice Listener',
@@ -1575,6 +1596,7 @@ export default function SpiceApp() {
     if (!newProfileName.trim()) return;
 
     const newId = 'profile_' + Date.now();
+    const sanitizedUrl = sanitizePfpUrl(newProfileAvatarUrl);
     const newProf: UserProfile = {
       id: newId,
       displayName: newProfileName.trim(),
@@ -1587,7 +1609,7 @@ export default function SpiceApp() {
       likedTrackDetails: {},
       customPlaylists: [],
       history: [],
-      avatarUrl: newProfileAvatarUrl.trim() || undefined
+      avatarUrl: sanitizedUrl || undefined
     };
 
     const updatedList = [...profiles, newProf];
@@ -1664,12 +1686,13 @@ export default function SpiceApp() {
       return;
     }
 
+    const sanitizedUrl = sanitizePfpUrl(editAvatarUrl);
     updateActiveProfileData({
       displayName: editName.trim() || 'Spice Listener',
       bio: editBio.trim() || 'No bio written yet.',
       gradient: editGradient,
       passcode: passcodeVal ? passcodeVal : undefined,
-      avatarUrl: editAvatarUrl.trim() || undefined,
+      avatarUrl: sanitizedUrl || undefined,
     });
 
     setIsEditingProfile(false);
