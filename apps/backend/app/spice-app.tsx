@@ -1943,7 +1943,7 @@ export default function SpiceApp() {
       {isLocked && (
         <div className="passcode-overlay animate-in" style={{ position: 'fixed', inset: 0, background: '#000000', zIndex: 1000, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(32px)' }}>
           <div style={{ textAlign: 'center', maxWidth: '320px', width: '100%', padding: '24px' }}>
-            <div style={{ width: '64px', height: '64px', borderRadius: '16px', background: activeProfile.avatarUrl ? 'none' : activeProfile.gradient, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '2rem', fontWeight: 900, color: '#fff', margin: '0 auto 24px auto', boxShadow: '0 8px 32px rgba(0,0,0,0.5)', overflow: 'hidden' }}>
+            <div style={{ width: '120px', height: '120px', borderRadius: '50%', background: activeProfile.avatarUrl ? 'none' : activeProfile.gradient, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '3.5rem', fontWeight: 900, color: '#fff', margin: '0 auto 24px auto', boxShadow: '0 8px 32px rgba(0,0,0,0.5)', overflow: 'hidden', border: '3px solid var(--accent-pink)' }}>
               {activeProfile.avatarUrl ? (
                 <img src={activeProfile.avatarUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
               ) : (
@@ -2269,7 +2269,7 @@ export default function SpiceApp() {
                         Discover, stream, and sync your favorite music on the ultimate closed-source player.
                       </p>
                     </div>
-                    <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: activeProfile.avatarUrl ? 'none' : activeProfile.gradient, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.75rem', fontWeight: 900, color: '#fff', boxShadow: '0 4px 20px rgba(0,0,0,0.4)', textShadow: activeProfile.avatarUrl ? 'none' : '0 2px 8px rgba(0,0,0,0.3)', flexShrink: 0, overflow: 'hidden' }}>
+                    <div style={{ width: '96px', height: '96px', borderRadius: '50%', background: activeProfile.avatarUrl ? 'none' : activeProfile.gradient, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '2.5rem', fontWeight: 900, color: '#fff', boxShadow: '0 8px 32px rgba(0,0,0,0.4)', textShadow: activeProfile.avatarUrl ? 'none' : '0 2px 8px rgba(0,0,0,0.3)', flexShrink: 0, overflow: 'hidden', border: '3px solid rgba(255, 255, 255, 0.1)' }}>
                       {activeProfile.avatarUrl ? (
                         <img src={activeProfile.avatarUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                       ) : (
@@ -2694,7 +2694,7 @@ export default function SpiceApp() {
                   {/* Profile view */}
                   <div className="profile-card animate-in" style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '32px', display: 'flex', alignItems: 'center', gap: '24px' }}>
                     <div 
-                      style={{ width: '80px', height: '80px', borderRadius: '50%', background: activeProfile.avatarUrl ? 'none' : activeProfile.gradient, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '2.5rem', fontWeight: 900, color: '#fff', textShadow: activeProfile.avatarUrl ? 'none' : '0 4px 12px rgba(0,0,0,0.3)', flexShrink: 0, overflow: 'hidden' }}
+                      style={{ width: '120px', height: '120px', borderRadius: '50%', background: activeProfile.avatarUrl ? 'none' : activeProfile.gradient, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '3.5rem', fontWeight: 900, color: '#fff', textShadow: activeProfile.avatarUrl ? 'none' : '0 4px 12px rgba(0,0,0,0.3)', flexShrink: 0, overflow: 'hidden', border: '4px solid rgba(255, 255, 255, 0.12)', boxShadow: '0 8px 32px rgba(0,0,0,0.3)' }}
                     >
                       {activeProfile.avatarUrl ? (
                         <img src={activeProfile.avatarUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
@@ -2747,7 +2747,7 @@ export default function SpiceApp() {
                           onClick={() => switchProfile(p.id)}
                           style={{ position: 'relative', background: 'var(--card-bg)', border: isActive ? '2px solid var(--accent-pink)' : '1px solid var(--border-color)', padding: '16px', borderRadius: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', minWidth: '180px', transition: 'all 0.15s ease' }}
                         >
-                          <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: p.avatarUrl ? 'none' : p.gradient, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.25rem', fontWeight: 800, color: '#fff', overflow: 'hidden', flexShrink: 0 }}>
+                          <div style={{ width: '56px', height: '56px', borderRadius: '50%', background: p.avatarUrl ? 'none' : p.gradient, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.5rem', fontWeight: 800, color: '#fff', overflow: 'hidden', flexShrink: 0, border: isActive ? '2px solid var(--accent-pink)' : '2px solid rgba(255, 255, 255, 0.08)', boxShadow: '0 4px 12px rgba(0,0,0,0.2)' }}>
                             {p.avatarUrl ? (
                               <img src={p.avatarUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                             ) : (
