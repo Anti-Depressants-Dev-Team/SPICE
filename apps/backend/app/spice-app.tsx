@@ -444,6 +444,7 @@ export default function SpiceApp() {
   };
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const ytPlayerRef = useRef<any>(null);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // ── Sync Active Profile back to Profiles DB Helper ──────────────
@@ -526,6 +527,95 @@ export default function SpiceApp() {
       }
     }
   }, []);
+
+  // ── YouTube Embedded Player Fallback API Integration ──────────────
+  const initializeYtPlayer = useCallback(() => {
+    if (typeof window === 'undefined' || ytPlayerRef.current) return;
+    try {
+      ytPlayerRef.current = new (window as any).YT.Player('spice-yt-iframe-container', {
+        height: '1',
+        width: '1',
+        videoId: 'Starboy',
+        playerVars: {
+          autoplay: 0,
+          controls: 0,
+          disablekb: 1,
+          fs: 0,
+          rel: 0,
+          showinfo: 0,
+          iv_load_policy: 3
+        },
+        events: {
+          onReady: (event: any) => {
+            logDebug('system', 'YouTube Iframe Embed Player initialized successfully.');
+            event.target.setVolume(volume);
+          },
+          onStateChange: (event: any) => {
+            const state = event.data;
+            if (state === 1) { // Playing
+              setIsPlaying(true);
+              setIsLoadingStream(false);
+            } else if (state === 2) { // Paused
+              setIsPlaying(false);
+            } else if (state === 0) { // Ended
+              handleAudioEnded();
+            }
+          },
+          onError: (event: any) => {
+            logDebug('error', `YouTube Embed Player error: code ${event.data}`);
+          }
+        }
+      });
+    } catch (e) {
+      console.error('Error initializing YouTube player:', e);
+    }
+  }, [volume, logDebug]);
+
+  // Load YouTube Iframe API on client mount
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    
+    if (!document.getElementById('youtube-iframe-api-script')) {
+      const tag = document.createElement('script');
+      tag.id = 'youtube-iframe-api-script';
+      tag.src = 'https://www.youtube.com/iframe_api';
+      const firstScriptTag = document.getElementsByTagName('script')[0];
+      firstScriptTag.parentNode?.insertBefore(tag, firstScriptTag);
+    }
+
+    (window as any).onYouTubeIframeAPIReady = () => {
+      initializeYtPlayer();
+    };
+
+    if ((window as any).YT && (window as any).YT.Player) {
+      initializeYtPlayer();
+    }
+  }, [initializeYtPlayer]);
+
+  // Track progress updates for Embed mode via standard interval
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isPlaying && streamProtocol === 'embed' && ytPlayerRef.current && typeof ytPlayerRef.current.getCurrentTime === 'function') {
+      interval = setInterval(() => {
+        try {
+          const currentTime = ytPlayerRef.current.getCurrentTime();
+          const durationTime = ytPlayerRef.current.getDuration();
+          setProgress(currentTime);
+          if (durationTime > 0) {
+            setDuration(durationTime);
+          }
+        } catch (e) {}
+      }, 500);
+    }
+    return () => clearInterval(interval);
+  }, [isPlaying, streamProtocol]);
+
+  // Sync volume with Embed Player
+  useEffect(() => {
+    if (streamProtocol === 'embed' && ytPlayerRef.current && typeof ytPlayerRef.current.setVolume === 'function') {
+      ytPlayerRef.current.setVolume(volume);
+    }
+  }, [volume, streamProtocol]);
 
   // Fetch dynamic content on mount
   useEffect(() => {
@@ -872,6 +962,28 @@ export default function SpiceApp() {
 
     try {
       logDebug('player', `Initiating format resolution for track "${track.title}" (ID: ${track.id})`);
+      
+      if (streamProtocol === 'embed') {
+        logDebug('stream', `YouTube Embedded Player active. Loading iframe player for track ID: ${track.id}`);
+        setStreamUrl('youtube-embed-active');
+        setIsLoadingStream(false);
+        setIsPlaying(true);
+
+        const filteredHist = history.filter(t => t.id !== track.id);
+        const newHist = [track, ...filteredHist].slice(0, 50);
+        setHistory(newHist);
+        updateActiveProfileData({
+          history: newHist,
+          songsPlayed: activeProfile.songsPlayed + 1
+        });
+
+        if (ytPlayerRef.current && typeof ytPlayerRef.current.loadVideoById === 'function') {
+          ytPlayerRef.current.loadVideoById(track.id);
+          ytPlayerRef.current.playVideo();
+        }
+        return;
+      }
+
       // Direct stream URL fetch from YouTube endpoint
       const resTrack = await fetch(`/api/yt/track/${encodeURIComponent(track.id)}`);
       if (!resTrack.ok) throw new Error('Could not resolve audio streams for this track.');
@@ -908,6 +1020,16 @@ export default function SpiceApp() {
   const togglePlayPause = () => {
     if (!streamUrl && !isLoadingStream) {
       playTrack(currentTrack);
+      return;
+    }
+    if (streamProtocol === 'embed' && ytPlayerRef.current) {
+      if (isPlaying) {
+        ytPlayerRef.current.pauseVideo();
+        setIsPlaying(false);
+      } else {
+        ytPlayerRef.current.playVideo();
+        setIsPlaying(true);
+      }
       return;
     }
     if (audioRef.current) {
@@ -964,6 +1086,9 @@ export default function SpiceApp() {
     const newProgress = percentage * duration;
 
     setProgress(newProgress);
+    if (streamProtocol === 'embed' && ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
+      ytPlayerRef.current.seekTo(newProgress, true);
+    }
     if (audioRef.current) {
       audioRef.current.currentTime = newProgress;
     }
@@ -971,6 +1096,11 @@ export default function SpiceApp() {
 
   const handlePrev = () => {
     if (progress > 3) {
+      if (streamProtocol === 'embed' && ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
+        ytPlayerRef.current.seekTo(0, true);
+        setProgress(0);
+        return;
+      }
       if (audioRef.current) {
         audioRef.current.currentTime = 0;
         setProgress(0);
@@ -1039,7 +1169,17 @@ export default function SpiceApp() {
   };
 
   const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!audioRef.current || duration === 0) return;
+    if (duration === 0) return;
+    if (streamProtocol === 'embed' && ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const pct = x / rect.width;
+      const seekTime = pct * duration;
+      ytPlayerRef.current.seekTo(seekTime, true);
+      setProgress(seekTime);
+      return;
+    }
+    if (!audioRef.current) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const pct = x / rect.width;
@@ -1644,7 +1784,7 @@ export default function SpiceApp() {
       )}
 
       {/* Hidden Audio Player */}
-      {streamUrl && (
+      {streamUrl && streamUrl !== 'youtube-embed-active' && (
         <audio
           ref={audioRef}
           src={streamUrl}
@@ -1656,6 +1796,20 @@ export default function SpiceApp() {
           onError={handleAudioError}
         />
       )}
+
+      {/* Hidden YouTube Iframe Player for Embed Fallback Mode */}
+      <div 
+        id="spice-yt-iframe-container" 
+        style={{ 
+          position: 'absolute', 
+          width: '1px', 
+          height: '1px', 
+          opacity: 0, 
+          pointerEvents: 'none', 
+          left: '-9999px',
+          top: '-9999px'
+        }} 
+      />
 
       {/* ═══ Sidebar Panel ═══ */}
       <aside className="sidebar">
