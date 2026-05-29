@@ -193,6 +193,7 @@ interface UserProfile {
   likedTrackDetails: Record<string, Track>;
   customPlaylists: Playlist[];
   history: Track[];
+  avatarUrl?: string; // profile picture URL or preset avatar
 }
 
 const PRESET_GRADIENTS = [
@@ -202,6 +203,15 @@ const PRESET_GRADIENTS = [
   'linear-gradient(135deg, #10b981, #059669)',
   'linear-gradient(135deg, #f59e0b, #d97706)',
   'linear-gradient(135deg, #6366f1, #4f46e5)',
+];
+
+const PRESET_AVATARS = [
+  { name: 'Neon DJ', url: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=150&q=80' },
+  { name: 'Synthwave Sunset', url: 'https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?w=150&q=80' },
+  { name: 'Galactic Beats', url: 'https://images.unsplash.com/photo-1614149162883-504ce4d13909?w=150&q=80' },
+  { name: 'Retro Tape', url: 'https://images.unsplash.com/photo-1539625319135-8d4f9c7847a9?w=150&q=80' },
+  { name: 'Cyber Headset', url: 'https://images.unsplash.com/photo-1546435770-a3e426bf472b?w=150&q=80' },
+  { name: 'Music Console', url: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=150&q=80' }
 ];
 
 const genres = [
@@ -275,13 +285,14 @@ export default function SpiceApp() {
   const [newProfileBio, setNewProfileBio] = useState('');
   const [newProfileGradient, setNewProfileGradient] = useState(PRESET_GRADIENTS[0]);
   const [newProfilePasscode, setNewProfilePasscode] = useState('');
+  const [newProfileAvatarUrl, setNewProfileAvatarUrl] = useState('');
 
   // ── Music Core State (Decoupled & Bound to Active Profile) ────────
   const [currentTrack, setCurrentTrack] = useState<Track>({
-    id: 'Starboy',
-    title: 'Starboy',
-    artists: [{ id: 'The Weeknd', name: 'The Weeknd' }],
-    artworkUrl: 'https://lh3.googleusercontent.com/e44T8B4s4HwT1kX5j1Y0qN_fRj5fLwVvDkO04EwU8T2v9K51hVd6qO9yPZ5zPZ5v=w120-h120'
+    id: 'placeholder',
+    title: 'Select a track to play',
+    artists: [{ id: 'Spice', name: 'Spice Player' }],
+    artworkUrl: '/icon.svg'
   });
   
   const [streamUrl, setStreamUrl] = useState<string | null>(null);
@@ -307,6 +318,7 @@ export default function SpiceApp() {
   const [editBio, setEditBio] = useState(activeProfile.bio);
   const [editGradient, setEditGradient] = useState(activeProfile.gradient);
   const [editPasscode, setEditPasscode] = useState(activeProfile.passcode || '');
+  const [editAvatarUrl, setEditAvatarUrl] = useState(activeProfile.avatarUrl || '');
   const [isEditingProfile, setIsEditingProfile] = useState(false);
 
   // Transfer Tool states
@@ -481,6 +493,38 @@ export default function SpiceApp() {
     });
   };
 
+  const autoSyncHistory = (updatedHistory: Track[]) => {
+    if (!cloudToken) return;
+    fetch('/api/sync/history', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${cloudToken}`
+      },
+      body: JSON.stringify({ history: updatedHistory })
+    }).then(res => {
+      if (res.ok) logDebug('database', 'Listening history auto-saved to cloud database.');
+    }).catch(err => {
+      logDebug('error', `Auto-sync history failed: ${err}`);
+    });
+  };
+
+  const autoSyncPlaylists = (updatedPlaylists: Playlist[]) => {
+    if (!cloudToken) return;
+    fetch('/api/sync/playlists', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${cloudToken}`
+      },
+      body: JSON.stringify({ playlists: updatedPlaylists })
+    }).then(res => {
+      if (res.ok) logDebug('database', 'Playlists configuration auto-saved to cloud database.');
+    }).catch(err => {
+      logDebug('error', `Auto-sync playlists failed: ${err}`);
+    });
+  };
+
   const [isMounted, setIsMounted] = useState(false);
 
   // Load localStorage states safely on client mount to prevent SSR hydration mismatch
@@ -538,6 +582,7 @@ export default function SpiceApp() {
         setEditBio(activeProf.bio);
         setEditGradient(activeProf.gradient);
         setEditPasscode(activeProf.passcode || '');
+        setEditAvatarUrl(activeProf.avatarUrl || '');
 
         if (activeProf.history && activeProf.history.length > 0) {
           setCurrentTrack(activeProf.history[0]);
@@ -684,16 +729,16 @@ export default function SpiceApp() {
 
         if (trendData.tracks?.length > 0) {
           setHomeTrending(trendData.tracks);
-          // Set trending pick as default if queue only contains placeholder Starboy
+          // Set trending pick as default if queue only contains placeholder
           const firstTrack = trendData.tracks[0];
           setQueue(prevQueue => {
-            if (prevQueue.length === 1 && prevQueue[0].id === 'Starboy') {
+            if (prevQueue.length === 1 && prevQueue[0].id === 'placeholder') {
               return [firstTrack];
             }
             return prevQueue;
           });
           setCurrentTrack(prevTrack => {
-            if (prevTrack.id === 'Starboy') {
+            if (prevTrack.id === 'placeholder') {
               return firstTrack;
             }
             return prevTrack;
@@ -985,6 +1030,12 @@ export default function SpiceApp() {
 
   // Play a track
   const playTrack = async (track: Track, newQueue?: Track[]) => {
+    if (!track || track.id === 'placeholder') {
+      setIsLoadingStream(false);
+      logDebug('player', 'Ready to stream. Select any track from the lists to begin playback.');
+      return;
+    }
+
     setError(undefined);
     setIsPlaying(false);
     setStreamUrl(null);
@@ -1028,6 +1079,7 @@ export default function SpiceApp() {
           history: newHist,
           songsPlayed: activeProfile.songsPlayed + 1
         });
+        autoSyncHistory(newHist);
 
         if (ytPlayerRef.current && typeof ytPlayerRef.current.loadVideoById === 'function') {
           ytPlayerRef.current.loadVideoById(track.id);
@@ -1059,6 +1111,7 @@ export default function SpiceApp() {
         history: newHist,
         songsPlayed: activeProfile.songsPlayed + 1
       });
+      autoSyncHistory(newHist);
 
     } catch (err: any) {
       console.error(err);
@@ -1081,6 +1134,7 @@ export default function SpiceApp() {
           history: newHist,
           songsPlayed: activeProfile.songsPlayed + 1
         });
+        autoSyncHistory(newHist);
 
         if (ytPlayerRef.current && typeof ytPlayerRef.current.loadVideoById === 'function') {
           ytPlayerRef.current.loadVideoById(track.id);
@@ -1317,6 +1371,7 @@ export default function SpiceApp() {
     const updated = [...customPlaylists, newPlaylist];
     setCustomPlaylists(updated);
     updateActiveProfileData({ customPlaylists: updated });
+    autoSyncPlaylists(updated);
 
     setNewPlTitle('');
     setNewPlDesc('');
@@ -1328,6 +1383,7 @@ export default function SpiceApp() {
     const updated = customPlaylists.filter(pl => pl.id !== playlistId);
     setCustomPlaylists(updated);
     updateActiveProfileData({ customPlaylists: updated });
+    autoSyncPlaylists(updated);
     setSelectedPlaylist(null);
   };
 
@@ -1341,6 +1397,7 @@ export default function SpiceApp() {
     });
     setCustomPlaylists(updated);
     updateActiveProfileData({ customPlaylists: updated });
+    autoSyncPlaylists(updated);
 
     if (selectedPlaylist && selectedPlaylist.id === playlistId) {
       setSelectedPlaylist(updated.find(p => p.id === playlistId) || null);
@@ -1356,6 +1413,7 @@ export default function SpiceApp() {
     });
     setCustomPlaylists(updated);
     updateActiveProfileData({ customPlaylists: updated });
+    autoSyncPlaylists(updated);
 
     if (selectedPlaylist && selectedPlaylist.id === playlistId) {
       setSelectedPlaylist(updated.find(p => p.id === playlistId) || null);
@@ -1370,6 +1428,7 @@ export default function SpiceApp() {
     if (!confirm('Clear all recently played tracks?')) return;
     setHistory([]);
     updateActiveProfileData({ history: [] });
+    autoSyncHistory([]);
   };
 
   // Profile switching, locking and passcode validations
@@ -1390,19 +1449,20 @@ export default function SpiceApp() {
     setEditBio(target.bio);
     setEditGradient(target.gradient);
     setEditPasscode(target.passcode || '');
+    setEditAvatarUrl(target.avatarUrl || '');
 
     if (target.history && target.history.length > 0) {
       setCurrentTrack(target.history[0]);
       setQueue([target.history[0]]);
     } else {
-      const starboy = {
-        id: 'Starboy',
-        title: 'Starboy',
-        artists: [{ id: 'The Weeknd', name: 'The Weeknd' }],
-        artworkUrl: 'https://lh3.googleusercontent.com/e44T8B4s4HwT1kX5j1Y0qN_fRj5fLwVvDkO04EwU8T2v9K51hVd6qO9yPZ5zPZ5v=w120-h120'
+      const placeholderTrack = {
+        id: 'placeholder',
+        title: 'Select a track to play',
+        artists: [{ id: 'Spice', name: 'Spice Player' }],
+        artworkUrl: '/icon.svg'
       };
-      setCurrentTrack(starboy);
-      setQueue([starboy]);
+      setCurrentTrack(placeholderTrack);
+      setQueue([placeholderTrack]);
     }
     setQueueIndex(0);
     setProgress(0);
@@ -1435,7 +1495,8 @@ export default function SpiceApp() {
       likedTracks: [],
       likedTrackDetails: {},
       customPlaylists: [],
-      history: []
+      history: [],
+      avatarUrl: newProfileAvatarUrl.trim() || undefined
     };
 
     const updatedList = [...profiles, newProf];
@@ -1446,6 +1507,7 @@ export default function SpiceApp() {
     setNewProfileName('');
     setNewProfileBio('');
     setNewProfilePasscode('');
+    setNewProfileAvatarUrl('');
     setShowCreateProfileDialog(false);
 
     // Switch instantly
@@ -1514,6 +1576,7 @@ export default function SpiceApp() {
       bio: editBio.trim() || 'No bio written yet.',
       gradient: editGradient,
       passcode: passcodeVal ? passcodeVal : undefined,
+      avatarUrl: editAvatarUrl.trim() || undefined,
     });
 
     setIsEditingProfile(false);
@@ -1787,8 +1850,12 @@ export default function SpiceApp() {
       {isLocked && (
         <div className="passcode-overlay animate-in" style={{ position: 'fixed', inset: 0, background: '#000000', zIndex: 1000, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(32px)' }}>
           <div style={{ textAlign: 'center', maxWidth: '320px', width: '100%', padding: '24px' }}>
-            <div style={{ width: '64px', height: '64px', borderRadius: '16px', background: activeProfile.gradient, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '2rem', fontWeight: 900, color: '#fff', margin: '0 auto 24px auto', boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}>
-              {activeProfile.displayName.charAt(0).toUpperCase()}
+            <div style={{ width: '64px', height: '64px', borderRadius: '16px', background: activeProfile.avatarUrl ? 'none' : activeProfile.gradient, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '2rem', fontWeight: 900, color: '#fff', margin: '0 auto 24px auto', boxShadow: '0 8px 32px rgba(0,0,0,0.5)', overflow: 'hidden' }}>
+              {activeProfile.avatarUrl ? (
+                <img src={activeProfile.avatarUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              ) : (
+                activeProfile.displayName.charAt(0).toUpperCase()
+              )}
             </div>
             <h2 style={{ fontFamily: 'Outfit, sans-serif', fontSize: '1.5rem', fontWeight: 700, color: '#fff', margin: '0 0 8px 0' }}>Profile Locked</h2>
             <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '32px' }}>
@@ -1877,22 +1944,9 @@ export default function SpiceApp() {
 
       {/* Floating Picture-in-Picture YouTube Player for Embed Mode */}
       <div 
+        className="floating-yt-panel"
         style={{ 
-          position: 'fixed', 
-          bottom: '80px',
-          right: '16px',
-          width: '280px',
-          background: 'rgba(15, 15, 15, 0.85)',
-          border: '1px solid rgba(255, 255, 255, 0.1)',
-          borderRadius: '16px',
-          boxShadow: '0 16px 48px rgba(0, 0, 0, 0.6), 0 0 20px rgba(236, 72, 153, 0.15)',
-          backdropFilter: 'blur(24px)',
-          WebkitBackdropFilter: 'blur(24px)',
-          zIndex: 9998,
           display: streamProtocol === 'embed' ? 'flex' : 'none',
-          flexDirection: 'column',
-          overflow: 'hidden',
-          transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)'
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
@@ -2122,8 +2176,12 @@ export default function SpiceApp() {
                         Discover, stream, and sync your favorite music on the ultimate closed-source player.
                       </p>
                     </div>
-                    <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: activeProfile.gradient, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.75rem', fontWeight: 900, color: '#fff', boxShadow: '0 4px 20px rgba(0,0,0,0.4)', textShadow: '0 2px 8px rgba(0,0,0,0.3)', flexShrink: 0 }}>
-                      {activeProfile.displayName.charAt(0).toUpperCase()}
+                    <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: activeProfile.avatarUrl ? 'none' : activeProfile.gradient, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.75rem', fontWeight: 900, color: '#fff', boxShadow: '0 4px 20px rgba(0,0,0,0.4)', textShadow: activeProfile.avatarUrl ? 'none' : '0 2px 8px rgba(0,0,0,0.3)', flexShrink: 0, overflow: 'hidden' }}>
+                      {activeProfile.avatarUrl ? (
+                        <img src={activeProfile.avatarUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      ) : (
+                        activeProfile.displayName.charAt(0).toUpperCase()
+                      )}
                     </div>
                   </section>
 
@@ -2543,9 +2601,13 @@ export default function SpiceApp() {
                   {/* Profile view */}
                   <div className="profile-card animate-in" style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '32px', display: 'flex', alignItems: 'center', gap: '24px' }}>
                     <div 
-                      style={{ width: '80px', height: '80px', borderRadius: '50%', background: activeProfile.gradient, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '2.5rem', fontWeight: 900, color: '#fff', textShadow: '0 4px 12px rgba(0,0,0,0.3)', flexShrink: 0 }}
+                      style={{ width: '80px', height: '80px', borderRadius: '50%', background: activeProfile.avatarUrl ? 'none' : activeProfile.gradient, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '2.5rem', fontWeight: 900, color: '#fff', textShadow: activeProfile.avatarUrl ? 'none' : '0 4px 12px rgba(0,0,0,0.3)', flexShrink: 0, overflow: 'hidden' }}
                     >
-                      {activeProfile.displayName.charAt(0).toUpperCase()}
+                      {activeProfile.avatarUrl ? (
+                        <img src={activeProfile.avatarUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      ) : (
+                        activeProfile.displayName.charAt(0).toUpperCase()
+                      )}
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <h2 style={{ fontSize: '1.5rem', fontWeight: 700, margin: '0 0 6px 0', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -2592,8 +2654,12 @@ export default function SpiceApp() {
                           onClick={() => switchProfile(p.id)}
                           style={{ position: 'relative', background: 'var(--card-bg)', border: isActive ? '2px solid var(--accent-pink)' : '1px solid var(--border-color)', padding: '16px', borderRadius: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', minWidth: '180px', transition: 'all 0.15s ease' }}
                         >
-                          <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: p.gradient, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.25rem', fontWeight: 800, color: '#fff' }}>
-                            {p.displayName.charAt(0).toUpperCase()}
+                          <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: p.avatarUrl ? 'none' : p.gradient, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.25rem', fontWeight: 800, color: '#fff', overflow: 'hidden', flexShrink: 0 }}>
+                            {p.avatarUrl ? (
+                              <img src={p.avatarUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            ) : (
+                              p.displayName.charAt(0).toUpperCase()
+                            )}
                           </div>
                           <div style={{ minWidth: 0 }}>
                             <div style={{ fontSize: '0.9rem', fontWeight: 600, color: '#fff', display: 'flex', alignItems: 'center', gap: '4px' }} className="truncate">
@@ -2871,6 +2937,43 @@ export default function SpiceApp() {
                         </div>
                       </div>
 
+                      <div style={{ marginBottom: '24px' }}>
+                        <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>Profile Picture (PFP) URL</label>
+                        <input 
+                          type="text" 
+                          value={editAvatarUrl} 
+                          onChange={(e) => setEditAvatarUrl(e.target.value)} 
+                          placeholder="Paste custom image URL or select a preset..."
+                          style={{ width: '100%', padding: '10px 14px', background: '#0a0a0a', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', outline: 'none', marginBottom: '10px' }}
+                        />
+                        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                          {PRESET_AVATARS.map((avatar, idx) => {
+                            const isSelected = editAvatarUrl === avatar.url;
+                            return (
+                              <button
+                                key={idx}
+                                type="button"
+                                onClick={() => setEditAvatarUrl(isSelected ? '' : avatar.url)}
+                                style={{ 
+                                  position: 'relative', 
+                                  width: '40px', 
+                                  height: '40px', 
+                                  borderRadius: '8px', 
+                                  overflow: 'hidden', 
+                                  border: isSelected ? '2px solid var(--accent-pink)' : '1px solid rgba(255,255,255,0.1)', 
+                                  padding: 0,
+                                  cursor: 'pointer',
+                                  boxShadow: isSelected ? '0 0 8px var(--accent-pink)' : 'none'
+                                }}
+                                title={avatar.name}
+                              >
+                                <img src={avatar.url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
                       <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
                         <button type="button" className="btn btn--ghost" onClick={() => setIsEditingProfile(false)}>Cancel</button>
                         <button type="submit" className="btn btn--primary">Save Changes</button>
@@ -2884,6 +2987,7 @@ export default function SpiceApp() {
                         setEditBio(activeProfile.bio);
                         setEditGradient(activeProfile.gradient);
                         setEditPasscode(activeProfile.passcode || '');
+                        setEditAvatarUrl(activeProfile.avatarUrl || '');
                         setIsEditingProfile(true);
                       }}>
                         Edit Profile Details
@@ -3406,6 +3510,41 @@ export default function SpiceApp() {
                 ))}
               </div>
 
+              <label style={{ fontSize: '0.8rem', color: '#a1a1aa', display: 'block', marginBottom: '6px' }}>Profile Picture (PFP) URL</label>
+              <input
+                type="text"
+                value={newProfileAvatarUrl}
+                onChange={(e) => setNewProfileAvatarUrl(e.target.value)}
+                placeholder="Paste custom image URL or select a preset below..."
+                style={{ marginBottom: '10px' }}
+              />
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '16px' }}>
+                {PRESET_AVATARS.map((avatar, idx) => {
+                  const isSelected = newProfileAvatarUrl === avatar.url;
+                  return (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => setNewProfileAvatarUrl(isSelected ? '' : avatar.url)}
+                      style={{ 
+                        position: 'relative', 
+                        width: '36px', 
+                        height: '36px', 
+                        borderRadius: '8px', 
+                        overflow: 'hidden', 
+                        border: isSelected ? '2px solid var(--accent-pink)' : '1px solid rgba(255,255,255,0.1)', 
+                        padding: 0,
+                        cursor: 'pointer',
+                        boxShadow: isSelected ? '0 0 8px var(--accent-pink)' : 'none'
+                      }}
+                      title={avatar.name}
+                    >
+                      <img src={avatar.url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    </button>
+                  );
+                })}
+              </div>
+
               <div className="dialog-box__actions">
                 <button type="button" className="btn btn--ghost" style={{ padding: '8px 16px' }} onClick={() => setShowCreateProfileDialog(false)}>
                   Cancel
@@ -3650,23 +3789,16 @@ export default function SpiceApp() {
           </div>
 
           {/* Central content layout: Grid with artwork + controls, and Optional Playlist Queue/Lyrics */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 450px) 1fr', gap: '64px', width: '100%', maxWidth: '1000px', flex: 1, alignItems: 'center', margin: '40px 0' }}>
+          {/* Central content layout: Grid with artwork + controls, and Optional Playlist Queue/Lyrics */}
+          <div className="expanded-player__grid">
             
             {/* Column 1: Massive Spinning Artwork & Titles */}
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
               <div 
+                className={`expanded-player__art-box ${isPlaying ? 'vinyl-spin' : ''}`}
                 style={{ 
-                  width: '360px', 
-                  height: '360px', 
-                  borderRadius: '24px', 
-                  overflow: 'hidden', 
-                  position: 'relative', 
-                  boxShadow: `0 24px 64px rgba(0,0,0,0.8), 0 0 40px rgba(var(--accent-pink-rgb, 236, 72, 153), 0.25)`, 
-                  marginBottom: '32px',
-                  border: '1px solid rgba(255,255,255,0.1)',
-                  transition: 'transform 0.5s ease'
+                  boxShadow: `0 24px 64px rgba(0,0,0,0.8), 0 0 40px rgba(var(--accent-pink-rgb, 236, 72, 153), 0.25)`
                 }}
-                className={isPlaying ? 'vinyl-spin' : ''}
               >
                 <img 
                   src={currentTrack.artworkUrl || '/icon.svg'} 
