@@ -479,6 +479,22 @@ export default function SpiceApp() {
   const ytPlayerRef = useRef<any>(null);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  const autoSyncProfiles = (updatedProfiles: UserProfile[]) => {
+    if (!cloudToken) return;
+    fetch('/api/sync/profiles', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${cloudToken}`
+      },
+      body: JSON.stringify({ profiles: updatedProfiles })
+    }).then(res => {
+      if (res.ok) logDebug('database', 'Profiles configuration auto-saved to cloud database.');
+    }).catch(err => {
+      logDebug('error', `Auto-sync profiles failed: ${err}`);
+    });
+  };
+
   // ── Sync Active Profile back to Profiles DB Helper ──────────────
   const updateActiveProfileData = (updates: Partial<UserProfile>) => {
     setProfiles(prev => {
@@ -489,6 +505,7 @@ export default function SpiceApp() {
         return p;
       });
       localStorage.setItem('spice_profiles_list', JSON.stringify(updated));
+      autoSyncProfiles(updated);
       return updated;
     });
   };
@@ -820,6 +837,13 @@ export default function SpiceApp() {
       const plData = await plRes.json();
       const serverPlaylists = plData.playlists ?? [];
 
+      // 3.5. Pull profiles
+      const profRes = await fetch('/api/sync/profiles', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const profData = await profRes.json();
+      const serverProfiles = profData.profiles ?? [];
+
       // Merge Likes
       const mergedLikes = new Set([...likedTracks, ...serverLikes]);
       const mergedLikesArray = Array.from(mergedLikes);
@@ -854,16 +878,74 @@ export default function SpiceApp() {
         }
       });
 
+      // Merge Profiles
+      const mergedProfiles = [...profiles];
+      serverProfiles.forEach((serverProf: any) => {
+        const existingIdx = mergedProfiles.findIndex(p => p.id === serverProf.id);
+        if (existingIdx !== -1) {
+          // Update metadata of existing profile
+          mergedProfiles[existingIdx] = {
+            ...mergedProfiles[existingIdx],
+            displayName: serverProf.displayName,
+            bio: serverProf.bio || '',
+            gradient: serverProf.gradient,
+            songsPlayed: serverProf.songsPlayed ?? 0,
+            joinedAt: serverProf.joinedAt,
+            passcode: serverProf.passcode || undefined,
+            avatarUrl: serverProf.avatarUrl || undefined,
+          };
+        } else {
+          // Add new profile from server
+          mergedProfiles.push({
+            id: serverProf.id,
+            displayName: serverProf.displayName,
+            bio: serverProf.bio || '',
+            gradient: serverProf.gradient,
+            songsPlayed: serverProf.songsPlayed ?? 0,
+            joinedAt: serverProf.joinedAt,
+            passcode: serverProf.passcode || undefined,
+            avatarUrl: serverProf.avatarUrl || undefined,
+            likedTracks: [],
+            likedTrackDetails: {},
+            customPlaylists: [],
+            history: [],
+          });
+        }
+      });
+
+      // Find current active profile
+      const activeProf = mergedProfiles.find(p => p.id === activeProfileId) || mergedProfiles[0];
+      
       // Update Local State
       setLikedTracks(mergedLikes);
       setHistory(mergedHistory);
       setCustomPlaylists(mergedPlaylists);
 
-      updateActiveProfileData({
-        likedTracks: mergedLikesArray,
-        history: mergedHistory,
-        customPlaylists: mergedPlaylists
+      const finalProfiles = mergedProfiles.map(p => {
+        if (p.id === (activeProf?.id || activeProfileId)) {
+          return {
+            ...p,
+            likedTracks: mergedLikesArray,
+            likedTrackDetails: activeProf?.likedTrackDetails || {},
+            customPlaylists: mergedPlaylists,
+            history: mergedHistory
+          };
+        }
+        return p;
       });
+
+      setProfiles(finalProfiles);
+      localStorage.setItem('spice_profiles_list', JSON.stringify(finalProfiles));
+
+      if (activeProf) {
+        setActiveProfileId(activeProf.id);
+        localStorage.setItem('spice_active_profile_id', activeProf.id);
+        setEditName(activeProf.displayName);
+        setEditBio(activeProf.bio);
+        setEditGradient(activeProf.gradient);
+        setEditPasscode(activeProf.passcode || '');
+        setEditAvatarUrl(activeProf.avatarUrl || '');
+      }
 
       // 4. Push Merged State to Cloud Database
       await fetch('/api/sync/likes', {
@@ -893,7 +975,16 @@ export default function SpiceApp() {
         body: JSON.stringify({ playlists: mergedPlaylists })
       });
 
-      logDebug('database', `Merged state with cloud database successfully. Merged: ${mergedLikesArray.length} likes, ${mergedHistory.length} history items, ${mergedPlaylists.length} playlists.`);
+      await fetch('/api/sync/profiles', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ profiles: finalProfiles })
+      });
+
+      logDebug('database', `Merged state with cloud database successfully. Merged: ${mergedLikesArray.length} likes, ${mergedHistory.length} history items, ${mergedPlaylists.length} playlists, ${finalProfiles.length} profiles.`);
       setSyncingStatus('success');
       setTimeout(() => setSyncingStatus(null), 3000);
     } catch (err: any) {
@@ -1502,6 +1593,7 @@ export default function SpiceApp() {
     const updatedList = [...profiles, newProf];
     setProfiles(updatedList);
     localStorage.setItem('spice_profiles_list', JSON.stringify(updatedList));
+    autoSyncProfiles(updatedList);
 
     // Reset forms and dialogs
     setNewProfileName('');
@@ -1524,6 +1616,7 @@ export default function SpiceApp() {
     const updated = profiles.filter(p => p.id !== profileId);
     setProfiles(updated);
     localStorage.setItem('spice_profiles_list', JSON.stringify(updated));
+    autoSyncProfiles(updated);
 
     // Switch to first profile
     switchProfile(updated[0].id);

@@ -72,3 +72,18 @@ export const history = pgTable('history', {
   msListened: bigint('ms_listened', { mode: 'number' }).notNull(),
   deviceId: text('device_id'),
 });
+
+export const profiles = pgTable('profiles', {
+  id: text('id').primaryKey(),
+  userId: uuid('user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  displayName: text('display_name').notNull(),
+  bio: text('bio').notNull().default(''),
+  gradient: text('gradient').notNull(),
+  songsPlayed: integer('songs_played').notNull().default(0),
+  joinedAt: text('joined_at').notNull(),
+  passcode: text('passcode'),
+  avatarUrl: text('avatar_url'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});

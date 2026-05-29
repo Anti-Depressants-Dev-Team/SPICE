@@ -33,23 +33,43 @@ export interface LocalHistoryItem {
   playedAt: string;
 }
 
+export interface LocalProfile {
+  id: string;
+  userId: string;
+  displayName: string;
+  bio: string;
+  gradient: string;
+  songsPlayed: number;
+  joinedAt: string;
+  passcode?: string;
+  avatarUrl?: string;
+}
+
 interface LocalSchema {
   users: LocalUser[];
   playlists: LocalPlaylist[];
   likes: LocalLike[];
   history: LocalHistoryItem[];
+  profiles: LocalProfile[];
 }
 
 function readDb(): LocalSchema {
   try {
     if (!fs.existsSync(DB_PATH)) {
-      return { users: [], playlists: [], likes: [], history: [] };
+      return { users: [], playlists: [], likes: [], history: [], profiles: [] };
     }
     const raw = fs.readFileSync(DB_PATH, 'utf-8');
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    return {
+      users: parsed.users ?? [],
+      playlists: parsed.playlists ?? [],
+      likes: parsed.likes ?? [],
+      history: parsed.history ?? [],
+      profiles: parsed.profiles ?? [],
+    };
   } catch (e) {
     console.error('Failed to read local DB:', e);
-    return { users: [], playlists: [], likes: [], history: [] };
+    return { users: [], playlists: [], likes: [], history: [], profiles: [] };
   }
 }
 
@@ -165,6 +185,30 @@ export async function saveLocalHistory(userId: string, historyTracks: any[]): Pr
       trackId: h.id,
       sourceId: h.sourceId || 'youtube_music',
       playedAt: new Date(Date.now() - i * 1000).toISOString()
+    });
+  }
+  writeDb(db);
+}
+
+export async function getLocalProfiles(userId: string): Promise<LocalProfile[]> {
+  const db = readDb();
+  return db.profiles.filter(p => p.userId === userId);
+}
+
+export async function saveLocalProfiles(userId: string, profilesPayload: any[]): Promise<void> {
+  const db = readDb();
+  db.profiles = db.profiles.filter(p => p.userId !== userId);
+  for (const p of profilesPayload) {
+    db.profiles.push({
+      id: p.id,
+      userId,
+      displayName: p.displayName,
+      bio: p.bio || '',
+      gradient: p.gradient,
+      songsPlayed: p.songsPlayed ?? 0,
+      joinedAt: p.joinedAt,
+      passcode: p.passcode,
+      avatarUrl: p.avatarUrl,
     });
   }
   writeDb(db);
