@@ -500,6 +500,18 @@ export default function SpiceApp() {
   const ytPlayerRef = useRef<any>(null);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  // References to preserve state variables and bypass stale React closures inside player events
+  const queueIndexRef = useRef(queueIndex);
+  const queueRef = useRef(queue);
+  const repeatModeRef = useRef(repeatMode);
+  const streamProtocolRef = useRef(streamProtocol);
+  const isShuffleRef = useRef(isShuffle);
+  const activeProfileRef = useRef(activeProfile);
+  const errorSkipTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const handleAudioEndedRef = useRef<() => void>(() => {});
+  const handleAudioErrorRef = useRef<() => void>(() => {});
+
   const autoSyncProfiles = (updatedProfiles: UserProfile[]) => {
     if (!cloudToken) return;
     fetch('/api/sync/profiles', {
@@ -671,7 +683,7 @@ export default function SpiceApp() {
               logDebug('stream', 'YouTube Embed State: AUDIO TRACK CUED (5)');
             } else if (state === 0) { // Ended
               logDebug('stream', 'YouTube Embed State: PLAYBACK COMPLETED (0)');
-              handleAudioEnded();
+              handleAudioEndedRef.current?.();
             }
           },
           onError: (event: any) => {
@@ -687,6 +699,8 @@ export default function SpiceApp() {
             } else {
               logDebug('error', `YouTube Embed Player error: code ${code}`);
             }
+            // Trigger self-healing error skip logic upon iframe playback error
+            handleAudioErrorRef.current?.();
           }
         }
       });
@@ -1145,23 +1159,43 @@ export default function SpiceApp() {
 
   const handleAudioEnded = () => {
     // Increment songs played on completion
-    const updatedSongsCount = activeProfile.songsPlayed + 1;
+    const currentSongsPlayed = activeProfileRef.current?.songsPlayed ?? 0;
+    const updatedSongsCount = currentSongsPlayed + 1;
     updateActiveProfileData({ songsPlayed: updatedSongsCount });
     
-    if (repeatMode === 'one') {
-      if (audioRef.current) {
+    const currentRepeatMode = repeatModeRef.current;
+    const currentStreamProtocol = streamProtocolRef.current;
+    const currentQueue = queueRef.current;
+    const currentQueueIndex = queueIndexRef.current;
+
+    logDebug('player', `Audio track ended. repeatMode: ${currentRepeatMode}, protocol: ${currentStreamProtocol}`);
+
+    if (currentRepeatMode === 'one') {
+      if (currentStreamProtocol === 'embed' && ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
+        logDebug('player', 'Repeat mode is ONE. Seeking to 0 in YouTube embed...');
+        ytPlayerRef.current.seekTo(0, true);
+        ytPlayerRef.current.playVideo();
+        setProgress(0);
+        setIsPlaying(true);
+      } else if (audioRef.current) {
+        logDebug('player', 'Repeat mode is ONE. Replaying HTML5 audio...');
         audioRef.current.currentTime = 0;
         audioRef.current.play().catch(handleAudioError);
         setProgress(0);
         setIsPlaying(true);
       }
-    } else if (repeatMode === 'none' && queueIndex === queue.length - 1) {
+    } else if (currentRepeatMode === 'none' && currentQueueIndex === currentQueue.length - 1) {
+      logDebug('player', 'Queue ended and repeatMode is NONE. Stopping playback.');
       setIsPlaying(false);
       setProgress(0);
-      if (audioRef.current) {
+      if (currentStreamProtocol === 'embed' && ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
+        ytPlayerRef.current.seekTo(0, true);
+        ytPlayerRef.current.pauseVideo();
+      } else if (audioRef.current) {
         audioRef.current.currentTime = 0;
       }
     } else {
+      logDebug('player', 'Advancing to next track in queue...');
       handleNext();
     }
   };
@@ -1169,11 +1203,51 @@ export default function SpiceApp() {
   const handleAudioError = () => {
     setIsPlaying(false);
     setIsLoadingStream(false);
-    setError('Failed to play stream. Upstream YouTube Music connection reset.');
+    setError('Playback failed. Attempting self-healing skip to next queue item...');
+    
+    const currentQueue = queueRef.current;
+    if (currentQueue.length > 1) {
+      logDebug('player', 'Playback error encountered. Scheduling self-healing skip in 1.5s...');
+      if (errorSkipTimeoutRef.current) {
+        clearTimeout(errorSkipTimeoutRef.current);
+      }
+      errorSkipTimeoutRef.current = setTimeout(() => {
+        handleNext();
+        errorSkipTimeoutRef.current = null;
+      }, 1500);
+    } else {
+      setError('Failed to play stream. Upstream YouTube Music connection reset.');
+    }
   };
 
+  // Keep state refs updated on every state change/render to completely prevent stale closures in callbacks
+  useEffect(() => { queueIndexRef.current = queueIndex; }, [queueIndex]);
+  useEffect(() => { queueRef.current = queue; }, [queue]);
+  useEffect(() => { repeatModeRef.current = repeatMode; }, [repeatMode]);
+  useEffect(() => { streamProtocolRef.current = streamProtocol; }, [streamProtocol]);
+  useEffect(() => { isShuffleRef.current = isShuffle; }, [isShuffle]);
+  useEffect(() => { activeProfileRef.current = activeProfile; }, [activeProfile]);
+
+  useEffect(() => {
+    handleAudioEndedRef.current = handleAudioEnded;
+    handleAudioErrorRef.current = handleAudioError;
+  });
+
+  useEffect(() => {
+    return () => {
+      if (errorSkipTimeoutRef.current) {
+        clearTimeout(errorSkipTimeoutRef.current);
+      }
+    };
+  }, []);
+
   // Play a track
-  const playTrack = async (track: Track, newQueue?: Track[]) => {
+  const playTrack = async (track: Track, newQueue?: Track[], startSearchIndex?: number) => {
+    if (errorSkipTimeoutRef.current) {
+      clearTimeout(errorSkipTimeoutRef.current);
+      errorSkipTimeoutRef.current = null;
+    }
+
     if (!track || track.id === 'placeholder') {
       setIsLoadingStream(false);
       logDebug('player', 'Ready to stream. Select any track from the lists to begin playback.');
@@ -1226,6 +1300,9 @@ export default function SpiceApp() {
         autoSyncHistory(newHist);
 
         if (ytPlayerRef.current && typeof ytPlayerRef.current.loadVideoById === 'function') {
+          if (typeof ytPlayerRef.current.stopVideo === 'function') {
+            ytPlayerRef.current.stopVideo();
+          }
           ytPlayerRef.current.loadVideoById(track.id);
           ytPlayerRef.current.playVideo();
         }
@@ -1281,13 +1358,23 @@ export default function SpiceApp() {
         autoSyncHistory(newHist);
 
         if (ytPlayerRef.current && typeof ytPlayerRef.current.loadVideoById === 'function') {
+          if (typeof ytPlayerRef.current.stopVideo === 'function') {
+            ytPlayerRef.current.stopVideo();
+          }
           ytPlayerRef.current.loadVideoById(track.id);
           ytPlayerRef.current.playVideo();
         }
         return;
       }
       
-      setError(err.message ?? 'Playback connection failed.');
+      // Auto-advance skip to next song if it's already in embed mode and still failing
+      const currentQueue = queueRef.current;
+      if (currentQueue.length > 1) {
+        logDebug('player', 'Failed to resolve track stream. Triggering self-healing next-track skip...');
+        handleNext(updatedIndex, startSearchIndex !== undefined ? startSearchIndex : updatedIndex);
+      } else {
+        setError('Playback connection failed. Please select a different track.');
+      }
     } finally {
       setIsLoadingStream(false);
     }
@@ -1370,52 +1457,79 @@ export default function SpiceApp() {
     }
   };
 
-  const handlePrev = () => {
-    if (progress > 3) {
-      if (streamProtocol === 'embed' && ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
+  const handlePrev = (overrideIndex?: any) => {
+    const progressTime = streamProtocolRef.current === 'embed' && ytPlayerRef.current && typeof ytPlayerRef.current.getCurrentTime === 'function'
+      ? ytPlayerRef.current.getCurrentTime()
+      : progress;
+
+    if (progressTime > 3) {
+      if (streamProtocolRef.current === 'embed' && ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
         ytPlayerRef.current.seekTo(0, true);
         setProgress(0);
+        setIsPlaying(true);
         return;
       }
       if (audioRef.current) {
         audioRef.current.currentTime = 0;
         setProgress(0);
+        setIsPlaying(true);
       }
       return;
     }
-    if (queue.length === 0) return;
     
-    let prevIdx = queueIndex;
-    if (isShuffle) {
-      if (queue.length > 1) {
+    const currentQueue = queueRef.current;
+    if (currentQueue.length === 0) return;
+    
+    const currentIndex = (overrideIndex !== undefined && typeof overrideIndex === 'number') 
+      ? overrideIndex 
+      : queueIndexRef.current;
+    let prevIdx = currentIndex;
+    if (isShuffleRef.current) {
+      if (currentQueue.length > 1) {
         do {
-          prevIdx = Math.floor(Math.random() * queue.length);
-        } while (prevIdx === queueIndex);
+          prevIdx = Math.floor(Math.random() * currentQueue.length);
+        } while (prevIdx === currentIndex);
       } else {
         prevIdx = 0;
       }
     } else {
-      prevIdx = (queueIndex - 1 + queue.length) % queue.length;
+      prevIdx = (currentIndex - 1 + currentQueue.length) % currentQueue.length;
     }
-    playTrack(queue[prevIdx]);
+    playTrack(currentQueue[prevIdx]);
   };
 
-  const handleNext = () => {
-    if (queue.length === 0) return;
+  const handleNext = (overrideIndex?: any, startSearchIndex?: number) => {
+    const currentQueue = queueRef.current;
+    if (currentQueue.length === 0) return;
     
-    let nextIdx = queueIndex;
-    if (isShuffle) {
-      if (queue.length > 1) {
+    const currentIndex = (overrideIndex !== undefined && typeof overrideIndex === 'number') 
+      ? overrideIndex 
+      : queueIndexRef.current;
+    const searchStart = startSearchIndex !== undefined ? startSearchIndex : currentIndex;
+    
+    let nextIdx = currentIndex;
+    if (isShuffleRef.current) {
+      if (currentQueue.length > 1) {
         do {
-          nextIdx = Math.floor(Math.random() * queue.length);
-        } while (nextIdx === queueIndex);
+          nextIdx = Math.floor(Math.random() * currentQueue.length);
+        } while (nextIdx === currentIndex);
       } else {
         nextIdx = 0;
       }
     } else {
-      nextIdx = (queueIndex + 1) % queue.length;
+      nextIdx = (currentIndex + 1) % currentQueue.length;
     }
-    playTrack(queue[nextIdx]);
+
+    // Safety limit: if it loops back to the beginning of the skip-failure cycle, stop it!
+    if (nextIdx === searchStart) {
+      setIsPlaying(false);
+      setIsLoadingStream(false);
+      setError('All tracks in the queue failed to stream. Please select a different source or check your database pings.');
+      logDebug('error', 'All queue tracks failed to resolve. Aborted self-healing loop.');
+      return;
+    }
+
+    playTrack(currentQueue[nextIdx], undefined, searchStart);
   };
 
   const toggleLike = (track: Track) => {
@@ -3309,7 +3423,7 @@ export default function SpiceApp() {
                         🛠️ System Diagnostics & Live Terminal
                       </h3>
                       <span style={{ fontSize: '0.75rem', background: 'rgba(255,255,255,0.04)', color: 'var(--text-secondary)', padding: '4px 10px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.06)' }}>
-                        Spice Media Core v1.0.5 (Phase 4 Diagnostics)
+                        Spice Media Core v1.0.7 (Phase 4 Diagnostics)
                       </span>
                     </div>
 
