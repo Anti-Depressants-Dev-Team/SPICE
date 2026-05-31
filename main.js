@@ -336,14 +336,36 @@ function sendVkTrackUpdate(trackInfo) {
   }
 }
 
+function seekPlayback(time) {
+  const targetView = getActiveBackendView();
+  const seekTime = Number(time);
+  if (!targetView || !Number.isFinite(seekTime) || seekTime < 0) return;
+
+  targetView.webContents
+    .executeJavaScript(`
+      (function() {
+        const media = document.querySelector('video, audio');
+        if (!media) return false;
+
+        const duration = Number(media.duration);
+        media.currentTime = Number.isFinite(duration)
+          ? Math.min(${seekTime}, duration)
+          : ${seekTime};
+        return true;
+      })();
+    `)
+    .catch((error) => {
+      console.error("[Player] Failed to seek playback:", error);
+    });
+}
+
 // Handle VK player commands from the app-frame player bar
 ipcMain.on("vk-player-command", (event, cmd) => {
   if (!view) return;
 
   // Handle seek command (object: {action: 'seek', time: seconds})
   if (typeof cmd === "object" && cmd.action === "seek") {
-    const seekCode = `(function(){ const v = document.querySelector('video'); if(v && v.duration) v.currentTime = ${Number(cmd.time)}; })()`;
-    view.webContents.executeJavaScript(seekCode).catch(() => {});
+    seekPlayback(cmd.time);
     return;
   }
 
@@ -490,6 +512,10 @@ ipcMain.on("vk-player-command", (event, cmd) => {
       })
       .catch(() => {});
   }
+});
+
+ipcMain.on("seek-playback", (event, time) => {
+  seekPlayback(time);
 });
 
 function loadService(serviceKey) {

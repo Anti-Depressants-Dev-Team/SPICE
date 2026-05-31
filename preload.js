@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld("api", {
   openDevTools: () => ipcRenderer.send("open-devtools"),
   getNowPlaying: () => ipcRenderer.invoke("get-now-playing"),
   fetchLyrics: (data) => ipcRenderer.invoke("fetch-lyrics", data),
+  seekPlayback: (time) => ipcRenderer.send("seek-playback", time),
   getTopBarSearch: () => ipcRenderer.invoke("get-topbar-search"),
   setTopBarSearch: (enabled) => ipcRenderer.send("set-topbar-search", enabled),
   executeSearch: (query) => ipcRenderer.send("execute-search", query),

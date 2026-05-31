@@ -153,15 +153,30 @@
         }
 
         .lyric-line {
+            display: block;
+            width: 100%;
+            border: 0;
+            background: transparent;
             padding: 10px 10px;
+            font-family: inherit;
             font-size: 1.1rem;
             color: #666;
             transition: color 0.3s, transform 0.3s, opacity 0.3s;
-            cursor: default;
+            cursor: pointer;
             opacity: 0.6;
             white-space: pre-wrap;
             word-wrap: break-word;
             max-width: 100%;
+        }
+
+        .lyric-line:hover {
+            color: #999;
+        }
+
+        .lyric-line:focus-visible {
+            outline: 1px solid rgba(255, 255, 255, 0.45);
+            outline-offset: -1px;
+            border-radius: 8px;
         }
 
         .lyric-line.active {
@@ -171,6 +186,29 @@
             transform: scale(1.05);
             opacity: 1;
             text-shadow: 0 0 10px rgba(255, 255, 255, 0.3);
+        }
+
+        .lyric-word {
+            --word-progress: 0%;
+            color: inherit;
+            transition: color 0.12s ease, text-shadow 0.12s ease;
+        }
+
+        .lyric-line.active .lyric-word {
+            color: #8a8a8a;
+        }
+
+        .lyric-line.active .lyric-word.sung {
+            color: #ffffff;
+            text-shadow: 0 0 8px rgba(255, 255, 255, 0.3);
+        }
+
+        .lyric-line.active .lyric-word.current {
+            color: transparent;
+            background: linear-gradient(90deg, #ffffff 0 var(--word-progress), #8a8a8a var(--word-progress) 100%);
+            background-clip: text;
+            -webkit-background-clip: text;
+            text-shadow: none;
         }
 
         /* Static Mode Styles */
@@ -184,8 +222,29 @@
             text-shadow: none;
         }
 
+        .static-mode .lyric-word {
+            color: inherit;
+            background: none;
+            text-shadow: none;
+        }
+
         .static-mode .lyric-line:hover {
             color: #fff;
+        }
+
+        .plain-lyrics {
+            white-space: pre-wrap;
+            font-size: 1rem;
+            line-height: 1.5;
+            padding: 0 20px;
+        }
+
+        .lyrics-status {
+            color: #666;
+        }
+
+        .lyrics-error {
+            color: #ff6b6b;
         }
 
         .no-lyrics {
@@ -238,6 +297,7 @@
         </div>
     </div>
 
+    <script src="lyrics-core.js"></script>
     <script src="lyrics.js"></script>
 </body>
 

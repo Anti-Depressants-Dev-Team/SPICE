@@ -1,6 +1,6 @@
 [Setup]
 AppName=Spice
-AppVersion=1.0.0
+AppVersion=1.4.2
 WizardStyle=modern
 DefaultDirName={autopf}\Spice
 DefaultGroupName=Spice
@@ -8,7 +8,7 @@ UninstallDisplayIcon={app}\Spice.exe
 Compression=lzma2
 SolidCompression=yes
 OutputDir=dist
-OutputBaseFilename=Spice Setup 1.0.0
+OutputBaseFilename=Spice Setup 1.4.2
 SetupIconFile=dist\.icon-ico\icon.ico
 
 [Files]
