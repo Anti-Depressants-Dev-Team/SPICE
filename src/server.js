@@ -45,6 +45,7 @@ const APP_UI_FILES = {
   "/queue": "queue.html",
   "/queue.html": "queue.html",
   "/styles.css": "styles.css",
+  "/lyrics-core.js": "lyrics-core.js",
   "/lyrics.js": "lyrics.js",
   "/icon.png": "icon.png",
 };

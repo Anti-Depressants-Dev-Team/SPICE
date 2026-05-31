@@ -7,7 +7,25 @@ on:
   workflow_dispatch: # Allows you to manually trigger the workflow from the Actions tab
 
 jobs:
+  prepare-release:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Ensure GitHub Release Exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="v$(node -p "require('./package.json').version")"
+          gh release view "$VERSION" || gh release create "$VERSION" --target "$GITHUB_SHA" --title "$VERSION" --generate-notes
+
   build:
+    needs: prepare-release
     runs-on: ${{ matrix.os }}
 
     strategy:
