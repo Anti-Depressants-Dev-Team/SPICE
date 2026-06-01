@@ -3,6 +3,7 @@ import { verifySession } from '@/lib/auth';
 import { db } from '@/db';
 import { history } from '@/db/schema';
 import { eq, desc, and } from 'drizzle-orm';
+import { trackSnapshotColumns, trackSnapshotFromRow } from '@/lib/track-snapshot';
 
 export const runtime = 'nodejs';
 
@@ -37,12 +38,7 @@ export async function GET(request: Request) {
     });
 
     return jsonResponse({
-      history: userHistory.map((h: { trackId: string; sourceId: string }) => ({
-        id: h.trackId,
-        title: 'Track', // Client maps metadata on restoration or uses fallback
-        artists: [],
-        sourceId: h.sourceId,
-      })),
+      history: userHistory.map(trackSnapshotFromRow),
     });
   } catch (error) {
     return jsonResponse(
@@ -88,8 +84,9 @@ export async function POST(request: Request) {
       const payload = clientHistory.slice(0, 50).map((h: { id: string; sourceId?: string }, i: number) => ({
         userId: session.userId,
         profileId,
-        sourceId: h.sourceId || 'yt',
+        sourceId: h.sourceId || 'youtube_music',
         trackId: h.id,
+        ...trackSnapshotColumns(h, h.id),
         // Stagger playedAt times slightly to preserve order
         playedAt: new Date(Date.now() - i * 1000),
         msListened: 30000, // stub duration

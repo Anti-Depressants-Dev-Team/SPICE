@@ -1202,14 +1202,18 @@ h4 { font-size: 1rem; }
   z-index: 1;
 }
 
-.genre-card__emoji {
+.genre-card__icon {
   position: absolute;
   bottom: -8px;
   right: -4px;
-  font-size: 4rem;
   transform: rotate(15deg);
   opacity: 0.3;
   filter: blur(1px);
+}
+
+.genre-card__icon svg {
+  width: 64px;
+  height: 64px;
 }
 
 /* ── Library ─────────────────────────────────────────────────── */

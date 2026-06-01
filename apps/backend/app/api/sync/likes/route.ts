@@ -3,6 +3,7 @@ import { verifySession } from '@/lib/auth';
 import { db } from '@/db';
 import { likes } from '@/db/schema';
 import { eq, and } from 'drizzle-orm';
+import { trackSnapshotColumns, trackSnapshotFromRow } from '@/lib/track-snapshot';
 
 export const runtime = 'nodejs';
 
@@ -35,7 +36,10 @@ export async function GET(request: Request) {
     });
 
     return jsonResponse({
-      likedTracks: userLikes.map((like: { trackId: string }) => like.trackId),
+      likedTracks: userLikes.map((like: typeof likes.$inferSelect) => like.trackId),
+      likedTrackDetails: Object.fromEntries(
+        userLikes.map((like: typeof likes.$inferSelect) => [like.trackId, trackSnapshotFromRow(like)]),
+      ),
     });
   } catch (error) {
     return jsonResponse(
@@ -57,7 +61,7 @@ export async function POST(request: Request) {
 
     const token = auth.substring(7);
     const session = await verifySession(token);
-    const { likedTracks, profileId: payloadProfileId } = await request.json();
+    const { likedTracks, likedTrackDetails = {}, profileId: payloadProfileId } = await request.json();
     const profileId = payloadProfileId || 'default';
 
     if (!Array.isArray(likedTracks)) {
@@ -82,8 +86,9 @@ export async function POST(request: Request) {
       const payload = uniqueTracks.map(id => ({
         userId: session.userId,
         profileId,
-        sourceId: 'yt',
+        sourceId: likedTrackDetails[id as string]?.sourceId || 'youtube_music',
         trackId: id as string,
+        ...trackSnapshotColumns(likedTrackDetails[id as string], id as string),
       }));
       await db.insert(likes).values(payload);
     }

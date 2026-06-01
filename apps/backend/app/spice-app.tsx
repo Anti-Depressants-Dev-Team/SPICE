@@ -6,6 +6,16 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 
 import { type FormEvent, useEffect, useRef, useState, useCallback } from 'react';
+import {
+  enrichTrackSnapshot,
+  getCachedSearch,
+  getLatestCachedSearch,
+  getPlaybackState,
+  mergeTrackSnapshots,
+  rememberSearchResults,
+  rememberTrackSnapshots,
+  savePlaybackState,
+} from './spice-storage';
 
 // ── Icons ──────────────────────────────────────────────────────────
 const Icons = {
@@ -78,6 +88,13 @@ const Icons = {
       <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
       <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
       <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+    </svg>
+  ),
+  volumeMuted: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="16" height="16">
+      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+      <line x1="23" y1="9" x2="17" y2="15" />
+      <line x1="17" y1="9" x2="23" y2="15" />
     </svg>
   ),
   playlist: (
@@ -179,6 +196,144 @@ const Icons = {
       <path d="M15 14V10" />
     </svg>
   ),
+  alertTriangle: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
+      <path d="M10.3 2.9 1.8 17a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 2.9a2 2 0 0 0-3.4 0z" />
+      <line x1="12" y1="9" x2="12" y2="13" />
+      <line x1="12" y1="17" x2="12.01" y2="17" />
+    </svg>
+  ),
+  checkCircle: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
+      <path d="M22 11.1V12a10 10 0 1 1-5.9-9.1" />
+      <polyline points="22 4 12 14.01 9 11.01" />
+    </svg>
+  ),
+  close: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
+  ),
+  musicNote: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="24" height="24">
+      <path d="M9 18V5l12-2v13" />
+      <circle cx="6" cy="18" r="3" />
+      <circle cx="18" cy="16" r="3" />
+    </svg>
+  ),
+  folder: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="24" height="24">
+      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+    </svg>
+  ),
+  globe: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
+      <circle cx="12" cy="12" r="10" />
+      <line x1="2" y1="12" x2="22" y2="12" />
+      <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+    </svg>
+  ),
+  database: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
+      <ellipse cx="12" cy="5" rx="9" ry="3" />
+      <path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5" />
+      <path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3" />
+    </svg>
+  ),
+  download: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="7 10 12 15 17 10" />
+      <line x1="12" y1="15" x2="12" y2="3" />
+    </svg>
+  ),
+  clipboard: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
+      <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+      <rect x="8" y="2" width="8" height="4" rx="1" />
+    </svg>
+  ),
+  camera: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
+      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+      <circle cx="12" cy="13" r="4" />
+    </svg>
+  ),
+  palette: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
+      <circle cx="13.5" cy="6.5" r=".5" fill="currentColor" />
+      <circle cx="17.5" cy="10.5" r=".5" fill="currentColor" />
+      <circle cx="8.5" cy="7.5" r=".5" fill="currentColor" />
+      <circle cx="6.5" cy="12.5" r=".5" fill="currentColor" />
+      <path d="M12 22a10 10 0 1 1 10-10c0 1.1-.9 2-2 2h-3.1a2 2 0 0 0-1.6 3.2l.4.6A2.6 2.6 0 0 1 13.6 22z" />
+    </svg>
+  ),
+  headphones: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
+      <path d="M3 18v-6a9 9 0 0 1 18 0v6" />
+      <path d="M21 19a2 2 0 0 1-2 2h-1v-6h3zM3 19a2 2 0 0 0 2 2h1v-6H3z" />
+    </svg>
+  ),
+  monitor: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
+      <rect x="2" y="3" width="20" height="14" rx="2" />
+      <line x1="8" y1="21" x2="16" y2="21" />
+      <line x1="12" y1="17" x2="12" y2="21" />
+    </svg>
+  ),
+  shield: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+      <polyline points="9 12 11 14 15 10" />
+    </svg>
+  ),
+  tool: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
+      <path d="M14.7 6.3a4 4 0 0 0-5-5L7 4l3 3 2.7-2.7a4 4 0 0 0 2 5L21 16l-5 5-6.3-6.3a4 4 0 0 0-5-2L2 15.4 5.6 19l2.7-2.7a4 4 0 0 0 5-5z" />
+    </svg>
+  ),
+  microphone: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
+      <rect x="9" y="2" width="6" height="12" rx="3" />
+      <path d="M5 10a7 7 0 0 0 14 0M12 17v5M8 22h8" />
+    </svg>
+  ),
+  expand: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
+      <polyline points="15 3 21 3 21 9" />
+      <polyline points="9 21 3 21 3 15" />
+      <line x1="21" y1="3" x2="14" y2="10" />
+      <line x1="3" y1="21" x2="10" y2="14" />
+    </svg>
+  ),
+  guitar: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="24" height="24">
+      <path d="m14 6 4-4 4 4-4 4" />
+      <path d="m16 8-5 5" />
+      <path d="M12 12c2 2 2 5 0 7s-5 2-7 0-2-5 0-7 5-2 7 0z" />
+      <circle cx="8.5" cy="15.5" r="1.5" />
+    </svg>
+  ),
+  coffee: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="24" height="24">
+      <path d="M18 8h1a4 4 0 0 1 0 8h-1" />
+      <path d="M2 8h16v5a6 6 0 0 1-6 6H8a6 6 0 0 1-6-6zM6 2v2M10 2v2M14 2v2M2 22h18" />
+    </svg>
+  ),
+  piano: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="24" height="24">
+      <rect x="2" y="4" width="20" height="16" rx="2" />
+      <path d="M6 4v10M10 4v10M14 4v10M18 4v10M2 14h20" />
+      <path d="M8 14v6M16 14v6" />
+    </svg>
+  ),
+  trumpet: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="24" height="24">
+      <path d="M3 10h11l7-4v12l-7-4H3z" />
+      <path d="M7 10V7M10 10V7M13 10V7M4 14v3M8 14v3" />
+    </svg>
+  ),
 };
 
 // ── Types ──────────────────────────────────────────────────────────
@@ -248,12 +403,12 @@ const PRESET_AVATARS = [
 ];
 
 const genres = [
-  { name: 'Pop Hits', gradient: 'linear-gradient(135deg, #ec4899, #f43f5e)', emoji: '🎤' },
-  { name: 'Hip-Hop', gradient: 'linear-gradient(135deg, #f97316, #ef4444)', emoji: '🎧' },
-  { name: 'Rock Charts', gradient: 'linear-gradient(135deg, #64748b, #334155)', emoji: '🎸' },
-  { name: 'Lofi Chill', gradient: 'linear-gradient(135deg, #8b5cf6, #06b6d4)', emoji: '☕' },
-  { name: 'Electronic', gradient: 'linear-gradient(135deg, #d97706, #b45309)', emoji: '🎹' },
-  { name: 'Jazz Beats', gradient: 'linear-gradient(135deg, #059669, #0d9488)', emoji: '🎺' },
+  { name: 'Pop Hits', gradient: 'linear-gradient(135deg, #ec4899, #f43f5e)', icon: Icons.microphone },
+  { name: 'Hip-Hop', gradient: 'linear-gradient(135deg, #f97316, #ef4444)', icon: Icons.headphones },
+  { name: 'Rock Charts', gradient: 'linear-gradient(135deg, #64748b, #334155)', icon: Icons.guitar },
+  { name: 'Lofi Chill', gradient: 'linear-gradient(135deg, #8b5cf6, #06b6d4)', icon: Icons.coffee },
+  { name: 'Electronic', gradient: 'linear-gradient(135deg, #d97706, #b45309)', icon: Icons.piano },
+  { name: 'Jazz Beats', gradient: 'linear-gradient(135deg, #059669, #0d9488)', icon: Icons.trumpet },
 ];
 
 const formatTime = (seconds: number) => {
@@ -263,8 +418,11 @@ const formatTime = (seconds: number) => {
   return `${m}:${s.toString().padStart(2, '0')}`;
 };
 
+const randomIndex = (length: number) => Math.floor(Math.random() * length);
+const randomSuffix = () => Math.random().toString(36).substring(2, 5);
+
 const sanitizePfpUrl = (url: string): string => {
-  let cleaned = url.trim();
+  const cleaned = url.trim();
   if (!cleaned) return '';
 
   // Imgur gallery/album URLs: https://imgur.com/a/abc123x or https://imgur.com/gallery/abc123x
@@ -364,6 +522,16 @@ function parseLRC(lrcText: string, totalDurationSec: number): LyricLine[] {
   }
 
   return parsedLines;
+}
+
+function parsePlainLyrics(lyricsText: string): LyricLine[] {
+  if (!lyricsText) return [];
+
+  return lyricsText
+    .split(/\r?\n/)
+    .map((text) => text.trim())
+    .filter(Boolean)
+    .map((text) => ({ time: 0, text, words: [] }));
 }
 
 const initialDefaultProfile: UserProfile = {
@@ -504,7 +672,7 @@ export default function SpiceApp() {
     lines: LyricLine[];
     plainLyrics: string;
     syncedLyrics: string;
-    isFallback: boolean;
+    isSynced: boolean;
   } | null>(null);
   const [lyricsLoading, setLyricsLoading] = useState(false);
   const [isKaraokeMode, setIsKaraokeMode] = useState(false);
@@ -528,6 +696,7 @@ export default function SpiceApp() {
   // Search state
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Track[]>([]);
+  const [searchResultsSource, setSearchResultsSource] = useState<'network' | 'cache' | null>(null);
   const [isSearching, setIsSearching] = useState(false);
   const [error, setError] = useState<string>();
 
@@ -572,7 +741,7 @@ export default function SpiceApp() {
       } else {
         logDebug('diagnostics', `InnerTube API ping failed with status ${apiPing.status}`);
       }
-    } catch (err) {
+    } catch {
       logDebug('diagnostics', 'InnerTube API ping failed to connect.');
     }
     
@@ -596,7 +765,7 @@ export default function SpiceApp() {
         dbStatus = 'failed';
         logDebug('diagnostics', `Cloud Database sync ping failed with status ${dbPing.status}`);
       }
-    } catch (err) {
+    } catch {
       logDebug('diagnostics', 'Cloud Database connection failed.');
     }
     
@@ -615,7 +784,7 @@ export default function SpiceApp() {
         embedStatus = 'failed';
         logDebug('diagnostics', 'YouTube Iframe API not detected in window scope. Check script blocks or content-blockers.');
       }
-    } catch (e) {
+    } catch {
       embedStatus = 'failed';
     }
 
@@ -628,6 +797,7 @@ export default function SpiceApp() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const ytPlayerRef = useRef<any>(null);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const searchRequestRef = useRef(0);
 
   // References to preserve state variables and bypass stale React closures inside player events
   const queueIndexRef = useRef(queueIndex);
@@ -636,11 +806,13 @@ export default function SpiceApp() {
   const streamProtocolRef = useRef(streamProtocol);
   const isShuffleRef = useRef(isShuffle);
   const activeProfileRef = useRef(activeProfile);
+  const progressRef = useRef(progress);
   const errorSkipTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const syncLockRef = useRef<boolean>(false);
 
   const handleAudioEndedRef = useRef<() => void>(() => {});
   const handleAudioErrorRef = useRef<() => void>(() => {});
+  const handleNextRef = useRef<(overrideIndex?: any, startSearchIndex?: number) => void>(() => {});
 
   const autoSyncProfiles = (updatedProfiles: UserProfile[]) => {
     if (!cloudToken) return;
@@ -681,7 +853,7 @@ export default function SpiceApp() {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${cloudToken}`
       },
-      body: JSON.stringify({ history: updatedHistory })
+      body: JSON.stringify({ history: updatedHistory, profileId: activeProfileId })
     }).then(res => {
       if (res.ok) logDebug('database', 'Listening history auto-saved to cloud database.');
     }).catch(err => {
@@ -697,11 +869,31 @@ export default function SpiceApp() {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${cloudToken}`
       },
-      body: JSON.stringify({ playlists: updatedPlaylists })
+      body: JSON.stringify({ playlists: updatedPlaylists, profileId: activeProfileId })
     }).then(res => {
       if (res.ok) logDebug('database', 'Playlists configuration auto-saved to cloud database.');
     }).catch(err => {
       logDebug('error', `Auto-sync playlists failed: ${err}`);
+    });
+  };
+
+  const autoSyncLikes = (updatedLikes: string[], updatedDetails: Record<string, Track>) => {
+    if (!cloudToken) return;
+    fetch('/api/sync/likes', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${cloudToken}`
+      },
+      body: JSON.stringify({
+        likedTracks: updatedLikes,
+        likedTrackDetails: updatedDetails,
+        profileId: activeProfileId,
+      })
+    }).then(res => {
+      if (res.ok) logDebug('database', 'Liked tracks auto-saved to cloud database.');
+    }).catch(err => {
+      logDebug('error', `Auto-sync likes failed: ${err}`);
     });
   };
 
@@ -753,20 +945,47 @@ export default function SpiceApp() {
 
       const activeProf = parsedProfiles.find(p => p.id === savedActiveId) || parsedProfiles[0];
       if (activeProf) {
+        const hydratedHistory = (activeProf.history || []).map(enrichTrackSnapshot);
+        const hydratedLikedDetails = Object.fromEntries(
+          Object.entries(activeProf.likedTrackDetails || {}).map(([id, track]) => [id, enrichTrackSnapshot(track)]),
+        );
+        const hydratedPlaylists = (activeProf.customPlaylists || []).map((playlist) => ({
+          ...playlist,
+          tracks: (playlist.tracks || []).map(enrichTrackSnapshot),
+        }));
+        rememberTrackSnapshots([
+          ...hydratedHistory,
+          ...Object.values(hydratedLikedDetails),
+          ...hydratedPlaylists.flatMap((playlist) => playlist.tracks),
+        ]);
+
         setActiveProfileId(activeProf.id);
         setLikedTracks(new Set(activeProf.likedTracks));
-        setLikedTrackDetails(activeProf.likedTrackDetails || {});
-        setCustomPlaylists(activeProf.customPlaylists || []);
-        setHistory(activeProf.history || []);
+        setLikedTrackDetails(hydratedLikedDetails);
+        setCustomPlaylists(hydratedPlaylists);
+        setHistory(hydratedHistory);
         setEditName(activeProf.displayName);
         setEditBio(activeProf.bio);
         setEditGradient(activeProf.gradient);
         setEditPasscode(activeProf.passcode || '');
         setEditAvatarUrl(activeProf.avatarUrl || '');
 
-        if (activeProf.history && activeProf.history.length > 0) {
-          setCurrentTrack(activeProf.history[0]);
-          setQueue([activeProf.history[0]]);
+        const savedPlayback = getPlaybackState(activeProf.id);
+        if (savedPlayback) {
+          setCurrentTrack(savedPlayback.currentTrack);
+          setQueue(savedPlayback.queue.length > 0 ? savedPlayback.queue : [savedPlayback.currentTrack]);
+          setQueueIndex(Math.min(savedPlayback.queueIndex, Math.max(savedPlayback.queue.length - 1, 0)));
+          setProgress(savedPlayback.progress);
+        } else if (hydratedHistory.length > 0) {
+          setCurrentTrack(hydratedHistory[0]);
+          setQueue([hydratedHistory[0]]);
+        }
+
+        const cachedSearch = getLatestCachedSearch();
+        if (cachedSearch) {
+          setSearchQuery(cachedSearch.query);
+          setSearchResults(cachedSearch.tracks);
+          setSearchResultsSource('cache');
         }
         logDebug('system', `Loaded active profile "${activeProf.displayName}" successfully. Hydration secured.`);
       }
@@ -774,6 +993,24 @@ export default function SpiceApp() {
   }, []);
 
   // ── YouTube Embedded Player Fallback API Integration ──────────────
+  useEffect(() => {
+    if (!isMounted || currentTrack.id === 'placeholder') return;
+
+    const persistPlayback = () => {
+      savePlaybackState(activeProfileId, {
+        currentTrack,
+        queue,
+        queueIndex,
+        progress: progressRef.current,
+        savedAt: Date.now(),
+      });
+    };
+    persistPlayback();
+
+    const interval = setInterval(persistPlayback, 5000);
+    return () => clearInterval(interval);
+  }, [activeProfileId, currentTrack, isMounted, queue, queueIndex]);
+
   const initializeYtPlayer = useCallback(() => {
     if (typeof window === 'undefined' || ytPlayerRef.current) return;
     try {
@@ -883,7 +1120,7 @@ export default function SpiceApp() {
           if (durationTime > 0) {
             setDuration(durationTime);
           }
-        } catch (e) {}
+        } catch {}
       }, 500);
     }
     return () => clearInterval(interval);
@@ -908,6 +1145,11 @@ export default function SpiceApp() {
         const trendData = trendRes.ok ? await trendRes.json() : { tracks: [] };
         const chillData = chillRes.ok ? await chillRes.json() : { tracks: [] };
         const energyData = energyRes.ok ? await energyRes.json() : { tracks: [] };
+        rememberTrackSnapshots([
+          ...(trendData.tracks || []),
+          ...(chillData.tracks || []),
+          ...(energyData.tracks || []),
+        ]);
 
         if (trendData.tracks?.length > 0) {
           setHomeTrending(trendData.tracks);
@@ -986,7 +1228,7 @@ export default function SpiceApp() {
           if (res.ok) return res;
           if (attempt < maxRetries && res.status >= 500) {
             const delay = 500 * Math.pow(2, attempt - 1);
-            logDebug('database', `[SYNC] ⚠ ${label} returned ${res.status}, retrying in ${delay}ms (attempt ${attempt}/${maxRetries})`);
+            logDebug('database', `[SYNC] [WARN] ${label} returned ${res.status}, retrying in ${delay}ms (attempt ${attempt}/${maxRetries})`);
             await new Promise(r => setTimeout(r, delay));
             continue;
           }
@@ -994,7 +1236,7 @@ export default function SpiceApp() {
         } catch (err) {
           if (attempt < maxRetries) {
             const delay = 500 * Math.pow(2, attempt - 1);
-            logDebug('database', `[SYNC] ⚠ ${label} network error, retrying in ${delay}ms (attempt ${attempt}/${maxRetries})`);
+            logDebug('database', `[SYNC] [WARN] ${label} network error, retrying in ${delay}ms (attempt ${attempt}/${maxRetries})`);
             await new Promise(r => setTimeout(r, delay));
           } else {
             throw err;
@@ -1013,11 +1255,12 @@ export default function SpiceApp() {
           const parsed = JSON.parse(savedProfilesStr);
           if (parsed && parsed.length > 0) localProfiles = parsed;
         }
-      } catch (e) {}
+      } catch {}
 
       const activeProf = localProfiles.find(p => p.id === activeProfileId) || localProfiles[0] || initialDefaultProfile;
       
       const localLikes = new Set<string>(activeProf.likedTracks || []);
+      const localLikedDetails = activeProf.likedTrackDetails || {};
       const localHistory = activeProf.history || [];
       const localPlaylists = activeProf.customPlaylists || [];
 
@@ -1031,7 +1274,7 @@ export default function SpiceApp() {
       }
       const profData = await profRes.json();
       const serverProfiles = profData.profiles ?? [];
-      logDebug('database', `[SYNC] ✓ Profiles pulled (${serverProfiles.length} from cloud)`);
+      logDebug('database', `[SYNC] [OK] Profiles pulled (${serverProfiles.length} from cloud)`);
 
       if (profData.localFallback) {
         setIsLocalDbFallback(true);
@@ -1043,6 +1286,7 @@ export default function SpiceApp() {
 
       // 2. Pull active profile likes
       let serverLikes: string[] = [];
+      let serverLikedDetails: Record<string, Track> = {};
       try {
         const likesRes = await fetchWithRetry(`/api/sync/likes?profileId=${encodeURIComponent(activeProf.id)}`, {
           headers: { 'Authorization': `Bearer ${token}` }
@@ -1050,12 +1294,13 @@ export default function SpiceApp() {
         if (likesRes.ok) {
           const likesData = await likesRes.json();
           serverLikes = likesData.likedTracks ?? [];
-          logDebug('database', `[SYNC] ✓ Likes pulled (${serverLikes.length} from cloud)`);
+          serverLikedDetails = likesData.likedTrackDetails ?? {};
+          logDebug('database', `[SYNC] [OK] Likes pulled (${serverLikes.length} from cloud)`);
         } else {
-          logDebug('database', `[SYNC] ✗ Likes pull failed (Status ${likesRes.status}), using local only`);
+          logDebug('database', `[SYNC] [ERROR] Likes pull failed (Status ${likesRes.status}), using local only`);
         }
       } catch (err: any) {
-        logDebug('database', `[SYNC] ✗ Likes pull error: ${err.message}, using local only`);
+        logDebug('database', `[SYNC] [ERROR] Likes pull error: ${err.message}, using local only`);
       }
 
       // 3. Pull active profile history
@@ -1067,12 +1312,12 @@ export default function SpiceApp() {
         if (histRes.ok) {
           const histData = await histRes.json();
           serverHistory = histData.history ?? [];
-          logDebug('database', `[SYNC] ✓ History pulled (${serverHistory.length} from cloud)`);
+          logDebug('database', `[SYNC] [OK] History pulled (${serverHistory.length} from cloud)`);
         } else {
-          logDebug('database', `[SYNC] ✗ History pull failed (Status ${histRes.status}), using local only`);
+          logDebug('database', `[SYNC] [ERROR] History pull failed (Status ${histRes.status}), using local only`);
         }
       } catch (err: any) {
-        logDebug('database', `[SYNC] ✗ History pull error: ${err.message}, using local only`);
+        logDebug('database', `[SYNC] [ERROR] History pull error: ${err.message}, using local only`);
       }
 
       // 4. Pull active profile playlists
@@ -1084,21 +1329,33 @@ export default function SpiceApp() {
         if (plRes.ok) {
           const plData = await plRes.json();
           serverPlaylists = plData.playlists ?? [];
-          logDebug('database', `[SYNC] ✓ Playlists pulled (${serverPlaylists.length} from cloud)`);
+          logDebug('database', `[SYNC] [OK] Playlists pulled (${serverPlaylists.length} from cloud)`);
         } else {
-          logDebug('database', `[SYNC] ✗ Playlists pull failed (Status ${plRes.status}), using local only`);
+          logDebug('database', `[SYNC] [ERROR] Playlists pull failed (Status ${plRes.status}), using local only`);
         }
       } catch (err: any) {
-        logDebug('database', `[SYNC] ✗ Playlists pull error: ${err.message}, using local only`);
+        logDebug('database', `[SYNC] [ERROR] Playlists pull error: ${err.message}, using local only`);
       }
 
       // 5. Merge Active Profile Data
       const mergedLikes = new Set([...localLikes, ...serverLikes]);
       const mergedLikesArray = Array.from(mergedLikes);
+      const mergedLikedDetails = Object.fromEntries(
+        mergedLikesArray
+          .map((id) => {
+            const localTrack = localLikedDetails[id];
+            const serverTrack = serverLikedDetails[id];
+            if (!localTrack && !serverTrack) return null;
+            return [id, enrichTrackSnapshot(
+              localTrack && serverTrack ? mergeTrackSnapshots(serverTrack, localTrack) : (localTrack || serverTrack),
+            )];
+          })
+          .filter((entry): entry is [string, Track] => entry !== null),
+      );
 
       const mergedHistoryMap = new Map<string, Track>();
       [...serverHistory, ...localHistory].forEach(track => {
-        mergedHistoryMap.set(track.id, track);
+        mergedHistoryMap.set(track.id, enrichTrackSnapshot(mergeTrackSnapshots(mergedHistoryMap.get(track.id), track)));
       });
       const mergedHistory = Array.from(mergedHistoryMap.values()).slice(0, 50);
 
@@ -1112,13 +1369,15 @@ export default function SpiceApp() {
             description: serverPl.description || '',
             gradient: serverPl.gradient || PRESET_GRADIENTS[0],
             createdAt: serverPl.createdAt || new Date().toLocaleDateString(),
-            tracks: serverPl.tracks || []
+            tracks: (serverPl.tracks || []).map(enrichTrackSnapshot)
           });
         } else {
-          const trackIds = new Set(existing.tracks.map((t: any) => t.id));
           serverPl.tracks.forEach((t: any) => {
-            if (!trackIds.has(t.id)) {
+            const existingIndex = existing.tracks.findIndex((track) => track.id === t.id);
+            if (existingIndex === -1) {
               existing.tracks.push(t);
+            } else {
+              existing.tracks[existingIndex] = enrichTrackSnapshot(mergeTrackSnapshots(existing.tracks[existingIndex], t));
             }
           });
         }
@@ -1163,7 +1422,7 @@ export default function SpiceApp() {
           return {
             ...p,
             likedTracks: mergedLikesArray,
-            likedTrackDetails: activeProf.likedTrackDetails || {},
+            likedTrackDetails: mergedLikedDetails,
             customPlaylists: mergedPlaylists,
             history: mergedHistory
           };
@@ -1173,8 +1432,14 @@ export default function SpiceApp() {
 
       // 8. Update client states
       setLikedTracks(mergedLikes);
+      setLikedTrackDetails(mergedLikedDetails);
       setHistory(mergedHistory);
       setCustomPlaylists(mergedPlaylists);
+      rememberTrackSnapshots([
+        ...Object.values(mergedLikedDetails),
+        ...mergedHistory,
+        ...mergedPlaylists.flatMap((playlist) => playlist.tracks),
+      ]);
       setProfiles(finalProfiles);
       localStorage.setItem('spice_profiles_list', JSON.stringify(finalProfiles));
 
@@ -1191,7 +1456,7 @@ export default function SpiceApp() {
       // 9. Push Merged States to Cloud Database (each independently)
       let pushFailures = 0;
       const pushEndpoints = [
-        { label: 'Likes', url: '/api/sync/likes', body: { likedTracks: mergedLikesArray, profileId: activeProf.id } },
+        { label: 'Likes', url: '/api/sync/likes', body: { likedTracks: mergedLikesArray, likedTrackDetails: mergedLikedDetails, profileId: activeProf.id } },
         { label: 'History', url: '/api/sync/history', body: { history: mergedHistory, profileId: activeProf.id } },
         { label: 'Playlists', url: '/api/sync/playlists', body: { playlists: mergedPlaylists, profileId: activeProf.id } },
         { label: 'Profiles', url: '/api/sync/profiles', body: { profiles: finalProfiles } },
@@ -1208,14 +1473,14 @@ export default function SpiceApp() {
             body: JSON.stringify(ep.body)
           }, `${ep.label} push`);
           if (res.ok) {
-            logDebug('database', `[SYNC] ✓ ${ep.label} pushed successfully`);
+            logDebug('database', `[SYNC] [OK] ${ep.label} pushed successfully`);
           } else {
             pushFailures++;
-            logDebug('database', `[SYNC] ✗ ${ep.label} push failed (Status ${res.status})`);
+            logDebug('database', `[SYNC] [ERROR] ${ep.label} push failed (Status ${res.status})`);
           }
         } catch (err: any) {
           pushFailures++;
-          logDebug('database', `[SYNC] ✗ ${ep.label} push error: ${err.message}`);
+          logDebug('database', `[SYNC] [ERROR] ${ep.label} push error: ${err.message}`);
         }
       }
 
@@ -1371,7 +1636,7 @@ export default function SpiceApp() {
       }
     } else {
       logDebug('player', 'Advancing to next track in queue...');
-      handleNext();
+      handleNextRef.current();
     }
   };
 
@@ -1387,7 +1652,7 @@ export default function SpiceApp() {
         clearTimeout(errorSkipTimeoutRef.current);
       }
       errorSkipTimeoutRef.current = setTimeout(() => {
-        handleNext();
+        handleNextRef.current();
         errorSkipTimeoutRef.current = null;
       }, 1500);
     } else {
@@ -1402,6 +1667,7 @@ export default function SpiceApp() {
   useEffect(() => { streamProtocolRef.current = streamProtocol; }, [streamProtocol]);
   useEffect(() => { isShuffleRef.current = isShuffle; }, [isShuffle]);
   useEffect(() => { activeProfileRef.current = activeProfile; }, [activeProfile]);
+  useEffect(() => { progressRef.current = progress; }, [progress]);
 
   useEffect(() => {
     handleAudioEndedRef.current = handleAudioEnded;
@@ -1417,7 +1683,7 @@ export default function SpiceApp() {
   }, []);
 
   // Dynamic Lyrics Fetcher & Karaoke Auto-scroller Effects
-  const activeLineIdx = lyricsData 
+  const activeLineIdx = lyricsData?.isSynced
     ? lyricsData.lines.findIndex((line, idx) => {
         const nextLine = lyricsData.lines[idx + 1];
         return progress >= line.time && (!nextLine || progress < nextLine.time);
@@ -1459,16 +1725,18 @@ export default function SpiceApp() {
           return;
         }
 
-        logDebug('lyrics', `API Response successfully parsed for "${data.title || currentTrack.title}". Fallback engine used: ${data.isFallback ? 'YES' : 'NO'}`);
+        logDebug('lyrics', `API Response successfully parsed for "${data.title || currentTrack.title}". Timed lyrics: ${data.isSynced ? 'YES' : 'NO'}`);
         // Duration fallback chain: track metadata → API response → YouTube embed player → default
         const ytEmbedDuration = ytPlayerRef.current?.getDuration?.() || 0;
         const totalSec = currentTrack.durationMs 
           ? currentTrack.durationMs / 1000 
           : (data.durationMs ? data.durationMs / 1000 : (ytEmbedDuration > 0 ? ytEmbedDuration : 180));
         
-        logDebug('lyrics', `Parsing LRC time-tags (Total duration: ${Math.round(totalSec)}s)`);
-        const parsedLines = parseLRC(data.syncedLyrics, totalSec);
-        logDebug('lyrics', `Successfully synchronized ${parsedLines.length} lyric lines with proportional word-timing`);
+        const parsedLines = data.isSynced
+          ? parseLRC(data.syncedLyrics, totalSec)
+          : parsePlainLyrics(data.plainLyrics);
+        logDebug('lyrics', `Loaded ${parsedLines.length} ${data.isSynced ? 'synchronized' : 'plain'} lyric lines`);
+        if (!data.isSynced) setIsKaraokeMode(false);
 
         if (parsedLines.length > 0) {
           logDebug('lyrics', `Sync sample: [Line 1 Time: ${formatTime(parsedLines[0].time)}] "${parsedLines[0].text}"`);
@@ -1478,23 +1746,13 @@ export default function SpiceApp() {
           lines: parsedLines,
           plainLyrics: data.plainLyrics,
           syncedLyrics: data.syncedLyrics,
-          isFallback: !!data.isFallback,
+          isSynced: !!data.isSynced,
         });
       } catch (err) {
         logDebug('lyrics', `Error during lyrics resolution: ${err instanceof Error ? err.message : String(err)}`);
         if (!active) return;
         
-        logDebug('lyrics', `Invoking client-side local safety net to construct timed atmospheric wave flow`);
-        const ytEmbedDur = ytPlayerRef.current?.getDuration?.() || 0;
-        const totalSec = currentTrack.durationMs ? currentTrack.durationMs / 1000 : (ytEmbedDur > 0 ? ytEmbedDur : 180);
-        const fallbackText = `🎵 [Instrumental Vibe]\n✨ Now Streaming: ${currentTrack.title}\n💫 Let the rhythm wash over you...`;
-        const parsedLines = parseLRC(fallbackText, totalSec);
-        setLyricsData({
-          lines: parsedLines,
-          plainLyrics: fallbackText,
-          syncedLyrics: fallbackText,
-          isFallback: true,
-        });
+        setLyricsData(null);
       } finally {
         if (active) {
           setLyricsLoading(false);
@@ -1525,6 +1783,7 @@ export default function SpiceApp() {
     setError(undefined);
     setIsPlaying(false);
     setStreamUrl(null);
+    rememberTrackSnapshots([track, ...(newQueue || [])]);
     setCurrentTrack(track);
     setIsLoadingStream(true);
 
@@ -1639,7 +1898,7 @@ export default function SpiceApp() {
       const currentQueue = queueRef.current;
       if (currentQueue.length > 1) {
         logDebug('player', 'Failed to resolve track stream. Triggering self-healing next-track skip...');
-        handleNext(updatedIndex, startSearchIndex !== undefined ? startSearchIndex : updatedIndex);
+        handleNextRef.current(updatedIndex, startSearchIndex !== undefined ? startSearchIndex : updatedIndex);
       } else {
         setError('Playback connection failed. Please select a different track.');
       }
@@ -1755,7 +2014,7 @@ export default function SpiceApp() {
     if (isShuffleRef.current) {
       if (currentQueue.length > 1) {
         do {
-          prevIdx = Math.floor(Math.random() * currentQueue.length);
+          prevIdx = randomIndex(currentQueue.length);
         } while (prevIdx === currentIndex);
       } else {
         prevIdx = 0;
@@ -1779,7 +2038,7 @@ export default function SpiceApp() {
     if (isShuffleRef.current) {
       if (currentQueue.length > 1) {
         do {
-          nextIdx = Math.floor(Math.random() * currentQueue.length);
+          nextIdx = randomIndex(currentQueue.length);
         } while (nextIdx === currentIndex);
       } else {
         nextIdx = 0;
@@ -1800,7 +2059,12 @@ export default function SpiceApp() {
     playTrack(currentQueue[nextIdx], undefined, searchStart);
   };
 
+  useEffect(() => {
+    handleNextRef.current = handleNext;
+  });
+
   const toggleLike = (track: Track) => {
+    rememberTrackSnapshots([track]);
     const updated = new Set(likedTracks);
     const isLiked = !updated.has(track.id);
     if (updated.has(track.id)) {
@@ -1824,6 +2088,7 @@ export default function SpiceApp() {
       likedTracks: Array.from(updated),
       likedTrackDetails: savedLikedDetails
     });
+    autoSyncLikes(Array.from(updated), savedLikedDetails);
   };
 
   const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -1850,6 +2115,7 @@ export default function SpiceApp() {
   const handleSearchInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     const query = e.target.value;
     setSearchQuery(query);
+    const requestId = ++searchRequestRef.current;
 
     if (searchTimeoutRef.current) {
       clearTimeout(searchTimeoutRef.current);
@@ -1857,7 +2123,15 @@ export default function SpiceApp() {
 
     if (!query.trim()) {
       setSearchResults([]);
+      setSearchResultsSource(null);
+      setIsSearching(false);
       return;
+    }
+
+    const cachedSearch = getCachedSearch(query);
+    if (cachedSearch) {
+      setSearchResults(cachedSearch.tracks);
+      setSearchResultsSource('cache');
     }
 
     setIsSearching(true);
@@ -1871,11 +2145,17 @@ export default function SpiceApp() {
         const res = await fetch(`/api/yt/search?${searchParams}`);
         if (!res.ok) throw new Error('Search failed');
         const data = await res.json();
-        setSearchResults(data.tracks ?? []);
+        if (requestId !== searchRequestRef.current) return;
+        const tracks = (data.tracks ?? []).map(enrichTrackSnapshot);
+        rememberSearchResults(query, tracks);
+        setSearchResults(tracks);
+        setSearchResultsSource('network');
       } catch (err: any) {
         console.error(err);
       } finally {
-        setIsSearching(false);
+        if (requestId === searchRequestRef.current) {
+          setIsSearching(false);
+        }
       }
     }, 400);
   };
@@ -1890,7 +2170,7 @@ export default function SpiceApp() {
       title: newPlTitle,
       description: newPlDesc || 'Custom Spice compilation.',
       tracks: [],
-      gradient: PRESET_GRADIENTS[Math.floor(Math.random() * PRESET_GRADIENTS.length)],
+      gradient: PRESET_GRADIENTS[randomIndex(PRESET_GRADIENTS.length)],
       createdAt: new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
     };
 
@@ -1914,6 +2194,7 @@ export default function SpiceApp() {
   };
 
   const addTrackToPlaylist = (track: Track, playlistId: string) => {
+    rememberTrackSnapshots([track]);
     const updated = customPlaylists.map(pl => {
       if (pl.id === playlistId) {
         if (pl.tracks.some(t => t.id === track.id)) return pl;
@@ -1946,8 +2227,9 @@ export default function SpiceApp() {
     }
   };
 
-  const getLikedTracksList = (): Track[] => {
-    return Object.values(likedTrackDetails);
+  const likedTracksList = Object.values(likedTrackDetails);
+  const getLikedTrackClickHandler = (track: Track) => () => {
+    playTrack(track);
   };
 
   const clearHistory = () => {
@@ -1958,8 +2240,8 @@ export default function SpiceApp() {
   };
 
   // Profile switching, locking and passcode validations
-  const switchProfile = (profileId: string) => {
-    const target = profiles.find(p => p.id === profileId);
+  const switchProfile = (profileId: string, profileOverride?: UserProfile) => {
+    const target = profileOverride || profiles.find(p => p.id === profileId);
     if (!target) return;
 
     setActiveProfileId(profileId);
@@ -1967,19 +2249,33 @@ export default function SpiceApp() {
     logDebug('profile', `Switched active profile to "${target.displayName}" (Playlists: ${target.customPlaylists?.length || 0}, Likes: ${target.likedTracks?.length || 0})`);
 
     // Synchronize states immediately to prevent cascading renders
+    const targetHistory = (target.history || []).map(enrichTrackSnapshot);
+    const targetLikedDetails = Object.fromEntries(
+      Object.entries(target.likedTrackDetails || {}).map(([id, track]) => [id, enrichTrackSnapshot(track)]),
+    );
+    const targetPlaylists = (target.customPlaylists || []).map((playlist) => ({
+      ...playlist,
+      tracks: (playlist.tracks || []).map(enrichTrackSnapshot),
+    }));
     setLikedTracks(new Set(target.likedTracks));
-    setLikedTrackDetails(target.likedTrackDetails || {});
-    setCustomPlaylists(target.customPlaylists || []);
-    setHistory(target.history || []);
+    setLikedTrackDetails(targetLikedDetails);
+    setCustomPlaylists(targetPlaylists);
+    setHistory(targetHistory);
     setEditName(target.displayName);
     setEditBio(target.bio);
     setEditGradient(target.gradient);
     setEditPasscode(target.passcode || '');
     setEditAvatarUrl(target.avatarUrl || '');
 
-    if (target.history && target.history.length > 0) {
-      setCurrentTrack(target.history[0]);
-      setQueue([target.history[0]]);
+    const savedPlayback = getPlaybackState(target.id);
+    if (savedPlayback) {
+      setCurrentTrack(savedPlayback.currentTrack);
+      setQueue(savedPlayback.queue.length > 0 ? savedPlayback.queue : [savedPlayback.currentTrack]);
+      setQueueIndex(Math.min(savedPlayback.queueIndex, Math.max(savedPlayback.queue.length - 1, 0)));
+      setProgress(savedPlayback.progress);
+    } else if (targetHistory.length > 0) {
+      setCurrentTrack(targetHistory[0]);
+      setQueue([targetHistory[0]]);
     } else {
       const placeholderTrack = {
         id: 'placeholder',
@@ -1990,8 +2286,10 @@ export default function SpiceApp() {
       setCurrentTrack(placeholderTrack);
       setQueue([placeholderTrack]);
     }
-    setQueueIndex(0);
-    setProgress(0);
+    if (!savedPlayback) {
+      setQueueIndex(0);
+      setProgress(0);
+    }
     setStreamUrl(null);
     setIsPlaying(false);
 
@@ -2039,7 +2337,7 @@ export default function SpiceApp() {
     setShowCreateProfileDialog(false);
 
     // Switch instantly
-    switchProfile(newId);
+    switchProfile(newId, newProf);
   };
 
   const deleteProfile = (profileId: string) => {
@@ -2149,6 +2447,7 @@ export default function SpiceApp() {
       if (tracks.length === 0) {
         throw new Error('This public playlist does not contain any playable tracks.');
       }
+      rememberTrackSnapshots(tracks);
 
       // Add as custom playlist
       const newPlaylist: Playlist = {
@@ -2156,7 +2455,7 @@ export default function SpiceApp() {
         title: playlistData.title || 'YT Import',
         description: playlistData.description || 'Imported YouTube playlist.',
         tracks,
-        gradient: PRESET_GRADIENTS[Math.floor(Math.random() * PRESET_GRADIENTS.length)],
+        gradient: PRESET_GRADIENTS[randomIndex(PRESET_GRADIENTS.length)],
         createdAt: new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
       };
 
@@ -2240,7 +2539,7 @@ export default function SpiceApp() {
         if (!newPlaylists.some(p => p.title === pl.title && p.tracks.length === pl.tracks.length)) {
           newPlaylists.push({
             ...pl,
-            id: 'backup_' + Date.now() + '_' + Math.random().toString(36).substring(2, 5)
+            id: 'backup_' + Date.now() + '_' + randomSuffix()
           });
         }
       }
@@ -2464,7 +2763,6 @@ export default function SpiceApp() {
           ref={audioRef}
           src={streamUrl}
           autoPlay={isPlaying}
-          {...{ referrerpolicy: 'no-referrer' }}
           onTimeUpdate={handleTimeUpdate}
           onLoadedMetadata={handleLoadedMetadata}
           onEnded={handleAudioEnded}
@@ -2563,8 +2861,8 @@ export default function SpiceApp() {
           
           {error && (
             <div style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', padding: '12px 20px', borderRadius: '8px', marginBottom: '24px', color: '#f87171', display: 'flex', alignItems: 'center' }}>
-              <span>⚠️ {error}</span>
-              <button onClick={() => setError(undefined)} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', fontWeight: 'bold' }}>✕</button>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>{Icons.alertTriangle} {error}</span>
+              <button onClick={() => setError(undefined)} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', display: 'inline-flex' }} title="Dismiss error">{Icons.close}</button>
             </div>
           )}
 
@@ -2586,7 +2884,7 @@ export default function SpiceApp() {
                     {selectedPlaylist.tracks.length > 0 ? (
                       <img src={selectedPlaylist.tracks[0].artworkUrl} alt={selectedPlaylist.title} />
                     ) : (
-                      <span style={{ fontSize: '4rem' }}>🎵</span>
+                      <span style={{ display: 'inline-flex', transform: 'scale(2.5)' }}>{Icons.musicNote}</span>
                     )}
                   </div>
                   <div className="playlist-detail-banner__info">
@@ -2865,7 +3163,9 @@ export default function SpiceApp() {
                   {searchResults.length > 0 ? (
                     <section className="section animate-in">
                       <div className="section__header">
-                        <h2 className="section__title">Search Results</h2>
+                        <h2 className="section__title">
+                          Search Results{searchResultsSource === 'cache' ? ' (saved locally)' : ''}
+                        </h2>
                       </div>
                       <div className="library-list">
                         {searchResults.map((song) => {
@@ -2926,7 +3226,7 @@ export default function SpiceApp() {
                             handleSearchInput({ target: { value: g.name } } as any);
                           }}>
                             <span className="genre-card__title">{g.name}</span>
-                            <span className="genre-card__emoji">{g.emoji}</span>
+                            <span className="genre-card__icon">{g.icon}</span>
                           </div>
                         ))}
                       </div>
@@ -2970,7 +3270,7 @@ export default function SpiceApp() {
                     <div className="playlist-grid animate-in">
                       {customPlaylists.length === 0 ? (
                         <div style={{ gridColumn: '1/-1', textAlign: 'center', padding: '64px 0', color: 'var(--text-secondary)' }}>
-                          <div style={{ fontSize: '3rem', marginBottom: '16px' }}>📁</div>
+                          <div style={{ marginBottom: '16px', display: 'flex', justifyContent: 'center', transform: 'scale(1.8)' }}>{Icons.folder}</div>
                           <p style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '8px', color: 'var(--text-primary)' }}>Create your first custom playlist</p>
                           <p style={{ marginBottom: '16px' }}>Build custom compilations from YouTube Music streams</p>
                           <button className="btn btn--primary" onClick={() => setShowCreateDialog(true)}>Create Playlist</button>
@@ -2993,17 +3293,21 @@ export default function SpiceApp() {
                   {/* Liked songs view */}
                   {libraryFilter === 'liked' && (
                     <div className="library-list animate-in">
-                      {getLikedTracksList().length === 0 ? (
+                      {likedTracksList.length === 0 ? (
                         <div style={{ textAlign: 'center', padding: '64px 0', color: 'var(--text-secondary)' }}>
-                          <div style={{ fontSize: '3rem', marginBottom: '16px' }}>💜</div>
+                          <div style={{ marginBottom: '16px', display: 'flex', justifyContent: 'center', transform: 'scale(1.8)', color: 'var(--accent-pink)' }}>{Icons.heartFilled}</div>
                           <p style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '8px', color: 'var(--text-primary)' }}>Songs you like will appear here</p>
                           <p>Tap the heart icon next to any search results to save tracks</p>
                         </div>
                       ) : (
-                        getLikedTracksList().map((song) => {
+                        likedTracksList.map((song) => {
                           const isPlayingCurrent = currentTrack.id === song.id;
                           return (
-                            <div key={song.id} className="library-item animate-in" onClick={() => playTrack(song, getLikedTracksList())}>
+                            <div
+                              key={song.id}
+                              className="library-item animate-in"
+                              onClick={getLikedTrackClickHandler(song)}
+                            >
                               <img className="library-item__art" src={song.artworkUrl || '/icon.svg'} alt={song.title} />
                               <div className="library-item__info">
                                 <span className="library-item__title" style={isPlayingCurrent ? { color: 'var(--accent-pink)' } : {}}>
@@ -3044,7 +3348,7 @@ export default function SpiceApp() {
 
                       {history.length === 0 ? (
                         <div style={{ textAlign: 'center', padding: '64px 0', color: 'var(--text-secondary)' }}>
-                          <div style={{ fontSize: '3rem', marginBottom: '16px' }}>🕒</div>
+                          <div style={{ marginBottom: '16px', display: 'flex', justifyContent: 'center', transform: 'scale(1.8)' }}>{Icons.clock}</div>
                           <p style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '8px', color: 'var(--text-primary)' }}>No playback history yet</p>
                           <p>Tracks you listen to will be preserved locally in chronological order</p>
                         </div>
@@ -3180,7 +3484,7 @@ export default function SpiceApp() {
                               style={{ marginLeft: 'auto', color: '#f87171', padding: '4px', opacity: 0.6 }}
                               title="Delete Profile"
                             >
-                              ✕
+                              {Icons.close}
                             </button>
                           )}
                         </div>
@@ -3196,7 +3500,7 @@ export default function SpiceApp() {
 
                   {/* ── Server Accounts & Cloud Sync ── */}
                   <h3 style={{ fontSize: '1.1rem', fontWeight: 700, margin: '32px 0 16px 0', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    🌐 Cloud Sync & Server Accounts
+                    {Icons.globe} Cloud Sync & Server Accounts
                     {cloudUser && <span style={{ fontSize: '0.75rem', background: 'rgba(52, 211, 153, 0.1)', color: '#34d399', padding: '2px 8px', borderRadius: '12px', border: '1px solid rgba(52, 211, 153, 0.2)' }}>Connected</span>}
                   </h3>
                   
@@ -3215,13 +3519,13 @@ export default function SpiceApp() {
 
                         {isLocalDbFallback && (
                           <div style={{ background: 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(59, 130, 246, 0.2)', padding: '12px', borderRadius: '8px', color: '#60a5fa', fontSize: '0.85rem', marginBottom: '16px', lineHeight: 1.4 }}>
-                            💾 <strong>Local File Account:</strong> Signed in using backend local fallback storage (`local_db.json`). Syncing works locally! Setup a DATABASE_URL to connect to the cloud.
+                            <span style={{ display: 'inline-flex', verticalAlign: 'middle', marginRight: '6px' }}>{Icons.database}</span><strong>Local File Account:</strong> Signed in using backend local fallback storage (`local_db.json`). Syncing works locally! Setup a DATABASE_URL to connect to the cloud.
                           </div>
                         )}
 
                         {dbError && (
                           <div style={{ background: 'rgba(239, 68, 68, 0.08)', border: '1px solid rgba(239, 68, 68, 0.2)', padding: '12px', borderRadius: '8px', color: '#f87171', fontSize: '0.85rem', marginBottom: '16px' }}>
-                            ⚠️ {dbError} Please make sure DATABASE_URL is configured in your `.env` file and run `pnpm db:push` to enable full cloud backup!
+                            <span style={{ display: 'inline-flex', verticalAlign: 'middle', marginRight: '6px' }}>{Icons.alertTriangle}</span>{dbError} Please make sure DATABASE_URL is configured in your `.env` file and run `pnpm db:push` to enable full cloud backup!
                           </div>
                         )}
 
@@ -3237,12 +3541,12 @@ export default function SpiceApp() {
                           
                           {syncingStatus === 'success' && (
                             <span style={{ color: '#34d399', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                              ✓ Synchronized successfully with the database!
+                              {Icons.checkCircle} Synchronized successfully with the database!
                             </span>
                           )}
                           {syncingStatus === 'error' && !dbError && (
-                            <span style={{ color: '#f87171', fontSize: '0.85rem' }}>
-                              ⚠️ Sync failed. Please check server logs.
+                            <span style={{ color: '#f87171', fontSize: '0.85rem', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                              {Icons.alertTriangle} Sync failed. Please check server logs.
                             </span>
                           )}
                         </div>
@@ -3255,7 +3559,7 @@ export default function SpiceApp() {
 
                         {!dbError && (
                           <div style={{ background: 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(59, 130, 246, 0.2)', padding: '12px', borderRadius: '8px', color: '#60a5fa', fontSize: '0.85rem', marginBottom: '16px', lineHeight: 1.4 }}>
-                            💾 <strong>Local Database Active:</strong> Signup and sign-in are enabled via local file storage (`local_db.json`). No external PostgreSQL setup required to start using accounts!
+                            <span style={{ display: 'inline-flex', verticalAlign: 'middle', marginRight: '6px' }}>{Icons.database}</span><strong>Local Database Active:</strong> Signup and sign-in are enabled via local file storage (`local_db.json`). No external PostgreSQL setup required to start using accounts!
                           </div>
                         )}
 
@@ -3267,7 +3571,7 @@ export default function SpiceApp() {
                         )}
 
                         {authError && (
-                          <div style={{ color: '#f87171', fontSize: '0.8rem', marginBottom: '16px' }}>⚠️ {authError}</div>
+                          <div style={{ color: '#f87171', fontSize: '0.8rem', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.alertTriangle} {authError}</div>
                         )}
 
                         <form onSubmit={handleAuthSubmit} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', maxWidth: '500px', marginBottom: '16px' }}>
@@ -3333,10 +3637,10 @@ export default function SpiceApp() {
                       />
 
                       {playlistImportError && (
-                        <div style={{ color: '#f87171', fontSize: '0.75rem', marginBottom: '12px' }}>⚠️ {playlistImportError}</div>
+                        <div style={{ color: '#f87171', fontSize: '0.75rem', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.alertTriangle} {playlistImportError}</div>
                       )}
                       {playlistImportSuccess && (
-                        <div style={{ color: '#34d399', fontSize: '0.75rem', marginBottom: '12px' }}>✓ {playlistImportSuccess}</div>
+                        <div style={{ color: '#34d399', fontSize: '0.75rem', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.checkCircle} {playlistImportSuccess}</div>
                       )}
 
                       <button 
@@ -3358,10 +3662,10 @@ export default function SpiceApp() {
 
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                         <button className="btn btn--ghost" onClick={downloadBackupFile} style={{ width: '100%', padding: '8px 16px', fontSize: '0.85rem' }}>
-                          💾 Download Backup File (.json)
+                          {Icons.download} Download Backup File (.json)
                         </button>
                         <button className="btn btn--ghost" onClick={copyBackupToClipboard} style={{ width: '100%', padding: '8px 16px', fontSize: '0.85rem' }}>
-                          📋 Copy Backup to Clipboard
+                          {Icons.clipboard} Copy Backup to Clipboard
                         </button>
                       </div>
                     </div>
@@ -3468,7 +3772,7 @@ export default function SpiceApp() {
                             }}
                             title="Upload image from device"
                           >
-                            📷 Upload
+                            {Icons.camera} Upload
                             <input
                               type="file"
                               accept="image/*"
@@ -3511,7 +3815,7 @@ export default function SpiceApp() {
                               }}
                               title="Remove avatar"
                             >
-                              ✕ Remove
+                              {Icons.close} Remove
                             </button>
                           )}
                         </div>
@@ -3583,7 +3887,7 @@ export default function SpiceApp() {
 
                   {/* Theme Accent Settings */}
                   <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
-                    <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif' }}>🎨 Global Accent Colors</h3>
+                    <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.palette} Global Accent Colors</h3>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0 0 20px 0', lineHeight: 1.4 }}>
                       Select a dynamic accent theme color to instantly paint application highlights, glow animations, button hovers, and dividers.
                     </p>
@@ -3615,7 +3919,7 @@ export default function SpiceApp() {
 
                   {/* Audio Settings */}
                   <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
-                    <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif' }}>🎧 Audio & Streaming Preferences</h3>
+                    <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.headphones} Audio & Streaming Preferences</h3>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0 0 20px 0', lineHeight: 1.4 }}>
                       Fine-tune streaming codecs and bitrates to match your current network speed or data constraints.
                     </p>
@@ -3657,7 +3961,7 @@ export default function SpiceApp() {
 
                   {/* Player View & Position Settings */}
                   <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
-                    <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif' }}>🖥️ Player Layout & Viewing Options</h3>
+                    <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.monitor} Player Layout & Viewing Options</h3>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0 0 20px 0', lineHeight: 1.4 }}>
                       Customize the now-playing bar placement, open the immersive full-screen player, or collapse it into a floating picture-in-picture widget.
                     </p>
@@ -3698,7 +4002,7 @@ export default function SpiceApp() {
 
                   {/* Cache & Safety Controls */}
                   <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
-                    <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif' }}>🧹 Caches & System Integrity</h3>
+                    <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.shield} Caches & System Integrity</h3>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0 0 20px 0', lineHeight: 1.4 }}>
                       Reset local session states, clear playback history logs, or completely purge LocalStorage profile registries with a single command.
                     </p>
@@ -3737,10 +4041,10 @@ export default function SpiceApp() {
                   <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '40px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
                       <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 800, color: '#fff', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        🛠️ System Diagnostics & Live Terminal
+                        {Icons.tool} System Diagnostics & Live Terminal
                       </h3>
                       <span style={{ fontSize: '0.75rem', background: 'rgba(255,255,255,0.04)', color: 'var(--text-secondary)', padding: '4px 10px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.06)' }}>
-                        Spice Media Core v1.0.9 (Phase 5 Stealth)
+                        Spice Media Core v1.0.11 (Phase 7 SVG UI)
                       </span>
                     </div>
 
@@ -3860,7 +4164,7 @@ export default function SpiceApp() {
                           }}
                           style={{ padding: '8px 16px', fontSize: '0.85rem', color: logsCopied ? '#4ade80' : '#fff', borderColor: logsCopied ? '#4ade80' : 'var(--border-color)' }}
                         >
-                          {logsCopied ? '✓ Copied Logs' : 'Copy Logs'}
+                          {logsCopied ? 'Copied Logs' : 'Copy Logs'}
                         </button>
 
                         <button
@@ -4157,7 +4461,7 @@ export default function SpiceApp() {
         <div className="queue-drawer animate-in" style={{ position: 'fixed', right: '24px', bottom: '96px', width: '320px', maxHeight: '420px', background: 'rgba(10, 10, 10, 0.95)', border: '1px solid var(--border-color)', borderRadius: '16px', backdropFilter: 'blur(20px)', zIndex: 99, padding: '20px', display: 'flex', flexDirection: 'column', boxShadow: '0 8px 32px rgba(0,0,0,0.6)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid var(--border-color)', paddingBottom: '10px' }}>
             <h4 style={{ margin: 0, fontSize: '1rem', fontWeight: 800, fontFamily: 'Outfit, sans-serif' }}>Play Queue</h4>
-            <button onClick={() => setShowQueueDrawer(false)} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '1rem' }}>✕</button>
+            <button onClick={() => setShowQueueDrawer(false)} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', display: 'inline-flex' }} title="Close queue">{Icons.close}</button>
           </div>
           <div style={{ overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '280px', paddingRight: '4px' }} className="custom-scrollbar">
             {queue.map((song, idx) => {
@@ -4187,7 +4491,7 @@ export default function SpiceApp() {
                       style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', opacity: 0.6, fontSize: '0.8rem' }}
                       title="Remove from queue"
                     >
-                      ✕
+                      {Icons.close}
                     </button>
                   )}
                 </div>
@@ -4212,19 +4516,19 @@ export default function SpiceApp() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', borderBottom: '1px solid var(--border-color)', paddingBottom: '10px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <h4 style={{ margin: 0, fontSize: '1rem', fontWeight: 800, fontFamily: 'Outfit, sans-serif', color: '#fff' }}>Lyrics</h4>
-              {lyricsData?.isFallback && (
-                <span style={{ fontSize: '0.58rem', background: 'rgba(236, 72, 153, 0.15)', color: 'var(--accent-pink)', padding: '2px 6px', borderRadius: '20px', fontWeight: 700 }}>THEMED</span>
+              {lyricsData && !lyricsData.isSynced && lyricsData.lines.length > 0 && (
+                <span style={{ fontSize: '0.58rem', background: 'rgba(236, 72, 153, 0.15)', color: 'var(--accent-pink)', padding: '2px 6px', borderRadius: '20px', fontWeight: 700 }}>UNSYNCED</span>
               )}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               <button 
-                onClick={() => setIsKaraokeMode(!isKaraokeMode)} 
-                style={{ background: 'none', border: 'none', color: isKaraokeMode ? 'var(--accent-pink)' : 'rgba(255,255,255,0.4)', cursor: 'pointer', fontSize: '0.9rem', outline: 'none' }}
+                onClick={() => lyricsData?.isSynced && setIsKaraokeMode(!isKaraokeMode)}
+                style={{ background: 'none', border: 'none', color: isKaraokeMode ? 'var(--accent-pink)' : 'rgba(255,255,255,0.4)', cursor: lyricsData?.isSynced ? 'pointer' : 'not-allowed', fontSize: '0.9rem', outline: 'none', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
                 title="Toggle Karaoke Mode"
               >
-                🎤 {isKaraokeMode ? 'ON' : 'OFF'}
+                {Icons.microphone} {isKaraokeMode ? 'ON' : 'OFF'}
               </button>
-              <button onClick={() => setShowBarLyrics(false)} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '1rem', outline: 'none' }}>✕</button>
+              <button onClick={() => setShowBarLyrics(false)} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', outline: 'none', display: 'inline-flex' }} title="Close lyrics">{Icons.close}</button>
             </div>
           </div>
 
@@ -4255,6 +4559,7 @@ export default function SpiceApp() {
                     key={idx} 
                     data-active={isActive}
                     onClick={() => {
+                      if (!lyricsData.isSynced) return;
                       setProgress(line.time);
                       if (streamProtocol === 'embed' && ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
                         ytPlayerRef.current.seekTo(line.time, true);
@@ -4270,7 +4575,7 @@ export default function SpiceApp() {
                       fontFamily: 'Outfit, sans-serif',
                       lineHeight: 1.3,
                       textShadow: isActive ? (isHeader ? '0 0 10px rgba(236,72,153,0.4)' : '0 0 12px rgba(255,255,255,0.3)') : 'none',
-                      cursor: 'pointer',
+                      cursor: lyricsData.isSynced ? 'pointer' : 'default',
                       padding: '4px 8px',
                       borderRadius: '6px',
                       transform: isActive ? 'scale(1.03)' : 'scale(1)',
@@ -4279,7 +4584,7 @@ export default function SpiceApp() {
                       opacity: isActive ? 1 : (isPast ? 0.35 : 0.6)
                     }}
                   >
-                    {isKaraokeMode && line.words.length > 0 && !isHeader ? (
+                    {lyricsData.isSynced && isKaraokeMode && line.words.length > 0 && !isHeader ? (
                       <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center' }}>
                         {line.words.map((w, wIdx) => {
                           const isWordActive = progress >= w.start && progress < (w.start + w.duration);
@@ -4420,7 +4725,7 @@ export default function SpiceApp() {
             style={{ color: showBarLyrics ? 'var(--accent-pink)' : '#fff', padding: '4px', cursor: 'pointer', outline: 'none', fontSize: '1.05rem', transition: 'all 0.15s ease' }}
             title="Real-time Synced Lyrics"
           >
-            🎤
+            {Icons.microphone}
           </button>
 
           <button 
@@ -4446,12 +4751,12 @@ export default function SpiceApp() {
             style={{ color: '#fff', padding: '4px', cursor: 'pointer', outline: 'none', transition: 'all 0.15s ease' }}
             title="Switch to Floating Mini Player"
           >
-            🗗
+            {Icons.expand}
           </button>
           
           <div className="now-playing__volume">
             <button className="now-playing__volume-btn" onClick={() => setVolume(volume === 0 ? 70 : 0)}>
-              {Icons.volume}
+              {volume === 0 ? Icons.volumeMuted : Icons.volume}
             </button>
             <input
               type="range"
@@ -4470,7 +4775,7 @@ export default function SpiceApp() {
           onClick={(e) => { e.stopPropagation(); togglePlayPause(); }}
           style={{ display: 'none' }}
         >
-          {isPlaying ? '❚❚' : '▶'}
+          {isPlaying ? Icons.pause : Icons.play}
         </button>
       </footer>
 
@@ -4505,7 +4810,7 @@ export default function SpiceApp() {
               style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', padding: '8px 16px', borderRadius: '20px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}
               title="Mini Player"
             >
-              🗗 Floating Mini Player
+              {Icons.expand} Floating Mini Player
             </button>
             <div style={{ fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.2em', opacity: 0.5, fontWeight: 700 }}>Now Playing</div>
             <button 
@@ -4516,7 +4821,7 @@ export default function SpiceApp() {
               style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.6)', cursor: 'pointer', fontSize: '1.75rem', padding: '4px 10px', outline: 'none' }}
               title="Close"
             >
-              ✕
+              {Icons.close}
             </button>
           </div>
 
@@ -4553,9 +4858,9 @@ export default function SpiceApp() {
               {/* Tab headers */}
               <div style={{ display: 'flex', gap: '20px', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '12px', marginBottom: '20px' }}>
                 {[
-                  { id: 'controls', label: '🎧 Player Controls' },
-                  { id: 'queue', label: '🔀 Up Next Queue' },
-                  { id: 'lyrics', label: '🎤 Active Lyrics' }
+                  { id: 'controls', label: 'Player Controls', icon: Icons.headphones },
+                  { id: 'queue', label: 'Up Next Queue', icon: Icons.shuffle },
+                  { id: 'lyrics', label: 'Active Lyrics', icon: Icons.microphone }
                 ].map(t => {
                   const isActive = expandedTab === t.id;
                   return (
@@ -4577,7 +4882,7 @@ export default function SpiceApp() {
                         outline: 'none'
                       }}
                     >
-                      {t.label}
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>{t.icon} {t.label}</span>
                     </button>
                   );
                 })}
@@ -4763,9 +5068,9 @@ export default function SpiceApp() {
                       marginBottom: '4px'
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem', fontWeight: 600, color: 'rgba(255,255,255,0.8)' }}>
-                        <span style={{ fontSize: '1rem' }}>🎤</span>
+                        <span style={{ display: 'inline-flex' }}>{Icons.microphone}</span>
                         <span style={{ letterSpacing: '1px', fontFamily: 'Outfit, sans-serif' }}>KARAOKE MODE</span>
-                        {lyricsData?.isFallback && (
+                        {lyricsData && !lyricsData.isSynced && lyricsData.lines.length > 0 && (
                           <span style={{
                             fontSize: '0.6rem',
                             background: 'rgba(236, 72, 153, 0.15)',
@@ -4775,12 +5080,12 @@ export default function SpiceApp() {
                             fontWeight: 700,
                             letterSpacing: '0.5px'
                           }}>
-                            THEMED FLOW
+                            UNSYNCED
                           </span>
                         )}
                       </div>
                       <button
-                        onClick={() => setIsKaraokeMode(!isKaraokeMode)}
+                        onClick={() => lyricsData?.isSynced && setIsKaraokeMode(!isKaraokeMode)}
                         style={{
                           background: isKaraokeMode ? 'linear-gradient(135deg, var(--accent-pink), #ec4899)' : 'rgba(255,255,255,0.08)',
                           border: 'none',
@@ -4789,12 +5094,12 @@ export default function SpiceApp() {
                           borderRadius: '20px',
                           fontSize: '0.75rem',
                           fontWeight: 700,
-                          cursor: 'pointer',
+                          cursor: lyricsData?.isSynced ? 'pointer' : 'not-allowed',
                           boxShadow: isKaraokeMode ? '0 0 10px rgba(236, 72, 153, 0.4)' : 'none',
                           transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
                         }}
                       >
-                        {isKaraokeMode ? 'ON ⚡' : 'OFF'}
+                        {isKaraokeMode ? 'ON' : 'OFF'}
                       </button>
                     </div>
 
@@ -4843,6 +5148,7 @@ export default function SpiceApp() {
                               key={idx} 
                               data-active={isActive}
                               onClick={() => {
+                                if (!lyricsData.isSynced) return;
                                 setProgress(line.time);
                                 if (streamProtocol === 'embed' && ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
                                   ytPlayerRef.current.seekTo(line.time, true);
@@ -4860,7 +5166,7 @@ export default function SpiceApp() {
                                 textShadow: isActive 
                                   ? (isHeader ? '0 0 10px rgba(236,72,153,0.4)' : '0 0 12px rgba(255,255,255,0.3)') 
                                   : 'none',
-                                cursor: 'pointer',
+                                cursor: lyricsData.isSynced ? 'pointer' : 'default',
                                 padding: '6px 12px',
                                 borderRadius: '8px',
                                 transform: isActive ? 'scale(1.04)' : 'scale(1)',
@@ -4870,7 +5176,7 @@ export default function SpiceApp() {
                                 opacity: isActive ? 1 : (isPast ? 0.35 : 0.6)
                               }}
                             >
-                              {isKaraokeMode && line.words.length > 0 && !isHeader ? (
+                              {lyricsData.isSynced && isKaraokeMode && line.words.length > 0 && !isHeader ? (
                                 <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center' }}>
                                   {line.words.map((w, wIdx) => {
                                     const isWordActive = progress >= w.start && progress < (w.start + w.duration);
@@ -4927,7 +5233,7 @@ export default function SpiceApp() {
           <div style={{ opacity: 0.3, fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
             <span>Spice Premium Audio Resolution Engine</span>
             <span>•</span>
-            <span>PWA v1.0.9</span>
+            <span>PWA v1.0.11</span>
           </div>
 
         </div>
@@ -5004,8 +5310,8 @@ export default function SpiceApp() {
             }}
             className="mini-player__art-hover"
             >
-              <span style={{ fontSize: '1.25rem' }}>
-                {isPlaying ? '❚❚' : '▶'}
+              <span style={{ display: 'inline-flex' }}>
+                {isPlaying ? Icons.pause : Icons.play}
               </span>
             </div>
           </div>
@@ -5039,7 +5345,7 @@ export default function SpiceApp() {
                   }}
                   title={likedTracks.has(currentTrack.id) ? 'Unlike' : 'Like'}
                 >
-                  {likedTracks.has(currentTrack.id) ? '❤️' : '🤍'}
+                  {likedTracks.has(currentTrack.id) ? Icons.heartFilled : Icons.heart}
                 </button>
 
                 <button
@@ -5056,7 +5362,7 @@ export default function SpiceApp() {
                   }}
                   title={volume === 0 ? 'Unmute' : 'Mute'}
                 >
-                  {volume === 0 ? '🔇' : '🔊'}
+                  {volume === 0 ? Icons.volumeMuted : Icons.volume}
                 </button>
               </div>
             </div>
@@ -5078,7 +5384,7 @@ export default function SpiceApp() {
                   }}
                   title="Previous"
                 >
-                  ⏮
+                  {Icons.prev}
                 </button>
 
                 <button 
@@ -5101,8 +5407,8 @@ export default function SpiceApp() {
                   onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.1)'}
                   onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
                 >
-                  <span style={{ fontSize: '0.75rem', display: 'inline-flex' }}>
-                    {isPlaying ? '❚❚' : '▶'}
+                  <span style={{ display: 'inline-flex' }}>
+                    {isPlaying ? Icons.pause : Icons.play}
                   </span>
                 </button>
 
@@ -5120,7 +5426,7 @@ export default function SpiceApp() {
                   }}
                   title="Next"
                 >
-                  ⏭
+                  {Icons.next}
                 </button>
               </div>
 
@@ -5146,7 +5452,7 @@ export default function SpiceApp() {
                   }}
                   title="Toggle Lyrics View"
                 >
-                  🎤
+                  {Icons.microphone}
                 </button>
 
                 <button 
@@ -5173,7 +5479,7 @@ export default function SpiceApp() {
                   onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.color = '#fff'; }}
                   onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; e.currentTarget.style.color = 'rgba(255,255,255,0.7)'; }}
                 >
-                  ⤢
+                  {Icons.expand}
                 </button>
 
                 <button 
@@ -5195,7 +5501,7 @@ export default function SpiceApp() {
                   onMouseEnter={(e) => e.currentTarget.style.color = '#f87171'}
                   onMouseLeave={(e) => e.currentTarget.style.color = 'rgba(255,255,255,0.4)'}
                 >
-                  ✕
+                  {Icons.close}
                 </button>
               </div>
             </div>
@@ -5236,7 +5542,9 @@ export default function SpiceApp() {
                   {lyricsData.lines[activeLineIdx].text}
                 </span>
               ) : (
-                <span style={{ color: 'rgba(255,255,255,0.3)' }}>🎵 (Instrumental)</span>
+                <span style={{ color: 'rgba(255,255,255,0.3)' }}>
+                  {lyricsData && !lyricsData.isSynced && lyricsData.lines.length > 0 ? 'Lyrics are not time-synced' : '(Instrumental)'}
+                </span>
               )}
             </div>
           )}
@@ -5295,10 +5603,10 @@ export default function SpiceApp() {
       }}
     >
       {[
-        { id: 'home', label: 'Home', icon: '🏠' },
-        { id: 'search', label: 'Search', icon: '🔍' },
-        { id: 'likes', label: 'Library', icon: '❤️' },
-        { id: 'settings', label: 'Settings', icon: '⚙️' }
+        { id: 'home', label: 'Home', icon: Icons.home },
+        { id: 'search', label: 'Search', icon: Icons.search },
+        { id: 'likes', label: 'Library', icon: Icons.heart },
+        { id: 'settings', label: 'Settings', icon: Icons.settings }
       ].map((tab) => {
         const isActive = currentPage === tab.id && !selectedPlaylist;
         return (

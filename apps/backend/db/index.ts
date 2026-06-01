@@ -3,10 +3,12 @@ import { drizzle } from 'drizzle-orm/neon-http';
 
 import * as schema from './schema';
 
-let dbInstance: any = null;
+type SpiceDatabase = ReturnType<typeof drizzle<typeof schema>>;
 
-export const db = new Proxy({} as any, {
-  get(target, prop) {
+let dbInstance: SpiceDatabase | null = null;
+
+export const db = new Proxy({} as SpiceDatabase, {
+  get(_target, prop) {
     if (!dbInstance) {
       const databaseUrl = process.env.DATABASE_URL;
       if (!databaseUrl) {

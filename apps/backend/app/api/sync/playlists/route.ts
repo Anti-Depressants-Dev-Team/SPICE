@@ -3,6 +3,7 @@ import { verifySession } from '@/lib/auth';
 import { db } from '@/db';
 import { playlists, playlistItems } from '@/db/schema';
 import { eq, and } from 'drizzle-orm';
+import { trackSnapshotColumns, trackSnapshotFromRow } from '@/lib/track-snapshot';
 
 export const runtime = 'nodejs';
 
@@ -47,13 +48,8 @@ export async function GET(request: Request) {
         title: pl.title,
         description: pl.description || '',
         createdAt: pl.updatedAt.toISOString(),
-        gradient: 'linear-gradient(135deg, #a855f7, #ec4899)', // defaults to standard gradient
-        tracks: items.map((item: { trackId: string; sourceId: string }) => ({
-          id: item.trackId,
-          title: 'Track', // client resolves real metadata dynamically or via fallback
-          artists: [],
-          sourceId: item.sourceId,
-        })),
+        gradient: pl.gradient,
+        tracks: items.map(trackSnapshotFromRow),
       });
     }
 
@@ -119,6 +115,7 @@ export async function POST(request: Request) {
         profileId,
         title: clientPl.title,
         description: clientPl.description || '',
+        gradient: clientPl.gradient || 'linear-gradient(135deg, #a855f7, #ec4899)',
         sortIndex: i,
       }).returning();
 
@@ -127,8 +124,9 @@ export async function POST(request: Request) {
         const itemsPayload = clientPl.tracks.map((t: { id: string; sourceId?: string }, pos: number) => ({
           playlistId: insertedPl.id,
           position: pos,
-          sourceId: t.sourceId || 'yt',
+          sourceId: t.sourceId || 'youtube_music',
           trackId: t.id,
+          ...trackSnapshotColumns(t, t.id),
         }));
         await db.insert(playlistItems).values(itemsPayload);
       }

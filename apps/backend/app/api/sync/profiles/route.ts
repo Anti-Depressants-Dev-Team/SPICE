@@ -3,7 +3,6 @@ import { verifySession } from '@/lib/auth';
 import { db } from '@/db';
 import { profiles } from '@/db/schema';
 import { eq } from 'drizzle-orm';
-import { getLocalProfiles, saveLocalProfiles } from '@/lib/local-db';
 
 export const runtime = 'nodejs';
 

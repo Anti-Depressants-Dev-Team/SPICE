@@ -4,7 +4,6 @@ import { users } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { verifyPassword } from '@/lib/hash';
 import { signSession } from '@/lib/auth';
-import { findLocalUserByEmail } from '@/lib/local-db';
 
 export const runtime = 'nodejs';
 

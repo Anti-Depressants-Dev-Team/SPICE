@@ -137,6 +137,9 @@
 }
 
 .streamInfo {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   font-family: var(--font-geist-mono), monospace;
   font-size: 0.8rem;
   color: #8bd58b;
