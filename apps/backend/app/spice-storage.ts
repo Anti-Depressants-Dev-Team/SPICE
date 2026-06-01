@@ -26,6 +26,7 @@ export interface SearchCacheEntry {
   query: string;
   tracks: TrackSnapshot[];
   savedAt: number;
+  sourceId?: string;
 }
 
 export interface PlaybackSaveState {
@@ -156,29 +157,37 @@ export function mergeTrackLists(...lists: TrackSnapshot[][]): TrackSnapshot[] {
   return Array.from(merged.values());
 }
 
-export function rememberSearchResults(query: string, tracks: TrackSnapshot[]) {
+export function rememberSearchResults(
+  query: string,
+  tracks: TrackSnapshot[],
+  sourceId = 'youtube_music',
+) {
   const trimmedQuery = query.trim();
   if (!trimmedQuery || tracks.length === 0) return;
 
   rememberTrackSnapshots(tracks);
   const normalized = normalizeQuery(trimmedQuery);
   const entries = readJson<SearchCacheEntry[]>(SEARCH_CACHE_KEY, [])
-    .filter((entry) => normalizeQuery(entry.query) !== normalized);
+    .filter((entry) => normalizeQuery(entry.query) !== normalized || (entry.sourceId ?? 'youtube_music') !== sourceId);
 
   entries.unshift({
     query: trimmedQuery,
     tracks: tracks.slice(0, MAX_SEARCH_TRACKS).map(enrichTrackSnapshot),
     savedAt: Date.now(),
+    sourceId,
   });
   writeJson(SEARCH_CACHE_KEY, entries.slice(0, MAX_SEARCH_ENTRIES));
 }
 
-export function getCachedSearch(query: string): SearchCacheEntry | null {
+export function getCachedSearch(query: string, sourceId = 'youtube_music'): SearchCacheEntry | null {
   const normalized = normalizeQuery(query);
   if (!normalized) return null;
 
   const entry = readJson<SearchCacheEntry[]>(SEARCH_CACHE_KEY, [])
-    .find((candidate) => normalizeQuery(candidate.query) === normalized);
+    .find((candidate) =>
+      normalizeQuery(candidate.query) === normalized
+      && (candidate.sourceId ?? 'youtube_music') === sourceId,
+    );
   return entry
     ? { ...entry, tracks: entry.tracks.map(enrichTrackSnapshot) }
     : null;

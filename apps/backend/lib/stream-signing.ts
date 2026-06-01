@@ -9,8 +9,12 @@ export interface SignedStreamInput {
   expiresAt: number;
 }
 
-export function buildSignedStreamUrl(origin: string, input: SignedStreamInput) {
-  const url = new URL(`/api/yt/stream/${encodeURIComponent(input.id)}`, origin);
+export function buildSignedStreamUrl(
+  origin: string,
+  input: SignedStreamInput,
+  routePrefix = '/api/yt/stream',
+) {
+  const url = new URL(`${routePrefix}/${encodeURIComponent(input.id)}`, origin);
   url.searchParams.set('itag', String(input.itag));
   url.searchParams.set('expires', String(input.expiresAt));
   url.searchParams.set('u', Buffer.from(input.upstreamUrl).toString('base64url'));
