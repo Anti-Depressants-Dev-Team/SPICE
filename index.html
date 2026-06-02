@@ -1,968 +1,781 @@
 <!doctype html>
 <html lang="en">
-    <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>Spice</title>
-        <link rel="stylesheet" href="/styles.css" />
-    </head>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spice</title>
+    <meta name="description" content="Spice — Premium YouTube Music Desktop Client">
 
-    <body>
-        <!-- Custom Title Bar -->
-        <div id="title-bar">
-            <div class="nav-controls" id="nav-container">
-                <button id="btn-back" class="nav-btn" title="Back">
-                    <svg viewBox="0 0 24 24">
-                        <path
-                            fill="currentColor"
-                            d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"
-                        />
-                    </svg>
-                </button>
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 
-                <button id="btn-reload" class="nav-btn" title="Reload">
-                    <svg viewBox="0 0 24 24">
-                        <path
-                            fill="currentColor"
-                            d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"
-                        />
-                    </svg>
-                </button>
-                <button id="btn-url" class="nav-btn" title="Open URL">
-                    <svg viewBox="0 0 24 24">
-                        <path
-                            fill="currentColor"
-                            d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"
-                        />
-                    </svg>
-                </button>
+    <!-- Tailwind CSS (Play CDN) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'] },
+                },
+            },
+        }
+    </script>
 
-                <button id="btn-home" class="nav-btn" title="Home">
-                    <svg viewBox="0 0 24 24">
-                        <path
-                            fill="currentColor"
-                            d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"
-                        />
-                    </svg>
-                </button>
-            </div>
+    <!-- React 18 (Production) -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 
-            <!-- Top Search Bar -->
-            <div class="top-search-container" id="top-search-container">
-                <input
-                    type="text"
-                    id="top-search-input"
-                    class="top-search-input"
-                    placeholder="Search YouTube Music..."
-                />
-            </div>
+    <!-- htm — JSX-like tagged templates (3KB, no build step) -->
+    <script src="https://unpkg.com/htm@3.1.1/dist/htm.umd.js"></script>
 
-            <!-- Right Side Controls (Settings + Window Ops) -->
-            <div class="title-right">
-                <button id="btn-volume" class="nav-btn" title="Volume">
-                    <svg viewBox="0 0 24 24">
-                        <path
-                            fill="currentColor"
-                            d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"
-                        />
-                    </svg>
-                </button>
-                <!-- Volume Slider Popup -->
-                <div id="volume-popup" class="volume-popup hidden">
-                    <div class="volume-slider-container">
-                        <input
-                            type="range"
-                            min="0"
-                            max="200"
-                            step="10"
-                            value="100"
-                            class="volume-slider"
-                            id="volume-range"
-                            title="Volume"
-                        />
-                    </div>
-                    <div class="volume-value" id="volume-text">100%</div>
-                    <button
-                        id="btn-boost"
-                        class="boost-btn"
-                        title="Unlock 1000% Volume"
-                    >
-                        Boost
-                    </button>
+    <!-- Spice Theme -->
+    <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+    <div id="root"></div>
+
+    <script>
+    // ================================================================
+    //  Spice 3 — Obsidian Purple
+    //  A React-based remote control for the Spice music engine.
+    //  Communicates with the Electron main process via window.api (IPC)
+    //  with a fetch-based browser fallback for remote/web access.
+    // ================================================================
+
+    // ── Library Guard ────────────────────────────────────────────
+    if (typeof React === 'undefined' || typeof ReactDOM === 'undefined') {
+        document.getElementById('root').innerHTML =
+            '<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:#666;font-family:Inter,sans-serif">' +
+            '<p>Loading Spice UI… Please check your internet connection.</p></div>';
+        throw new Error('React not loaded');
+    }
+
+    const html = (typeof htm !== 'undefined' ? htm : window.htm).bind(React.createElement);
+    const { useState, useEffect, useRef, useCallback } = React;
+
+    // ── Helpers ──────────────────────────────────────────────────
+
+    function fmtTime(s) {
+        if (!s || isNaN(s) || s < 0) return '0:00';
+        const m = Math.floor(s / 60);
+        const sec = Math.floor(s % 60);
+        return m + ':' + (sec < 10 ? '0' : '') + sec;
+    }
+
+    async function callApi(action) {
+        var args = Array.prototype.slice.call(arguments, 1);
+
+        // 1. Electron IPC (primary)
+        if (window.api) {
+            switch (action) {
+                case 'loadService':    return window.api.loadService(args[0]);
+                case 'navigate':       return window.api.navigate(args[0]);
+                case 'openSettings':   return window.api.openSettings();
+                case 'setVolume':      return window.api.setVolume(args[0]);
+                case 'getVolume':      return window.api.getVolume();
+                case 'loadUrl':        return window.api.loadUrl(args[0]);
+                case 'hideView':       return window.api.hideView();
+                case 'showView':       return window.api.showView();
+                case 'toggleVolume':   return window.api.toggleVolume();
+                case 'openLyrics':     return window.api.openLyrics();
+                case 'openMiniPlayer': return window.api.openMiniPlayer();
+                case 'openQueue':      return window.api.openQueue();
+                case 'openDevTools':   return window.api.openDevTools();
+                case 'getNowPlaying':  return window.api.getNowPlaying();
+                case 'executeSearch':  return window.api.executeSearch(args[0]);
+                case 'getTopBarSearch': return window.api.getTopBarSearch();
+                case 'vkCommand':      return window.api.vkCommand(args[0]);
+                case 'checkForUpdates': return window.api.checkForUpdates();
+                case 'installUpdate':  return window.api.installUpdate();
+                case 'windowControls':
+                    if (args[0] === 'minimize') return window.api.windowControls.minimize();
+                    if (args[0] === 'maximize') return window.api.windowControls.maximize();
+                    if (args[0] === 'close')    return window.api.windowControls.close();
+                    break;
+            }
+        }
+
+        // 2. Browser/Remote fallback (fetch-based)
+        var serverAction = action;
+        var body = {};
+
+        if (action === 'vkCommand') {
+            var cmd = args[0];
+            if (typeof cmd === 'string') { serverAction = cmd; }
+            else if (typeof cmd === 'object') { serverAction = cmd.action; body = cmd; }
+        } else if (action === 'setVolume') {
+            serverAction = 'volume';
+            body = { value: args[0] };
+        } else if (action === 'loadService') {
+            serverAction = 'loadService';
+            body = { service: args[0] };
+        }
+
+        try {
+            var response = await fetch('/api/control', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: serverAction, ...body }),
+            });
+            return await response.json();
+        } catch (err) {
+            console.error('Remote API Error:', err);
+            return null;
+        }
+    }
+
+    // ── SVG Icon Helper ─────────────────────────────────────────
+
+    function icon(d, s) {
+        s = s || 16;
+        var paths = Array.isArray(d) ? d : [d];
+        return html`<svg width=${s} height=${s} viewBox="0 0 24 24" fill="currentColor">
+            ${paths.map(function(p, i) { return html`<path key=${i} d=${p} />`; })}
+        </svg>`;
+    }
+
+    // Material Design Icons (filled, 24x24 viewBox)
+    var IC = {
+        back:        'M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z',
+        refresh:     'M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z',
+        link:        'M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7a5 5 0 0 0 0 10h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4a5 5 0 0 0 0-10z',
+        home:        'M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z',
+        search:      'M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z',
+        mic:         ['M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z',
+                      'M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z'],
+        pip:         'M21 3H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H3V5h18v14zm-10-7h9v6h-9z',
+        queue:       'M15 6H3v2h12V6zm0 4H3v2h12v-2zM3 16h8v-2H3v2zM17 6v8.18A2.996 2.996 0 0 0 14 17c0 1.66 1.34 3 3 3s3-1.34 3-3V8h3V6h-5z',
+        settings:    'M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.04.64.09.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.58 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z',
+        vol2:        'M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 7.97v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z',
+        volX:        'M16.5 12A4.5 4.5 0 0 0 14 7.97v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.796 8.796 0 0 0 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06a8.99 8.99 0 0 0 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z',
+        minimize:    'M19 13H5v-2h14v2z',
+        maximize:    'M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14z',
+        close:       'M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z',
+        play:        'M8 5v14l11-7z',
+        pause:       'M6 19h4V5H6v14zm8-14v14h4V5h-4z',
+        skipBack:    'M6 6h2v12H6zm3.5 6l8.5 6V6z',
+        skipFwd:     'M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z',
+        heart:       'M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09A5.99 5.99 0 0 1 16.5 3C19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z',
+        shuffle:     'M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z',
+        repeat:      'M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z',
+        repeatOne:   'M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4zm-4-2V9h-1l-2 1v1h1.5v4H13z',
+        cloud:       'M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z',
+        addList:     'M14 10H2v2h12v-2zm0-4H2v2h12V6zm4 8v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zM2 16h8v-2H2v2z',
+        ytMusic:     'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z',
+    };
+
+    // ── Home Screen ─────────────────────────────────────────────
+
+    function HomeScreen(props) {
+        var onLoad = props.onLoad;
+
+        return html`
+            <div class="flex-1 flex flex-col items-center justify-center text-center px-6 animate-fade-in select-none"
+                 style=${{ background: 'radial-gradient(ellipse at 50% 40%, rgba(168,85,247,0.06) 0%, transparent 70%)' }}>
+
+                <!-- Animated Spice Logo -->
+                <div class="mb-2" style=${{ animation: 'float 4s ease-in-out infinite' }}>
+                    <div class="text-purple-500 mb-4">${icon(IC.ytMusic, 56)}</div>
                 </div>
-                <!-- Lyrics Button -->
-                <button class="nav-btn" id="lyrics-btn" title="Lyrics">
-                    <svg viewBox="0 0 24 24">
-                        <path
-                            fill="currentColor"
-                            d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"
-                        />
-                        <path
-                            fill="currentColor"
-                            d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"
-                        />
-                    </svg>
-                </button>
-                <button
-                    class="nav-btn"
-                    id="mini-player-btn"
-                    title="Mini Player"
-                >
-                    <svg viewBox="0 0 24 24">
-                        <path
-                            fill="currentColor"
-                            d="M21 3H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H3V5h18v14zm-10-7h9v6h-9z"
-                        />
-                    </svg>
-                </button>
-                <button class="nav-btn" id="queue-btn" title="Queue">
-                    <svg viewBox="0 0 24 24">
-                        <path
-                            fill="currentColor"
-                            d="M15 6H3v2h12V6zm0 4H3v2h12v-2zM3 16h8v-2H3v2zM17 6v8.18c-.31-.11-.65-.18-1-.18-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V8h3V6h-5z"
-                        />
-                    </svg>
-                </button>
-                <button id="btn-settings" class="nav-btn" title="Settings">
-                    <svg viewBox="0 0 24 24">
-                        <path
-                            fill="currentColor"
-                            d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L3.16 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.04.64.09.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.58 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"
-                        />
-                    </svg>
-                </button>
-                <div class="window-controls">
-                    <button id="btn-min" class="win-btn" title="Minimize">
-                        <svg viewBox="0 0 12 12">
-                            <path fill="currentColor" d="M11 6H1V5h10v1z" />
-                        </svg>
-                    </button>
-                    <button id="btn-max" class="win-btn" title="Maximize">
-                        <svg viewBox="0 0 12 12">
-                            <path
-                                fill="currentColor"
-                                d="M1 1v10h10V1H1zm1 9V2h8v8H2z"
-                            />
-                        </svg>
-                    </button>
-                    <button
-                        id="btn-close"
-                        class="win-btn win-close"
-                        title="Close"
-                    >
-                        <svg viewBox="0 0 12 12">
-                            <path
-                                fill="currentColor"
-                                d="M11 1.7L10.3 1 6 5.3 1.7 1 1 1.7 5.3 6 1 10.3 1.7 11 6 6.7 10.3 11 11 10.3 6.7 6z"
-                            />
-                        </svg>
-                    </button>
-                </div>
-            </div>
-        </div>
 
-        <!-- URL Input Modal -->
-        <div id="url-modal" class="modal hidden">
-            <div class="modal-content">
-                <h3>Open URL</h3>
-                <p class="modal-hint">
-                    Only YouTube Music and SoundCloud links are allowed
+                <h1 class="text-5xl font-extralight tracking-[0.2em] mb-2"
+                    style=${{ background: 'linear-gradient(135deg, #c084fc 0%, #a855f7 50%, #7c3aed 100%)',
+                              WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+                    SPICE
+                </h1>
+                <p class="text-gray-600 text-xs tracking-[0.3em] uppercase mb-16 font-medium">
+                    Your music · Elevated
                 </p>
-                <input
-                    type="url"
-                    id="url-input"
-                    placeholder="https://music.youtube.com/... or https://soundcloud.com/..."
-                    autocomplete="off"
-                />
-                <div class="modal-error hidden" id="url-error">
-                    Invalid URL. Only YouTube Music and SoundCloud links are
-                    allowed.
-                </div>
-                <div class="modal-buttons">
-                    <button id="url-cancel" class="modal-btn cancel">
-                        Cancel
+
+                <!-- Service Cards -->
+                <div class="flex gap-6 flex-wrap justify-center">
+                    <!-- YouTube Music -->
+                    <button class="group glass rounded-2xl w-[240px] h-[200px] flex flex-col items-center justify-center
+                                   cursor-pointer transition-all duration-300 hover:-translate-y-1.5
+                                   hover:border-purple-500/30 hover:shadow-[0_8px_40px_rgba(168,85,247,0.15)]
+                                   active:scale-95"
+                            onClick=${function() { onLoad('yt'); }}>
+                        <div class="text-purple-500 mb-5 transition-transform duration-300 group-hover:scale-110">
+                            ${icon(IC.play, 44)}
+                        </div>
+                        <h2 class="text-base font-semibold tracking-wide">YouTube Music</h2>
+                        <span class="text-[11px] text-gray-600 mt-1">Ad-free streaming</span>
                     </button>
-                    <button id="url-go" class="modal-btn primary">Go</button>
+
+                    <!-- SoundCloud -->
+                    <button class="group glass rounded-2xl w-[240px] h-[200px] flex flex-col items-center justify-center
+                                   cursor-pointer transition-all duration-300 hover:-translate-y-1.5
+                                   hover:border-purple-500/30 hover:shadow-[0_8px_40px_rgba(168,85,247,0.15)]
+                                   active:scale-95"
+                            onClick=${function() { onLoad('sc'); }}>
+                        <div class="text-purple-500 mb-5 transition-transform duration-300 group-hover:scale-110">
+                            ${icon(IC.cloud, 44)}
+                        </div>
+                        <h2 class="text-base font-semibold tracking-wide">SoundCloud</h2>
+                        <span class="text-[11px] text-gray-600 mt-1">Experimental</span>
+                    </button>
+
+                    <!-- Spice Crazier -->
+                    <button class="group glass rounded-2xl w-[240px] h-[200px] flex flex-col items-center justify-center
+                                   cursor-pointer transition-all duration-300 hover:-translate-y-1.5
+                                   hover:border-purple-500/30 hover:shadow-[0_8px_40px_rgba(168,85,247,0.15)]
+                                   active:scale-95"
+                            onClick=${function() { onLoad('spice_crazy'); }}>
+                        <div class="text-purple-500 mb-5 transition-transform duration-300 group-hover:scale-110">
+                            ${icon(IC.ytMusic, 44)}
+                        </div>
+                        <h2 class="text-base font-semibold tracking-wide">Spice Crazier</h2>
+                        <span class="text-[11px] text-gray-600 mt-1">Wrapped web player</span>
+                    </button>
                 </div>
             </div>
-        </div>
+        `;
+    }
 
-        <!-- VK Player Bar (between title bar and BrowserView) -->
-        <div id="vk-player-bar" class="hidden">
-            <button class="vk-ctrl-btn" id="vk-btn-prev">
-                <svg viewBox="0 0 24 24">
-                    <path fill="currentColor" d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
-                </svg>
-            </button>
-            <button class="vk-play-btn" id="vk-btn-play">
-                <svg viewBox="0 0 24 24">
-                    <path fill="currentColor" d="M8 5v14l11-7z" />
-                </svg>
-            </button>
-            <button class="vk-ctrl-btn" id="vk-btn-next">
-                <svg viewBox="0 0 24 24">
-                    <path
-                        fill="currentColor"
-                        d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"
-                    />
-                </svg>
-            </button>
-            <button
-                class="vk-ctrl-btn"
-                id="vk-btn-like"
-                style="color: var(--text-muted)"
-            >
-                <svg viewBox="0 0 24 24">
-                    <path
-                        fill="currentColor"
-                        d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"
-                    />
-                </svg>
-            </button>
-            <button
-                class="vk-ctrl-btn"
-                id="vk-btn-playlist"
-                title="Add to Playlist"
-                style="color: var(--text-muted)"
-            >
-                <svg viewBox="0 0 24 24">
-                    <path
-                        fill="currentColor"
-                        d="M14 10H2v2h12v-2zm0-4H2v2h12V6zm4 8v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zM2 16h8v-2H2v2z"
-                    />
-                </svg>
-            </button>
-            <div class="vk-track-info">
-                <img
-                    class="vk-track-art"
-                    id="vk-track-art"
-                    src=""
-                    style="display: none"
-                />
-                <div class="vk-track-text">
-                    <div class="vk-track-title" id="vk-track-title">
-                        No track playing
-                    </div>
-                    <div class="vk-track-artist" id="vk-track-artist">
-                        Select a song
+    // ── URL Modal ────────────────────────────────────────────────
+
+    function URLModal(props) {
+        var onClose = props.onClose;
+        var inputRef = useRef(null);
+        var errorRef = useRef(null);
+
+        useEffect(function() {
+            if (inputRef.current) inputRef.current.focus();
+        }, []);
+
+        function handleGo() {
+            var url = (inputRef.current.value || '').trim();
+            if (!url) return;
+            try {
+                var parsed = new URL(url);
+                var h = parsed.hostname.toLowerCase();
+                var valid = h.includes('music.youtube.com') ||
+                            h.includes('soundcloud.com') ||
+                            h === 'spice-but-its-crazier-cuz-yes-backe.vercel.app';
+                if (!valid) {
+                    if (errorRef.current) errorRef.current.textContent = 'Only supported service URLs are allowed.';
+                    return;
+                }
+                callApi('loadUrl', url);
+                onClose();
+            } catch (e) {
+                if (errorRef.current) errorRef.current.textContent = 'Invalid URL format.';
+            }
+        }
+
+        return html`
+            <div class="modal-backdrop animate-fade-in" onClick=${onClose}>
+                <div class="glass-strong rounded-2xl p-6 w-[420px] max-w-[90vw] animate-slide-up"
+                     onClick=${function(e) { e.stopPropagation(); }}>
+                    <h3 class="text-lg font-semibold mb-4">Open URL</h3>
+                    <input ref=${inputRef} type="text"
+                           placeholder="https://music.youtube.com/watch?v=..."
+                           class="w-full bg-black/40 border border-white/10 rounded-lg px-4 py-2.5 text-sm text-white
+                                  placeholder-gray-600 focus:border-purple-500/50 focus:ring-2 focus:ring-purple-500/20
+                                  outline-none transition-all"
+                           onKeyDown=${function(e) { if (e.key === 'Enter') handleGo(); }} />
+                    <p ref=${errorRef} class="text-red-400 text-xs mt-2 min-h-[16px]"></p>
+                    <div class="flex justify-end gap-3 mt-4">
+                        <button class="px-4 py-2 rounded-lg text-sm text-gray-400 hover:text-white hover:bg-white/5 transition-all"
+                                onClick=${onClose}>Cancel</button>
+                        <button class="px-5 py-2 rounded-lg text-sm font-medium bg-purple-500 text-white
+                                       hover:bg-purple-400 transition-all active:scale-95"
+                                onClick=${handleGo}>Go</button>
                     </div>
                 </div>
             </div>
+        `;
+    }
 
-            <div class="vk-progress-wrap">
-                <span class="vk-time" id="vk-time-current">0:00</span>
-                <div class="vk-progress-bg">
-                    <div class="vk-progress-fill" id="vk-progress-fill"></div>
-                </div>
-                <span class="vk-time" id="vk-time-total">0:00</span>
-            </div>
+    // ── Player Bar (VK Player Island) ────────────────────────────
 
-            <button class="vk-ctrl-btn" id="vk-btn-shuffle">
-                <svg viewBox="0 0 24 24">
-                    <path
-                        fill="currentColor"
-                        d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"
-                    />
-                </svg>
-            </button>
-            <button class="vk-ctrl-btn" id="vk-btn-repeat">
-                <svg viewBox="0 0 24 24">
-                    <path
-                        fill="currentColor"
-                        d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"
-                    />
-                </svg>
-            </button>
-        </div>
+    function PlayerBar(props) {
+        var track = props.track;
+        var isDragging = props.isDragging;
+        var dragTime = props.dragTime;
+        var onDragStart = props.onDragStart;
 
-        <div id="web-queue-container" class="hidden">
-            <div class="web-queue-header">Up Next</div>
-            <div id="web-queue-list"></div>
-        </div>
+        var displayTime = isDragging ? dragTime : (track.currentTime || 0);
+        var pct = track.duration > 0 ? Math.min(100, (displayTime / track.duration) * 100) : 0;
 
-        <!-- Homepage Selection -->
-        <div id="home-container">
-            <h1>Welcome to Spice</h1>
-            <div class="card-container">
-                <button
-                    class="service-card yt-music"
-                    onclick="loadService('yt')"
-                >
-                    <div class="card-icon">
-                        <!-- Simple Play Icon for visual -->
-                        <svg viewBox="0 0 24 24" width="64" height="64">
-                            <path fill="currentColor" d="M8 5v14l11-7z" />
-                        </svg>
-                    </div>
-                    <h2>YouTube Music</h2>
-                </button>
-                <button
-                    class="service-card soundcloud"
-                    onclick="loadService('sc')"
-                >
-                    <div class="card-icon">
-                        <!-- Cloud Icon for visual -->
-                        <svg viewBox="0 0 24 24" width="64" height="64">
-                            <path
-                                fill="currentColor"
-                                d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z"
-                            />
-                        </svg>
-                    </div>
-                    <h2>SoundCloud (experimental)</h2>
-                </button>
-            </div>
-        </div>
+        return html`
+            <div class="h-[50px] flex items-center px-4 gap-2 no-drag relative z-[1999] border-b border-white/[0.04]"
+                 id="vk-player-bar"
+                 style=${{ background: 'linear-gradient(180deg, rgba(10,10,12,0.98) 0%, rgba(0,0,0,0.95) 100%)' }}>
 
-        <script>
-            // Helper to handle both Electron IPC and Browser Fetch (Remote)
-            async function callApi(action, ...args) {
-                console.log(`callApi: ${action}`, args);
-
-                // 1. Try Electron API if available
-                if (window.api) {
-                    if (action === "loadService")
-                        return window.api.loadService(...args);
-                    if (action === "navigate")
-                        return window.api.navigate(...args);
-                    if (action === "openLyrics") return window.api.openLyrics();
-                    if (action === "openMiniPlayer")
-                        return window.api.openMiniPlayer();
-                    if (action === "openQueue") return window.api.openQueue();
-                    if (action === "openSettings")
-                        return window.api.openSettings();
-                    if (action === "loadUrl")
-                        return window.api.loadUrl(...args);
-                    if (action === "hideView") return window.api.hideView();
-                    if (action === "showView") return window.api.showView();
-                    if (action === "setVolume")
-                        return window.api.setVolume(...args);
-                    if (action === "getVolume") return window.api.getVolume();
-                    if (action === "vkCommand")
-                        return window.api.vkCommand(...args);
-                    if (action === "executeSearch")
-                        return window.api.executeSearch(...args);
-                    if (action === "windowControls") {
-                        const type = args[0];
-                        if (type === "minimize")
-                            return window.api.windowControls.minimize();
-                        if (type === "maximize")
-                            return window.api.windowControls.maximize();
-                        if (type === "close")
-                            return window.api.windowControls.close();
-                    }
-                    if (action === "getTopBarSearch")
-                        return window.api.getTopBarSearch();
+                <!-- Album Art -->
+                ${track.albumArt
+                    ? html`<img src=${track.albumArt}
+                                class="w-[38px] h-[38px] rounded-lg object-cover flex-shrink-0"
+                                style=${{ boxShadow: '0 2px 12px rgba(0,0,0,0.5)' }}
+                                alt="" />`
+                    : html`<div class="w-[38px] h-[38px] rounded-lg bg-white/[0.04] flex-shrink-0 flex items-center justify-center text-gray-700">
+                                ${icon(IC.ytMusic, 20)}
+                           </div>`
                 }
 
-                // 2. Fallback to Server API (for regular browser/localhost access)
-                let serverAction = action;
-                let serverData = { args };
+                <!-- Track Info -->
+                <div class="flex flex-col min-w-0 max-w-[200px] ml-1.5">
+                    <span class="text-[13px] font-medium text-white truncate leading-tight">
+                        ${track.title || 'No track playing'}
+                    </span>
+                    <span class="text-[11px] text-gray-500 truncate leading-tight mt-0.5">
+                        ${track.artist || 'Select a song to start'}
+                    </span>
+                </div>
 
-                if (action === "vkCommand") {
-                    const cmd = args[0];
-                    if (typeof cmd === "string") {
-                        serverAction = cmd;
-                    } else if (typeof cmd === "object") {
-                        serverAction = cmd.action;
-                        serverData = cmd;
-                    }
-                } else if (action === "setVolume") {
-                    serverAction = "volume";
-                    serverData = { value: args[0] };
-                }
+                <!-- Playback Controls -->
+                <div class="flex items-center gap-0.5 ml-3">
+                    <button class="ctrl-btn" onClick=${function() { callApi('vkCommand', 'prev'); }}
+                            title="Previous">${icon(IC.skipBack)}</button>
+                    <button class="play-btn" onClick=${function() { callApi('vkCommand', 'playpause'); }}
+                            title=${track.paused ? 'Play' : 'Pause'}>
+                        ${track.paused ? icon(IC.play, 18) : icon(IC.pause, 18)}
+                    </button>
+                    <button class="ctrl-btn" onClick=${function() { callApi('vkCommand', 'next'); }}
+                            title="Next">${icon(IC.skipFwd)}</button>
+                </div>
 
-                console.log(`Fallback to Remote API for ${serverAction}`);
-                try {
-                    const response = await fetch("/api/control", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                            action: serverAction,
-                            ...serverData,
-                        }),
-                    });
-                    return await response.json();
-                } catch (err) {
-                    console.error("Remote API Error:", err);
-                    return null;
+                <!-- Like -->
+                <button class=${'ctrl-btn ' + (track.likeStatus ? 'text-purple-500' : '')}
+                        onClick=${function() { callApi('vkCommand', 'like'); }}
+                        title="Like">
+                    ${icon(IC.heart)}
+                </button>
+
+                <!-- Progress Bar -->
+                <div class="flex items-center gap-2 flex-1 mx-3 min-w-0">
+                    <span class="text-[10px] text-gray-600 min-w-[32px] tabular-nums font-medium">
+                        ${fmtTime(displayTime)}
+                    </span>
+                    <div class="flex-1 h-[5px] bg-white/[0.06] rounded-full relative cursor-pointer group"
+                         onMouseDown=${onDragStart}>
+                        <div class="h-full rounded-full relative transition-[width] duration-75"
+                             style=${{ width: pct + '%',
+                                       background: 'linear-gradient(90deg, #7c3aed, #a855f7)' }}>
+                            <div class="absolute right-0 top-1/2 -translate-y-1/2 w-[13px] h-[13px] rounded-full bg-white
+                                        opacity-0 group-hover:opacity-100 transition-opacity duration-150"
+                                 style=${{ boxShadow: '0 0 8px rgba(168,85,247,0.6), 0 1px 3px rgba(0,0,0,0.4)' }}></div>
+                        </div>
+                    </div>
+                    <span class="text-[10px] text-gray-600 min-w-[32px] text-right tabular-nums font-medium">
+                        ${fmtTime(track.duration)}
+                    </span>
+                </div>
+
+                <!-- Shuffle / Repeat -->
+                <button class=${'ctrl-btn ' + (track.shuffle ? 'text-purple-500' : '')}
+                        onClick=${function() { callApi('vkCommand', 'shuffle'); }}
+                        title="Shuffle">${icon(IC.shuffle)}</button>
+                <button class=${'ctrl-btn ' + (track.repeat && track.repeat !== 'off' ? 'text-purple-500' : '')}
+                        onClick=${function() { callApi('vkCommand', 'repeat'); }}
+                        title="Repeat">
+                    ${track.repeat === 'one' ? icon(IC.repeatOne) : icon(IC.repeat)}
+                </button>
+
+                <!-- Add to Playlist -->
+                <button class="ctrl-btn text-gray-700" title="Add to Playlist"
+                        onClick=${function() { callApi('vkCommand', 'playlist'); }}>
+                    ${icon(IC.addList)}
+                </button>
+            </div>
+        `;
+    }
+
+    // ── Title Bar ────────────────────────────────────────────────
+
+    function TitleBar(props) {
+        var volume = props.volume;
+        var setVolume = props.setVolume;
+        var boostEnabled = props.boostEnabled;
+        var setBoostEnabled = props.setBoostEnabled;
+        var showVolumePopup = props.showVolumePopup;
+        var setShowVolumePopup = props.setShowVolumePopup;
+        var topSearchVisible = props.topSearchVisible;
+        var onOpenUrlModal = props.onOpenUrlModal;
+
+        var volumeRef = useRef(null);
+
+        // Close volume popup on outside click
+        useEffect(function() {
+            if (!showVolumePopup) return;
+            function handler(e) {
+                if (volumeRef.current && !volumeRef.current.contains(e.target)) {
+                    setShowVolumePopup(false);
                 }
             }
+            document.addEventListener('mousedown', handler);
+            return function() { document.removeEventListener('mousedown', handler); };
+        }, [showVolumePopup]);
 
-            async function loadService(service) {
-                console.log("Renderer: loadService", service);
-                await callApi("loadService", service);
+        return html`
+            <div class="h-[40px] flex items-center justify-between drag relative z-[2000] border-b border-white/[0.04]"
+                 style=${{ background: 'rgba(0,0,0,0.92)' }}>
 
-                // If in browser (no IPC), manually update UI and start polling
-                if (!window.api) {
-                    document
-                        .getElementById("home-container")
-                        .classList.add("hidden");
-                    document.body.style.backgroundColor = "#000";
-                    document
-                        .getElementById("vk-player-bar")
-                        .classList.remove("hidden");
+                <!-- LEFT: Nav Controls -->
+                <div class="flex items-center h-full pl-2 no-drag gap-0.5">
+                    <button class="nav-btn" onClick=${function() { callApi('navigate', 'back'); }}
+                            title="Back">${icon(IC.back)}</button>
+                    <button class="nav-btn" onClick=${function() { callApi('navigate', 'reload'); }}
+                            title="Reload">${icon(IC.refresh)}</button>
+                    <button class="nav-btn" onClick=${function() { onOpenUrlModal(); }}
+                            title="Open URL">${icon(IC.link)}</button>
+                    <button class="nav-btn" onClick=${function() { callApi('navigate', 'home'); }}
+                            title="Home">${icon(IC.home)}</button>
+                </div>
 
-                    if (!window.statusPolling) {
-                        window.statusPolling = setInterval(pollStatus, 1000);
-                    }
-                }
-            }
+                <!-- CENTER: Search Bar -->
+                ${topSearchVisible && html`
+                    <div class="absolute left-1/2 -translate-x-1/2 w-[320px] no-drag">
+                        <div class="relative">
+                            <div class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600 pointer-events-none">
+                                ${icon(IC.search, 14)}
+                            </div>
+                            <input type="text" placeholder="Search YouTube Music…"
+                                   id="spice-search-bar"
+                                   class="w-full bg-white/[0.04] text-white border border-white/[0.06] rounded-full
+                                          pl-9 pr-4 py-1.5 text-[13px] placeholder-gray-600
+                                          focus:border-purple-500/40 focus:bg-white/[0.06]
+                                          outline-none transition-all"
+                                   onKeyDown=${function(e) {
+                                       if (e.key === 'Enter' && e.target.value.trim()) {
+                                           callApi('executeSearch', e.target.value.trim());
+                                           e.target.blur();
+                                       }
+                                   }} />
+                        </div>
+                    </div>
+                `}
 
-            // Setup Navigation Listeners
-            document
-                .getElementById("btn-back")
-                .addEventListener("click", () => callApi("navigate", "back"));
-            document
-                .getElementById("btn-reload")
-                .addEventListener("click", () => callApi("navigate", "reload"));
-            document
-                .getElementById("btn-home")
-                .addEventListener("click", () => {
-                    console.log("Renderer: Home button clicked");
-                    callApi("navigate", "home");
-                    if (!window.api) {
-                        document
-                            .getElementById("home-container")
-                            .classList.remove("hidden");
-                        document.body.style.backgroundColor = "";
-                        document
-                            .getElementById("vk-player-bar")
-                            .classList.add("hidden");
-                    }
+                <!-- RIGHT: Feature + Window Buttons -->
+                <div class="flex items-center h-full ml-auto no-drag">
+                    <!-- Volume -->
+                    <div ref=${volumeRef} class="flex items-center h-full">
+                        <button class="nav-btn"
+                                onClick=${function(e) { e.stopPropagation(); setShowVolumePopup(!showVolumePopup); }}
+                                title="Volume">
+                            ${volume === 0 ? icon(IC.volX) : icon(IC.vol2)}
+                        </button>
+                        ${showVolumePopup && html`
+                            <div class="flex items-center bg-white/[0.04] rounded-full px-3 h-[28px]
+                                        border border-white/[0.06] mr-1 animate-fade-in gap-2">
+                                <input type="range" min="0" max=${boostEnabled ? 1000 : 200} step="5"
+                                       value=${volume} class="w-[110px]"
+                                       onInput=${function(e) {
+                                           var v = parseInt(e.target.value);
+                                           setVolume(v);
+                                           callApi('setVolume', v / 100);
+                                       }}
+                                       onDblClick=${function() {
+                                           var max = boostEnabled ? 1000 : 200;
+                                           var input = prompt('Enter volume (0-' + max + '):', volume);
+                                           if (input !== null) {
+                                               var val = parseInt(input);
+                                               if (!isNaN(val)) {
+                                                   val = Math.max(0, Math.min(max, val));
+                                                   setVolume(val);
+                                                   callApi('setVolume', val / 100);
+                                               }
+                                           }
+                                       }}
+                                       onWheel=${function(e) {
+                                           e.preventDefault();
+                                           var max = boostEnabled ? 1000 : 200;
+                                           var delta = e.deltaY < 0 ? 10 : -10;
+                                           var next = Math.max(0, Math.min(max, volume + delta));
+                                           setVolume(next);
+                                           callApi('setVolume', next / 100);
+                                       }} />
+                                <span class="text-[10px] text-gray-500 min-w-[32px] text-right font-bold tabular-nums">
+                                    ${volume}%
+                                </span>
+                                <button class=${'text-[10px] px-2 py-0.5 rounded-full border transition-all '
+                                    + (boostEnabled
+                                        ? 'border-purple-500/50 text-purple-400 bg-purple-500/10'
+                                        : 'border-white/10 text-gray-600 hover:text-gray-400 hover:bg-white/5')}
+                                    onClick=${function(e) {
+                                        e.stopPropagation();
+                                        if (boostEnabled && volume > 200) {
+                                            setVolume(200);
+                                            callApi('setVolume', 2.0);
+                                        }
+                                        setBoostEnabled(!boostEnabled);
+                                    }}>Boost</button>
+                            </div>
+                        `}
+                    </div>
+
+                    <!-- Feature Buttons -->
+                    <button class="nav-btn" onClick=${function() { callApi('openLyrics'); }}
+                            title="Lyrics">${icon(IC.mic)}</button>
+                    <button class="nav-btn" onClick=${function() { callApi('openMiniPlayer'); }}
+                            title="Mini Player">${icon(IC.pip)}</button>
+                    <button class="nav-btn" onClick=${function() { callApi('openQueue'); }}
+                            title="Queue">${icon(IC.queue)}</button>
+                    <button class="nav-btn" onClick=${function() { callApi('openSettings'); }}
+                            title="Settings">${icon(IC.settings)}</button>
+
+                    <!-- Separator -->
+                    <div class="w-px h-4 bg-white/[0.06] mx-1"></div>
+
+                    <!-- Window Controls -->
+                    <button class="win-btn" onClick=${function() { callApi('windowControls', 'minimize'); }}
+                            title="Minimize">${icon(IC.minimize, 10)}</button>
+                    <button class="win-btn" onClick=${function() { callApi('windowControls', 'maximize'); }}
+                            title="Maximize">${icon(IC.maximize, 10)}</button>
+                    <button class="win-btn win-close" onClick=${function() { callApi('windowControls', 'close'); }}
+                            title="Close">${icon(IC.close, 10)}</button>
+                </div>
+            </div>
+        `;
+    }
+
+    // ── App (Root Component) ────────────────────────────────────
+
+    function App() {
+        // --- State ---
+        var trackInit = {
+            title: '', artist: '', albumArt: '',
+            duration: 0, currentTime: 0, paused: true,
+            shuffle: false, repeat: 'off', likeStatus: false,
+        };
+        var _track = useState(trackInit);       var track = _track[0];       var setTrack = _track[1];
+        var _sa    = useState(false);            var serviceActive = _sa[0];  var setServiceActive = _sa[1];
+        var _pv    = useState(false);            var playerVisible = _pv[0];  var setPlayerVisible = _pv[1];
+        var _vol   = useState(100);              var volume = _vol[0];        var setVolume = _vol[1];
+        var _boost = useState(false);            var boostEnabled = _boost[0]; var setBoostEnabled = _boost[1];
+        var _vp    = useState(false);            var showVolumePopup = _vp[0]; var setShowVolumePopup = _vp[1];
+        var _url   = useState(false);            var showUrlModal = _url[0];  var setShowUrlModal = _url[1];
+        var _ts    = useState(false);            var topSearchVisible = _ts[0]; var setTopSearchVisible = _ts[1];
+        var _drag  = useState(false);            var isDragging = _drag[0];   var setIsDragging = _drag[1];
+        var _dragT = useState(0);                var dragTime = _dragT[0];    var setDragTime = _dragT[1];
+
+        // --- Refs ---
+        var isDraggingRef = useRef(false);
+        var serviceActiveRef = useRef(false);
+        var durationRef = useRef(0);
+        var progressBarRef = useRef(null);
+
+        // Keep refs in sync
+        useEffect(function() { isDraggingRef.current = isDragging; }, [isDragging]);
+        useEffect(function() { serviceActiveRef.current = serviceActive; }, [serviceActive]);
+        useEffect(function() { durationRef.current = track.duration; }, [track.duration]);
+
+        // --- IPC Event Subscriptions (Electron mode) ---
+        useEffect(function() {
+            if (!window.api) return;
+
+            // Track updates from main process
+            window.api.onVkTrackUpdate(function(info) {
+                setTrack(function(prev) {
+                    return {
+                        title:       info.title       || prev.title,
+                        artist:      info.artist      || prev.artist,
+                        albumArt:    info.albumArt    || prev.albumArt,
+                        paused:      info.paused      !== undefined ? info.paused : prev.paused,
+                        duration:    info.duration    || prev.duration,
+                        currentTime: isDraggingRef.current ? prev.currentTime : (info.currentTime || prev.currentTime),
+                        shuffle:     info.shuffle     !== undefined ? info.shuffle : prev.shuffle,
+                        repeat:      info.repeat      || prev.repeat,
+                        likeStatus:  info.likeStatus  !== undefined ? info.likeStatus : prev.likeStatus,
+                    };
                 });
-
-            document
-                .getElementById("lyrics-btn")
-                .addEventListener("click", () => callApi("openLyrics"));
-            document
-                .getElementById("mini-player-btn")
-                .addEventListener("click", () => callApi("openMiniPlayer"));
-            document
-                .getElementById("queue-btn")
-                .addEventListener("click", () => callApi("openQueue"));
-            document
-                .getElementById("btn-settings")
-                .addEventListener("click", () => callApi("openSettings"));
-
-            // URL Modal
-            const btnUrl = document.getElementById("btn-url");
-            const urlModal = document.getElementById("url-modal");
-            const urlInput = document.getElementById("url-input");
-            const urlError = document.getElementById("url-error");
-            const urlCancel = document.getElementById("url-cancel");
-            const urlGo = document.getElementById("url-go");
-
-            function isValidUrl(url) {
-                try {
-                    const parsed = new URL(url);
-                    const host = parsed.hostname.toLowerCase();
-                    return (
-                        host === "music.youtube.com" ||
-                        host === "www.music.youtube.com" ||
-                        host === "soundcloud.com" ||
-                        host === "www.soundcloud.com" ||
-                        host === "m.soundcloud.com"
-                    );
-                } catch {
-                    return false;
-                }
-            }
-
-            function openUrlModal() {
-                callApi("hideView");
-                urlModal.classList.remove("hidden");
-                urlInput.value = "";
-                urlError.classList.add("hidden");
-                setTimeout(() => urlInput.focus(), 100);
-            }
-
-            function closeUrlModal() {
-                urlModal.classList.add("hidden");
-                urlInput.value = "";
-                urlError.classList.add("hidden");
-                callApi("showView");
-            }
-
-            function goToUrl() {
-                const url = urlInput.value.trim();
-                if (!url) return;
-                if (isValidUrl(url)) {
-                    callApi("loadUrl", url);
-                    closeUrlModal();
-                } else {
-                    urlError.classList.remove("hidden");
-                }
-            }
-
-            btnUrl.addEventListener("click", openUrlModal);
-            urlCancel.addEventListener("click", closeUrlModal);
-            urlGo.addEventListener("click", goToUrl);
-            urlModal.addEventListener("click", (e) => {
-                if (e.target === urlModal) closeUrlModal();
-            });
-            urlInput.addEventListener("keypress", (e) => {
-                if (e.key === "Enter") goToUrl();
-            });
-            urlInput.addEventListener("input", () => {
-                urlError.classList.add("hidden");
             });
 
-            // Volume Controls
-            const btnVolume = document.getElementById("btn-volume");
-            const volPopup = document.getElementById("volume-popup");
-            const volRange = document.getElementById("volume-range");
-            const volText = document.getElementById("volume-text");
-            const btnBoost = document.getElementById("btn-boost");
+            // Service activation
+            window.api.onServiceActive(function(active) {
+                setServiceActive(active);
+                if (!active) setPlayerVisible(false);
+            });
 
-            let boostEnabled = false;
-            function getMaxVolume() {
-                return boostEnabled ? 1000 : 200;
+            // VK Player visibility
+            if (window.api.onVkPlayerVisibility) {
+                window.api.onVkPlayerVisibility(function(visible) {
+                    setPlayerVisible(visible);
+                });
             }
 
-            (async () => {
-                const volResponse = await callApi("getVolume");
-                let vol = volResponse;
-                if (
-                    volResponse &&
-                    typeof volResponse === "object" &&
-                    volResponse.success
-                ) {
-                    // If it's a browser response without actual volume data
-                    vol = 1.0;
+            // Volume sync
+            if (window.api.onVolumeChanged) {
+                window.api.onVolumeChanged(function(gain) {
+                    setVolume(Math.round(gain * 100));
+                });
+            }
+
+            // Search bar visibility
+            if (window.api.onTopBarSearchVisibility) {
+                window.api.onTopBarSearchVisibility(function(vis) {
+                    setTopSearchVisible(vis);
+                });
+            }
+
+            // Update status notifications
+            if (window.api.onUpdateStatus) {
+                window.api.onUpdateStatus(function(status) {
+                    console.log('[Spice] Update status:', status);
+                });
+            }
+        }, []);
+
+        // --- Initial Settings Load ---
+        useEffect(function() {
+            (async function() {
+                // Load initial volume
+                var vol = await callApi('getVolume');
+                if (vol !== null && vol !== undefined) {
+                    setVolume(Math.round((typeof vol === 'number' ? vol : 1) * 100));
                 }
-                if (vol !== null && typeof vol === "number") {
-                    const sliderVal = Math.round(vol * 100);
-                    if (sliderVal > 200) {
-                        boostEnabled = true;
-                        btnBoost.classList.add("active");
-                        volRange.max = 1000;
-                    }
-                    volRange.value = sliderVal;
-                    volText.innerText = sliderVal + "%";
-                }
+
+                // Check search bar visibility
+                var searchVis = await callApi('getTopBarSearch');
+                if (searchVis === true) setTopSearchVisible(true);
             })();
+        }, []);
 
-            btnVolume.addEventListener("click", (e) => {
-                e.stopPropagation();
-                volPopup.classList.toggle("hidden");
-                const sc = document.getElementById("top-search-container");
-                if (sc) {
-                    if (!volPopup.classList.contains("hidden"))
-                        sc.classList.add("shifted");
-                    else sc.classList.remove("shifted");
+        // --- Auto-load default service (backup for main.js auto-load) ---
+        useEffect(function() {
+            var timer = setTimeout(function() {
+                if (!serviceActiveRef.current) {
+                    callApi('loadService', 'yt');
                 }
-            });
+            }, 1500);
+            return function() { clearTimeout(timer); };
+        }, []);
 
-            document.addEventListener("click", (e) => {
-                if (
-                    !volPopup.contains(e.target) &&
-                    !btnVolume.contains(e.target)
-                ) {
-                    volPopup.classList.add("hidden");
-                    const sc = document.getElementById("top-search-container");
-                    if (sc) sc.classList.remove("shifted");
-                }
-            });
+        // --- Browser Polling (non-Electron fallback) ---
+        useEffect(function() {
+            if (window.api) return;
 
-            function updateVolume(val) {
-                const gain = val / 100;
-                callApi("setVolume", gain);
-                volText.innerText = Math.round(val) + "%";
-                volRange.value = val;
-            }
-
-            volRange.addEventListener("input", (e) =>
-                updateVolume(e.target.value),
-            );
-            btnBoost.addEventListener("click", (e) => {
-                e.stopPropagation();
-                boostEnabled = !boostEnabled;
-                btnBoost.classList.toggle("active", boostEnabled);
-                volRange.max = boostEnabled ? 1000 : 200;
-                if (!boostEnabled && parseInt(volRange.value) > 200)
-                    updateVolume(200);
-            });
-
-            volRange.parentElement.addEventListener("wheel", (e) => {
-                e.preventDefault();
-                let val = parseInt(volRange.value) + (e.deltaY < 0 ? 10 : -10);
-                const max = getMaxVolume();
-                val = Math.max(0, Math.min(max, val));
-                updateVolume(val);
-            });
-
-            btnVolume.addEventListener("wheel", (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                let val = parseInt(volRange.value) + (e.deltaY < 0 ? 10 : -10);
-                const max = getMaxVolume();
-                val = Math.max(0, Math.min(max, val));
-                updateVolume(val);
-            });
-
-            if (window.api && window.api.onVolumeChanged) {
-                window.api.onVolumeChanged((gainValue) => {
-                    const sliderVal = Math.round(gainValue * 100);
-                    if (sliderVal > 200 && !boostEnabled) {
-                        boostEnabled = true;
-                        btnBoost.classList.add("active");
-                        volRange.max = 1000;
+            var id = setInterval(async function() {
+                try {
+                    var res = await fetch('/api/status');
+                    var state = await res.json();
+                    if (state && state.track) {
+                        setTrack({
+                            title:       state.track.title || '',
+                            artist:      state.track.artist || '',
+                            albumArt:    state.track.art || '',
+                            paused:      !!state.paused,
+                            currentTime: state.currentTime || 0,
+                            duration:    state.track.duration || 0,
+                            shuffle:     !!state.shuffle,
+                            repeat:      state.repeat || 'off',
+                            likeStatus:  !!state.likeStatus,
+                        });
+                        setServiceActive(true);
+                        setPlayerVisible(true);
                     }
-                    volRange.value = sliderVal;
-                    volText.innerText = sliderVal + "%";
-                });
-            }
-
-            volRange.parentElement.addEventListener("dblclick", () => {
-                const max = getMaxVolume();
-                const input = prompt(
-                    `Enter volume (0-${max}):`,
-                    volRange.value,
-                );
-                if (input !== null) {
-                    let val = parseInt(input);
-                    if (!isNaN(val))
-                        updateVolume(Math.max(0, Math.min(max, val)));
-                }
-            });
-
-            // Window Controls
-            document
-                .getElementById("btn-min")
-                .addEventListener("click", () =>
-                    callApi("windowControls", "minimize"),
-                );
-            document
-                .getElementById("btn-max")
-                .addEventListener("click", () =>
-                    callApi("windowControls", "maximize"),
-                );
-            document
-                .getElementById("btn-close")
-                .addEventListener("click", () =>
-                    callApi("windowControls", "close"),
-                );
-
-            // Handle Active State
-            const homeContainer = document.getElementById("home-container");
-            if (window.api && window.api.onServiceActive) {
-                window.api.onServiceActive((active) => {
-                    if (active) {
-                        homeContainer.classList.add("hidden");
-                        document.body.style.backgroundColor = "#000";
-                    } else {
-                        homeContainer.classList.remove("hidden");
-                        document.body.style.backgroundColor = "";
-                        document
-                            .getElementById("vk-player-bar")
-                            .classList.add("hidden");
-                    }
-                });
-            }
-
-            // Auto-load default service (YT Music) if on home screen at startup
-            setTimeout(() => {
-                if (!homeContainer.classList.contains("hidden")) {
-                    console.log(
-                        "Renderer: Auto-loading default service (YT Music)",
-                    );
-                    loadService("yt");
-                }
+                } catch (e) { /* polling failed, ignore */ }
             }, 1000);
 
-            // VK Player Bar
-            if (window.api && window.api.onVkPlayerVisibility) {
-                window.api.onVkPlayerVisibility((visible) => {
-                    const vkBar = document.getElementById("vk-player-bar");
-                    if (visible) vkBar.classList.remove("hidden");
-                    else vkBar.classList.add("hidden");
-                });
+            return function() { clearInterval(id); };
+        }, []);
+
+        // --- Progress Bar Drag Logic ---
+        useEffect(function() {
+            function onMouseMove(e) {
+                if (!isDraggingRef.current) return;
+                var bars = document.querySelectorAll('#vk-player-bar .group');
+                var bar = bars[0];
+                if (!bar) return;
+                var rect = bar.getBoundingClientRect();
+                var pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+                setDragTime(pct * durationRef.current);
             }
 
-            function fmtTime(s) {
-                if (!s || isNaN(s)) return "0:00";
-                const m = Math.floor(s / 60);
-                const sec = Math.floor(s % 60);
-                return m + ":" + (sec < 10 ? "0" : "") + sec;
-            }
-
-            function updateVkPlayerUI(info) {
-                const vkBar = document.getElementById("vk-player-bar");
-                if (vkBar.classList.contains("hidden")) return;
-
-                const titleEl = document.getElementById("vk-track-title");
-                const artistEl = document.getElementById("vk-track-artist");
-                const artEl = document.getElementById("vk-track-art");
-                const playBtn = document.getElementById("vk-btn-play");
-                const progressFill =
-                    document.getElementById("vk-progress-fill");
-                const timeCurrent = document.getElementById("vk-time-current");
-                const timeTotal = document.getElementById("vk-time-total");
-                const shuffleBtn = document.getElementById("vk-btn-shuffle");
-                const repeatBtn = document.getElementById("vk-btn-repeat");
-                const likeBtn = document.getElementById("vk-btn-like");
-
-                if (info.title && titleEl) titleEl.textContent = info.title;
-                if (info.artist && artistEl) artistEl.textContent = info.artist;
-                if (info.albumArt && artEl) {
-                    artEl.src = info.albumArt;
-                    artEl.style.display = "block";
-                }
-
-                if (playBtn) {
-                    playBtn.innerHTML = info.paused
-                        ? '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>'
-                        : '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
-                }
-
-                if (shuffleBtn)
-                    shuffleBtn.style.color = info.shuffle
-                        ? "var(--accent-yt)"
-                        : "";
-                if (repeatBtn) {
-                    if (info.repeat === "one") {
-                        repeatBtn.style.color = "var(--accent-yt)";
-                        repeatBtn.innerHTML =
-                            '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4zm-4-2V9h-1l-2 1v1h1.5v4L13 15z"/></svg>';
-                    } else if (info.repeat === "all") {
-                        repeatBtn.style.color = "var(--accent-yt)";
-                        repeatBtn.innerHTML =
-                            '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg>';
-                    } else {
-                        repeatBtn.style.color = "";
-                        repeatBtn.innerHTML =
-                            '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg>';
-                    }
-                }
-
-                if (likeBtn) {
-                    if (info.likeStatus) {
-                        likeBtn.classList.add("active");
-                        likeBtn.style.color = "#a855f7";
-                    } else {
-                        likeBtn.classList.remove("active");
-                        likeBtn.style.color = "var(--text-muted)";
-                    }
-                }
-
-                if (info.duration && info.duration > 0) {
-                    vkCurrentDuration = info.duration;
-                    if (!window.isVkDragging) {
-                        const pct = (info.currentTime / info.duration) * 100;
-                        if (progressFill) progressFill.style.width = pct + "%";
-                        if (timeCurrent)
-                            timeCurrent.textContent = fmtTime(info.currentTime);
-                    }
-                    if (timeTotal)
-                        timeTotal.textContent = fmtTime(info.duration);
+            function onMouseUp(e) {
+                if (!isDraggingRef.current) return;
+                isDraggingRef.current = false;
+                setIsDragging(false);
+                var bars = document.querySelectorAll('#vk-player-bar .group');
+                var bar = bars[0];
+                if (bar && durationRef.current > 0) {
+                    var rect = bar.getBoundingClientRect();
+                    var pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+                    var seekTime = pct * durationRef.current;
+                    callApi('vkCommand', { action: 'seek', time: seekTime });
                 }
             }
 
-            if (window.api && window.api.onVkTrackUpdate) {
-                window.api.onVkTrackUpdate(updateVkPlayerUI);
-            }
-
-            async function pollStatus() {
-                try {
-                    const res = await fetch("/api/status");
-                    const state = await res.json();
-                    if (state) {
-                        const info = {
-                            title: state.track
-                                ? state.track.title
-                                : "No track playing",
-                            artist: state.track
-                                ? state.track.artist
-                                : "Select a song",
-                            albumArt: state.track ? state.track.art : "",
-                            paused: state.paused,
-                            currentTime: state.currentTime,
-                            duration: state.track ? state.track.duration : 0,
-                            shuffle: state.shuffle,
-                            repeat: state.repeat,
-                            likeStatus: state.likeStatus,
-                        };
-                        updateVkPlayerUI(info);
-
-                        // Render queue in web UI if present and no window.api
-                        if (
-                            !window.api &&
-                            state.queue &&
-                            document.getElementById("web-queue-container")
-                        ) {
-                            const queueContainer = document.getElementById(
-                                "web-queue-container",
-                            );
-                            const queueList =
-                                document.getElementById("web-queue-list");
-
-                            // Only show if there is a track playing
-                            if (state.track) {
-                                queueContainer.classList.remove("hidden");
-
-                                queueList.innerHTML = state.queue
-                                    .map(
-                                        (item, i) => `
-                                    <div class="web-queue-item" data-selected="${item.selected}" onclick="callApi('vkCommand', {action: 'playQueueIndex', index: ${i}})">
-                                        <div class="web-queue-img-wrap">
-                                            <img src="${item.thumbnail || "icon.png"}" alt="Art">
-                                        </div>
-                                        <div class="web-queue-info">
-                                            <div class="web-queue-title" title="${item.title.replace(/"/g, "&quot;")}">${item.title}</div>
-                                            <div class="web-queue-artist" title="${item.artist.replace(/"/g, "&quot;")}">${item.artist}</div>
-                                        </div>
-                                        <div class="web-queue-duration">${item.duration}</div>
-                                    </div>
-                                `,
-                                    )
-                                    .join("");
-
-                                // Auto-scroll to selected if it's the first time we see it
-                                const selected = queueContainer.querySelector(
-                                    '[data-selected="true"]',
-                                );
-                                if (selected && !window.hasScrolledWebQueue) {
-                                    selected.scrollIntoView({
-                                        block: "center",
-                                        behavior: "smooth",
-                                    });
-                                    window.hasScrolledWebQueue = true;
-                                }
-                            } else {
-                                queueContainer.classList.add("hidden");
-                            }
-                        }
-                    }
-                } catch (e) {
-                    console.error("Polling error:", e);
-                }
-            }
-
-            let vkCurrentDuration = 0;
-            window.isVkDragging = false;
-            const vkProgressBg = document.querySelector(
-                "#vk-player-bar .vk-progress-bg",
-            );
-            if (vkProgressBg) {
-                const updateProgress = (e) => {
-                    if (!vkCurrentDuration || vkCurrentDuration <= 0) return;
-                    const rect = vkProgressBg.getBoundingClientRect();
-                    const pct = Math.max(
-                        0,
-                        Math.min(1, (e.clientX - rect.left) / rect.width),
-                    );
-                    const seekTime = pct * vkCurrentDuration;
-                    const fill = document.getElementById("vk-progress-fill");
-                    if (fill) fill.style.width = pct * 100 + "%";
-                    const timeCur = document.getElementById("vk-time-current");
-                    if (timeCur) timeCur.textContent = fmtTime(seekTime);
-                    return seekTime;
-                };
-
-                vkProgressBg.addEventListener("mousedown", (e) => {
-                    window.isVkDragging = true;
-                    updateProgress(e);
-                });
-                document.addEventListener("mousemove", (e) => {
-                    if (window.isVkDragging) updateProgress(e);
-                });
-                document.addEventListener("mouseup", (e) => {
-                    if (window.isVkDragging) {
-                        window.isVkDragging = false;
-                        const st = updateProgress(e);
-                        if (st !== undefined)
-                            callApi("vkCommand", { action: "seek", time: st });
-                    }
-                });
-            }
-
-            const optimisticReset = () => {
-                const fill = document.getElementById("vk-progress-fill");
-                if (fill) fill.style.width = "0%";
-                const timeCur = document.getElementById("vk-time-current");
-                if (timeCur) timeCur.textContent = "0:00";
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+            return function() {
+                document.removeEventListener('mousemove', onMouseMove);
+                document.removeEventListener('mouseup', onMouseUp);
             };
+        }, []);
 
-            document
-                .getElementById("vk-btn-prev")
-                .addEventListener("click", () => {
-                    callApi("vkCommand", "prev");
-                    optimisticReset();
-                });
-            document
-                .getElementById("vk-btn-play")
-                .addEventListener("click", () => {
-                    const playBtn = document.getElementById("vk-btn-play");
-                    // We don't need to try and optimistically guess the state here,
-                    // the polling will update the button icon correctly.
-                    // Guessing causes it to blink back and forth.
-                    callApi("vkCommand", "playpause");
-                });
-            document
-                .getElementById("vk-btn-next")
-                .addEventListener("click", () => {
-                    callApi("vkCommand", "next");
-                    optimisticReset();
-                });
-            document
-                .getElementById("vk-btn-shuffle")
-                .addEventListener("click", () =>
-                    callApi("vkCommand", "shuffle"),
-                );
-            document
-                .getElementById("vk-btn-repeat")
-                .addEventListener("click", () =>
-                    callApi("vkCommand", "repeat"),
-                );
-            document
-                .getElementById("vk-btn-like")
-                .addEventListener("click", () => {
-                    const likeBtn = document.getElementById("vk-btn-like");
-                    const isLiked = likeBtn.classList.contains("active");
-                    if (isLiked) {
-                        likeBtn.classList.remove("active");
-                        likeBtn.style.color = "var(--text-muted)";
-                    } else {
-                        likeBtn.classList.add("active");
-                        likeBtn.style.color = "#a855f7";
-                    }
-                    callApi("vkCommand", "like");
-                });
-            document
-                .getElementById("vk-btn-playlist")
-                .addEventListener("click", () =>
-                    callApi("vkCommand", "playlist"),
-                );
+        var handleDragStart = useCallback(function(e) {
+            if (!track.duration || track.duration <= 0) return;
+            isDraggingRef.current = true;
+            setIsDragging(true);
+            // Calculate initial drag position
+            var bar = e.currentTarget;
+            var rect = bar.getBoundingClientRect();
+            var pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+            setDragTime(pct * track.duration);
+        }, [track.duration]);
 
-            const topSearchContainer = document.getElementById(
-                "top-search-container",
-            );
-            const topSearchInput = document.getElementById("top-search-input");
+        // --- URL Modal Handlers ---
+        function openUrlModal() {
+            callApi('hideView');
+            setShowUrlModal(true);
+        }
+        function closeUrlModal() {
+            setShowUrlModal(false);
+            callApi('showView');
+        }
 
-            (async () => {
-                const res = await callApi("getTopBarSearch");
-                // Mock true for browser fallback where possible
-                if (res === true || (res && res.success)) {
-                    topSearchContainer.classList.add("visible");
-                }
-            })();
-
-            if (window.api && window.api.onTopBarSearchVisibility) {
-                window.api.onTopBarSearchVisibility((visible) => {
-                    topSearchContainer.classList.toggle("visible", visible);
-                });
+        // --- Service Load Handler ---
+        var handleLoadService = useCallback(function(service) {
+            callApi('loadService', service);
+            if (!window.api) {
+                setServiceActive(true);
+                setPlayerVisible(true);
             }
+        }, []);
 
-            topSearchInput.addEventListener("keydown", (e) => {
-                if (e.key === "Enter") {
-                    const query = topSearchInput.value.trim();
-                    if (query) {
-                        callApi("executeSearch", query);
-                        topSearchInput.blur();
-                    }
-                }
-            });
-        </script>
-    </body>
+        // --- Render ---
+        return html`
+            <div class="flex flex-col h-screen bg-[#0a0a0c] text-white font-sans overflow-hidden">
+
+                <${TitleBar}
+                    volume=${volume}
+                    setVolume=${setVolume}
+                    boostEnabled=${boostEnabled}
+                    setBoostEnabled=${setBoostEnabled}
+                    showVolumePopup=${showVolumePopup}
+                    setShowVolumePopup=${setShowVolumePopup}
+                    topSearchVisible=${topSearchVisible}
+                    onOpenUrlModal=${openUrlModal}
+                />
+
+                ${playerVisible && html`
+                    <${PlayerBar}
+                        track=${track}
+                        isDragging=${isDragging}
+                        dragTime=${dragTime}
+                        onDragStart=${handleDragStart}
+                    />
+                `}
+
+                ${!serviceActive && html`
+                    <${HomeScreen} onLoad=${handleLoadService} />
+                `}
+
+                ${showUrlModal && html`
+                    <${URLModal} onClose=${closeUrlModal} />
+                `}
+            </div>
+        `;
+    }
+
+    // ── Mount ────────────────────────────────────────────────────
+    var root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(html`<${App} />`);
+
+    </script>
+</body>
 </html>
