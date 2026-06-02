@@ -217,7 +217,7 @@
                         <span class="text-[11px] text-gray-600 mt-1">Experimental</span>
                     </button>
 
-                    <!-- Spice Crazier -->
+                    <!-- Spice Music -->
                     <button class="group glass rounded-2xl w-[240px] h-[200px] flex flex-col items-center justify-center
                                    cursor-pointer transition-all duration-300 hover:-translate-y-1.5
                                    hover:border-purple-500/30 hover:shadow-[0_8px_40px_rgba(168,85,247,0.15)]
@@ -226,7 +226,10 @@
                         <div class="text-purple-500 mb-5 transition-transform duration-300 group-hover:scale-110">
                             ${icon(IC.ytMusic, 44)}
                         </div>
-                        <h2 class="text-base font-semibold tracking-wide">Spice Crazier</h2>
+                        <div class="flex items-center gap-2">
+                            <h2 class="text-base font-semibold tracking-wide">Spice Music</h2>
+                            <span class="text-[9px] uppercase tracking-[0.18em] text-purple-300 bg-purple-500/15 border border-purple-500/25 rounded-full px-2 py-0.5">Preview</span>
+                        </div>
                         <span class="text-[11px] text-gray-600 mt-1">Wrapped web player</span>
                     </button>
                 </div>
@@ -428,7 +431,8 @@
 
                 <!-- CENTER: Search Bar -->
                 ${topSearchVisible && html`
-                    <div class="absolute left-1/2 -translate-x-1/2 w-[320px] no-drag">
+                    <div class="absolute left-1/2 w-[320px] no-drag transition-transform duration-300"
+                         style=${{ transform: showVolumePopup ? 'translateX(calc(-50% - 150px))' : 'translateX(-50%)' }}>
                         <div class="relative">
                             <div class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600 pointer-events-none">
                                 ${icon(IC.search, 14)}
