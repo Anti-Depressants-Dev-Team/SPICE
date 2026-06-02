@@ -77,6 +77,7 @@ const SERVICES = {
   yt: "https://music.youtube.com",
   yt_vk: "https://music.youtube.com", // VK layout uses same URL, just injects VK player UI
   sc: "https://soundcloud.com",
+  spice_crazy: "https://spice-but-its-crazier-cuz-yes-backe.vercel.app/",
 };
 
 const AD_CSS = `
@@ -321,6 +322,23 @@ function injectAdSkipper(targetView) {
   if (!targetView) return;
   targetView.webContents.executeJavaScript(AD_SKIP_SCRIPT).catch((err) => {
     console.error("[AdBlocker] Failed to inject script:", err);
+  });
+}
+
+function supportsInjectedPlayback(serviceKey) {
+  return serviceKey === "yt" || serviceKey === "sc";
+}
+
+function resetTrackedPlayback() {
+  stopTrackPolling();
+  lastTrack = null;
+  discordRpc.clearPresence();
+  miniPlayerServer.updateState({
+    track: null,
+    currentTime: 0,
+    paused: true,
+    shuffle: false,
+    repeat: "off",
   });
 }
 
@@ -588,17 +606,21 @@ function loadService(serviceKey) {
       console.log(`Successfully loaded ${serviceKey} `);
       updateViewBounds(); // Re-apply bounds just in case
 
-      // Inject CSS for Cosmetic Blocking
-      view.webContents.insertCSS(AD_CSS);
+      if (supportsInjectedPlayback(trackDetectionKey)) {
+        // Inject CSS for Cosmetic Blocking
+        view.webContents.insertCSS(AD_CSS);
 
-      // Inject Ad-Skip Script
-      injectAdSkipper(view);
+        // Inject Ad-Skip Script
+        injectAdSkipper(view);
 
-      // Inject Track Detection Script based on service
-      injectTrackDetection(trackDetectionKey);
+        // Inject Track Detection Script based on service
+        injectTrackDetection(trackDetectionKey);
 
-      // Start main process polling (bypasses broken preload IPC)
-      startTrackPolling();
+        // Start main process polling (bypasses broken preload IPC)
+        startTrackPolling();
+      } else {
+        resetTrackedPlayback();
+      }
     })
     .catch((e) => {
       console.error(`Failed to load ${serviceKey}: `, e);
@@ -1738,7 +1760,7 @@ app.whenReady().then(async () => {
     loadService(service);
   });
 
-  // Load a specific URL (only YT Music or SoundCloud allowed)
+  // Load a specific URL (only supported services allowed)
   ipcMain.on("load-url", (event, url) => {
     try {
       const parsed = new URL(url);
@@ -1751,14 +1773,16 @@ app.whenReady().then(async () => {
         host === "soundcloud.com" ||
         host === "www.soundcloud.com" ||
         host === "m.soundcloud.com";
+      const isSpiceCrazy =
+        host === "spice-but-its-crazier-cuz-yes-backe.vercel.app";
 
-      if (!isYtMusic && !isSoundCloud) {
+      if (!isYtMusic && !isSoundCloud && !isSpiceCrazy) {
         console.log("Invalid URL rejected:", url);
         return;
       }
 
       // Determine service for track detection
-      const serviceKey = isYtMusic ? "yt" : "sc";
+      const serviceKey = isYtMusic ? "yt" : isSoundCloud ? "sc" : "spice_crazy";
       currentService = serviceKey;
 
       // Force recreate BrowserView to ensure clean state (fixes AdBlock/Interactivity issues)
@@ -1811,15 +1835,19 @@ app.whenReady().then(async () => {
           // Open DevTools for debugging - REMOVED for "Settings Only" restriction
           // view.webContents.openDevTools({ mode: 'detach' });
 
-          view.webContents.insertCSS(AD_CSS);
+          if (supportsInjectedPlayback(serviceKey)) {
+            view.webContents.insertCSS(AD_CSS);
 
-          // Inject Ad-Skip Script (AdBlock Fix)
-          injectAdSkipper(view);
+            // Inject Ad-Skip Script (AdBlock Fix)
+            injectAdSkipper(view);
 
-          injectTrackDetection(serviceKey);
+            injectTrackDetection(serviceKey);
 
-          // Start main process polling (bypasses broken preload IPC)
-          startTrackPolling();
+            // Start main process polling (bypasses broken preload IPC)
+            startTrackPolling();
+          } else {
+            resetTrackedPlayback();
+          }
 
           applyVolume();
         })
