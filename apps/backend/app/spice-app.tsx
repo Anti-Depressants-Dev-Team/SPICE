@@ -381,7 +381,9 @@ interface Track {
   previewOnly?: boolean;
 }
 
-type SearchProvider = 'hybrid' | 'youtube_music' | 'youtube_videos' | 'soundcloud' | 'lastfm' | 'listenbrainz';
+type SearchProvider = 'hybrid' | 'youtube_music' | 'youtube_videos' | 'soundcloud';
+type ProfileListenType = 'playing_now' | 'scrobble';
+type ProfileSyncStatus = 'idle' | 'playing' | 'scrobbled' | 'error';
 type AccentTheme = 'pink' | 'blue' | 'orange' | 'green' | 'gold';
 type VisualSurface = 'midnight' | 'glass' | 'solid' | 'aurora';
 type ArtworkShape = 'rounded' | 'soft' | 'circle';
@@ -393,8 +395,6 @@ const SEARCH_PROVIDER_LABELS: Record<SearchProvider, string> = {
   youtube_music: 'YouTube Music',
   youtube_videos: 'YouTube Videos',
   soundcloud: 'SoundCloud',
-  lastfm: 'Last.fm',
-  listenbrainz: 'ListenBrainz',
 };
 
 const VISUAL_SURFACE_LABELS: Record<VisualSurface, string> = {
@@ -422,6 +422,13 @@ const INTERFACE_SCALE_LABELS: Record<InterfaceScale, string> = {
   spacious: 'Spacious',
 };
 
+const PROFILE_SYNC_STATUS_LABELS: Record<ProfileSyncStatus, string> = {
+  idle: 'Waiting for playback',
+  playing: 'Now playing updated',
+  scrobbled: 'Listen saved',
+  error: 'Needs attention',
+};
+
 interface Playlist {
   id: string;
   title: string;
@@ -444,6 +451,26 @@ interface UserProfile {
   customPlaylists: Playlist[];
   history: Track[];
   avatarUrl?: string; // profile picture URL or preset avatar
+}
+
+interface ProfileSyncProviderResult {
+  ok: boolean;
+  skipped?: boolean;
+  error?: string;
+}
+
+interface ProfileSyncResponse {
+  results?: {
+    lastfm?: ProfileSyncProviderResult;
+    listenbrainz?: ProfileSyncProviderResult;
+  };
+}
+
+interface ScrobbleState {
+  trackKey: string;
+  startedAt: number;
+  nowPlayingSent: boolean;
+  scrobbled: boolean;
 }
 
 const PRESET_GRADIENTS = [
@@ -483,19 +510,10 @@ const formatTime = (seconds: number) => {
 const isSoundCloudTrack = (track: Track) =>
   track.sourceId === 'soundcloud' || track.id.startsWith('soundcloud:');
 
-const isLastFmTrack = (track: Track) =>
-  track.sourceId === 'lastfm' || track.id.startsWith('lastfm:');
-
-const isListenBrainzTrack = (track: Track) =>
-  track.sourceId === 'listenbrainz' || track.id.startsWith('listenbrainz:');
-
-const isMetadataDiscoveryTrack = (track: Track) =>
-  isLastFmTrack(track) || isListenBrainzTrack(track);
-
 const isYouTubeTrack = (track: Track) =>
   track.sourceId === 'youtube_music'
     || track.sourceId === 'youtube_video'
-    || (!track.sourceId && !isSoundCloudTrack(track) && !isMetadataDiscoveryTrack(track));
+    || (!track.sourceId && !isSoundCloudTrack(track));
 
 const soundCloudTrackId = (track: Track) =>
   track.id.startsWith('soundcloud:') ? track.id.slice('soundcloud:'.length) : track.id;
@@ -503,21 +521,15 @@ const soundCloudTrackId = (track: Track) =>
 const trackSourceLabel = (track: Track) =>
   isSoundCloudTrack(track)
     ? 'SoundCloud'
-    : isLastFmTrack(track)
-      ? 'Last.fm'
-      : isListenBrainzTrack(track)
-        ? 'ListenBrainz'
-        : track.sourceId === 'youtube_video'
-          ? 'YouTube Video'
-          : 'YouTube Music';
+    : track.sourceId === 'youtube_video'
+      ? 'YouTube Video'
+      : 'YouTube Music';
 
 const isSearchProvider = (value: string | null): value is SearchProvider =>
   value === 'hybrid'
     || value === 'youtube_music'
     || value === 'youtube_videos'
-    || value === 'soundcloud'
-    || value === 'lastfm'
-    || value === 'listenbrainz';
+    || value === 'soundcloud';
 
 const isAccentTheme = (value: string | null): value is AccentTheme =>
   value === 'pink' || value === 'blue' || value === 'orange' || value === 'green' || value === 'gold';
@@ -567,6 +579,25 @@ const dedupeTracks = (tracks: Track[]) => {
   }
 
   return deduped;
+};
+
+const playbackTrackKey = (track: Track) =>
+  `${track.sourceId ?? 'youtube_music'}:${track.id}`;
+
+const profileArtistName = (track: Track) =>
+  track.artists.map((entry) => entry.name).filter(Boolean).join(', ') || 'Unknown Artist';
+
+const profileOriginUrl = (track: Track) => {
+  if (track.permalinkUrl) return track.permalinkUrl;
+  if (track.sourceId === 'youtube_video') return `https://www.youtube.com/watch?v=${track.id}`;
+  if (track.sourceId === 'youtube_music' || !track.sourceId) return `https://music.youtube.com/watch?v=${track.id}`;
+  return undefined;
+};
+
+const scrobbleThresholdSeconds = (durationSeconds: number) => {
+  if (!durationSeconds || !Number.isFinite(durationSeconds)) return 60;
+  if (durationSeconds < 30) return Math.max(5, durationSeconds * 0.5);
+  return Math.min(Math.max(durationSeconds * 0.5, 30), 240);
 };
 
 const randomIndex = (length: number) => Math.floor(Math.random() * length);
@@ -710,6 +741,10 @@ export default function SpiceApp() {
   const [interfaceScale, setInterfaceScale] = useState<InterfaceScale>('comfortable');
   const [audioQuality, setAudioQuality] = useState<'standard' | 'high' | 'low'>('standard');
   const [streamProtocol, setStreamProtocol] = useState<'proxy' | 'web' | 'embed'>('proxy');
+  const [profileSyncEnabled, setProfileSyncEnabled] = useState(false);
+  const [lastFmSessionKey, setLastFmSessionKey] = useState('');
+  const [listenBrainzToken, setListenBrainzToken] = useState('');
+  const [profileSyncStatus, setProfileSyncStatus] = useState<ProfileSyncStatus>('idle');
   const [showQueueDrawer, setShowQueueDrawer] = useState(false);
 
   // ── Multi-Profile Accounts Setup ──────────────────────────────────
@@ -966,6 +1001,7 @@ export default function SpiceApp() {
   const progressRef = useRef(progress);
   const errorSkipTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const syncLockRef = useRef<boolean>(false);
+  const scrobbleStateRef = useRef<ScrobbleState | null>(null);
 
   const handleAudioEndedRef = useRef<() => void>(() => {});
   const handleAudioErrorRef = useRef<() => void>(() => {});
@@ -1080,6 +1116,10 @@ export default function SpiceApp() {
 
       const savedProtocol = localStorage.getItem('spice_stream_protocol');
       if (savedProtocol) setStreamProtocol(savedProtocol as any);
+
+      setProfileSyncEnabled(localStorage.getItem('spice_profile_sync_enabled') === 'true');
+      setLastFmSessionKey(localStorage.getItem('spice_lastfm_session_key') || '');
+      setListenBrainzToken(localStorage.getItem('spice_listenbrainz_token') || '');
 
       const savedSearchProvider = localStorage.getItem('spice_search_provider');
       if (isSearchProvider(savedSearchProvider)) {
@@ -1783,6 +1823,8 @@ export default function SpiceApp() {
     }
   }, [cloudToken, activeProfileId]);
 
+  const currentTrackKey = playbackTrackKey(currentTrack);
+
   const handleAudioEnded = () => {
     // Increment songs played on completion
     const currentSongsPlayed = activeProfileRef.current?.songsPlayed ?? 0;
@@ -1795,6 +1837,19 @@ export default function SpiceApp() {
     const currentQueueIndex = queueIndexRef.current;
 
     logDebug('player', `Audio track ended. repeatMode: ${currentRepeatMode}, protocol: ${currentStreamProtocol}`);
+
+    const scrobbleState = scrobbleStateRef.current;
+    if (
+      profileSyncEnabled
+      && currentTrack.id !== 'placeholder'
+      && (lastFmSessionKey.trim() || listenBrainzToken.trim())
+      && scrobbleState
+      && scrobbleState.trackKey === currentTrackKey
+      && !scrobbleState.scrobbled
+    ) {
+      scrobbleState.scrobbled = true;
+      void submitProfileListen('scrobble', scrobbleState.startedAt);
+    }
 
     if (currentRepeatMode === 'one') {
       if (currentStreamProtocol === 'embed' && isYouTubeTrack(currentTrack) && ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
@@ -1854,6 +1909,114 @@ export default function SpiceApp() {
   useEffect(() => { isShuffleRef.current = isShuffle; }, [isShuffle]);
   useEffect(() => { activeProfileRef.current = activeProfile; }, [activeProfile]);
   useEffect(() => { progressRef.current = progress; }, [progress]);
+
+  async function submitProfileListen(type: ProfileListenType, listenedAt: number) {
+    if (!profileSyncEnabled || currentTrack.id === 'placeholder') return;
+
+    const lastfmSession = lastFmSessionKey.trim();
+    const listenbrainzToken = listenBrainzToken.trim();
+    if (!lastfmSession && !listenbrainzToken) {
+      setProfileSyncStatus('idle');
+      return;
+    }
+
+    const durationMs = currentTrack.durationMs || (duration > 0 ? Math.round(duration * 1000) : undefined);
+    try {
+      const response = await fetch('/api/profile/listens', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type,
+          listenedAt,
+          providers: {
+            lastfm: lastfmSession ? { sessionKey: lastfmSession } : undefined,
+            listenbrainz: listenbrainzToken ? { token: listenbrainzToken } : undefined,
+          },
+          track: {
+            id: currentTrack.id,
+            title: currentTrack.title,
+            artist: profileArtistName(currentTrack),
+            album: currentTrack.album?.title,
+            durationMs,
+            sourceId: currentTrack.sourceId,
+            permalinkUrl: profileOriginUrl(currentTrack),
+          },
+        }),
+      });
+      const data = await response.json().catch(() => ({})) as ProfileSyncResponse;
+      if (!response.ok) {
+        throw new Error((data as any).error || `Profile sync failed with status ${response.status}.`);
+      }
+
+      const syncedProviders = [
+        data.results?.lastfm?.ok ? 'Last.fm' : null,
+        data.results?.listenbrainz?.ok ? 'ListenBrainz' : null,
+      ].filter(Boolean);
+      const failedProviders = [
+        data.results?.lastfm && !data.results.lastfm.skipped && !data.results.lastfm.ok
+          ? `Last.fm: ${data.results.lastfm.error || 'failed'}`
+          : null,
+        data.results?.listenbrainz && !data.results.listenbrainz.skipped && !data.results.listenbrainz.ok
+          ? `ListenBrainz: ${data.results.listenbrainz.error || 'failed'}`
+          : null,
+      ].filter(Boolean);
+
+      if (syncedProviders.length > 0) {
+        setProfileSyncStatus(type === 'playing_now' ? 'playing' : 'scrobbled');
+        logDebug('profile', `${type === 'playing_now' ? 'Now playing' : 'Scrobble'} sent to ${syncedProviders.join(', ')} for "${currentTrack.title}".`);
+      }
+
+      if (failedProviders.length > 0) {
+        setProfileSyncStatus('error');
+        logDebug('error', `Profile sync issue: ${failedProviders.join(' | ')}`);
+      }
+    } catch (error) {
+      setProfileSyncStatus('error');
+      logDebug('error', `Profile sync request failed: ${error instanceof Error ? error.message : error}`);
+    }
+  }
+
+  useEffect(() => {
+    if (currentTrack.id === 'placeholder') {
+      scrobbleStateRef.current = null;
+      setProfileSyncStatus('idle');
+      return;
+    }
+
+    scrobbleStateRef.current = {
+      trackKey: currentTrackKey,
+      startedAt: Math.floor(Date.now() / 1000),
+      nowPlayingSent: false,
+      scrobbled: false,
+    };
+    setProfileSyncStatus('idle');
+  }, [currentTrackKey]);
+
+  useEffect(() => {
+    if (!profileSyncEnabled || currentTrack.id === 'placeholder' || !isPlaying) return;
+    if (!lastFmSessionKey.trim() && !listenBrainzToken.trim()) return;
+
+    const scrobbleState = scrobbleStateRef.current;
+    if (!scrobbleState || scrobbleState.trackKey !== currentTrackKey) return;
+
+    const progressSeconds = Math.max(0, progress);
+    if (!scrobbleState.nowPlayingSent && progressSeconds >= 2) {
+      scrobbleState.nowPlayingSent = true;
+      void submitProfileListen('playing_now', scrobbleState.startedAt);
+    }
+
+    const durationSeconds = duration > 0
+      ? duration
+      : currentTrack.durationMs
+        ? currentTrack.durationMs / 1000
+        : 0;
+    const threshold = scrobbleThresholdSeconds(durationSeconds);
+    const wallClockElapsed = Math.floor(Date.now() / 1000) - scrobbleState.startedAt;
+    if (!scrobbleState.scrobbled && progressSeconds >= threshold && wallClockElapsed >= threshold) {
+      scrobbleState.scrobbled = true;
+      void submitProfileListen('scrobble', scrobbleState.startedAt);
+    }
+  }, [profileSyncEnabled, lastFmSessionKey, listenBrainzToken, isPlaying, progress, duration, currentTrackKey]);
 
   useEffect(() => {
     handleAudioEndedRef.current = handleAudioEnded;
@@ -1990,29 +2153,6 @@ export default function SpiceApp() {
     }
   };
 
-  const resolveDiscoveryTrackToPlayable = async (track: Track) => {
-    const artist = track.artists.map((entry) => entry.name).filter(Boolean).join(' ');
-    const query = [track.title, artist].filter(Boolean).join(' ');
-    const fetchPlayableMatch = async (kind: 'tracks' | 'videos') => {
-      const params = new URLSearchParams({
-        q: query,
-        limit: '1',
-        kind,
-      });
-      const response = await fetch(`/api/yt/search?${params.toString()}`);
-      if (!response.ok) return null;
-      const data = await response.json();
-      const [match] = (data.tracks ?? []).map(enrichTrackSnapshot) as Track[];
-      return match ?? null;
-    };
-
-    const match = await fetchPlayableMatch('tracks') ?? await fetchPlayableMatch('videos');
-    if (!match) {
-      throw new Error(`No playable YouTube match found for ${trackSourceLabel(track)} result "${track.title}".`);
-    }
-    return match;
-  };
-
   // Play a track
   const playTrack = async (track: Track, newQueue?: Track[], startSearchIndex?: number) => {
     if (errorSkipTimeoutRef.current) {
@@ -2023,28 +2163,6 @@ export default function SpiceApp() {
     if (!track || track.id === 'placeholder') {
       setIsLoadingStream(false);
       logDebug('player', 'Ready to stream. Select any track from the lists to begin playback.');
-      return;
-    }
-
-    if (isMetadataDiscoveryTrack(track)) {
-      setError(undefined);
-      setIsPlaying(false);
-      setStreamUrl(null);
-      setShowVideoPlayer(false);
-      setIsLoadingStream(true);
-      logDebug('player', `Resolving ${trackSourceLabel(track)} metadata result "${track.title}" through YouTube Music for playback.`);
-
-      try {
-        const playableTrack = await resolveDiscoveryTrackToPlayable(track);
-        const playableQueue = newQueue?.map((entry) => entry.id === track.id ? playableTrack : entry);
-        logDebug('player', `Matched ${trackSourceLabel(track)} result to playable YouTube item "${playableTrack.title}".`);
-        await playTrack(playableTrack, playableQueue, startSearchIndex);
-      } catch (err: any) {
-        console.error(err);
-        logDebug('error', `Metadata provider playback resolution failed: ${err.message || err}`);
-        setError('Could not find a playable match for this metadata result.');
-        setIsLoadingStream(false);
-      }
       return;
     }
 
@@ -2402,8 +2520,6 @@ export default function SpiceApp() {
         youtube_music: '/api/yt/search',
         youtube_videos: '/api/yt/search',
         soundcloud: '/api/sc/search',
-        lastfm: '/api/lastfm/search',
-        listenbrainz: '/api/listenbrainz/search',
       }[targetProvider];
 
       if (targetProvider === 'youtube_music' || targetProvider === 'youtube_videos') {
@@ -2421,8 +2537,6 @@ export default function SpiceApp() {
         fetchProvider('youtube_music', 8),
         fetchProvider('youtube_videos', 8),
         fetchProvider('soundcloud', 8),
-        fetchProvider('lastfm', 6),
-        fetchProvider('listenbrainz', 6),
       ]);
       return dedupeTracks(
         batches.flatMap((batch) => batch.status === 'fulfilled' ? batch.value : []),
@@ -3651,8 +3765,6 @@ export default function SpiceApp() {
                         <option value="youtube_music">YouTube Music</option>
                         <option value="youtube_videos">YouTube Videos</option>
                         <option value="soundcloud">SoundCloud</option>
-                        <option value="lastfm">Last.fm</option>
-                        <option value="listenbrainz">ListenBrainz</option>
                       </select>
                     </div>
                   </div>
@@ -4555,6 +4667,79 @@ export default function SpiceApp() {
                     </div>
                   </div>
 
+                  {/* Listening Profile Sync */}
+                  <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '16px', marginBottom: '18px' }}>
+                      <div>
+                        <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.database} Listening Profile Sync</h3>
+                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: 0, lineHeight: 1.4 }}>
+                          Update your Last.fm and ListenBrainz profiles from playback. Search stays focused on playable providers.
+                        </p>
+                      </div>
+                      <span style={{
+                        fontSize: '0.72rem',
+                        color: profileSyncStatus === 'error' ? '#f87171' : 'var(--text-secondary)',
+                        border: profileSyncStatus === 'error' ? '1px solid rgba(248, 113, 113, 0.35)' : '1px solid var(--border-color)',
+                        borderRadius: '999px',
+                        padding: '5px 10px',
+                        whiteSpace: 'nowrap',
+                      }}>
+                        {PROFILE_SYNC_STATUS_LABELS[profileSyncStatus]}
+                      </span>
+                    </div>
+
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '18px', color: '#fff', fontSize: '0.9rem', fontWeight: 700 }}>
+                      <input
+                        type="checkbox"
+                        checked={profileSyncEnabled}
+                        onChange={(e) => {
+                          setProfileSyncEnabled(e.target.checked);
+                          localStorage.setItem('spice_profile_sync_enabled', String(e.target.checked));
+                        }}
+                        style={{ accentColor: 'var(--accent-pink)' }}
+                      />
+                      Enable now-playing and scrobble updates
+                    </label>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px' }}>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>Last.fm Session Key</label>
+                        <input
+                          type="password"
+                          value={lastFmSessionKey}
+                          onChange={(e) => {
+                            setLastFmSessionKey(e.target.value);
+                            localStorage.setItem('spice_lastfm_session_key', e.target.value);
+                          }}
+                          placeholder="sk_..."
+                          autoComplete="off"
+                          style={{ width: '100%', padding: '10px 14px', background: '#0a0a0a', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', outline: 'none' }}
+                        />
+                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.74rem', lineHeight: 1.4, margin: '8px 0 0 0' }}>
+                          Backend also needs LASTFM_API_KEY and LASTFM_SHARED_SECRET.
+                        </p>
+                      </div>
+
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>ListenBrainz User Token</label>
+                        <input
+                          type="password"
+                          value={listenBrainzToken}
+                          onChange={(e) => {
+                            setListenBrainzToken(e.target.value);
+                            localStorage.setItem('spice_listenbrainz_token', e.target.value);
+                          }}
+                          placeholder="Paste user token"
+                          autoComplete="off"
+                          style={{ width: '100%', padding: '10px 14px', background: '#0a0a0a', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', outline: 'none' }}
+                        />
+                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.74rem', lineHeight: 1.4, margin: '8px 0 0 0' }}>
+                          Sends temporary playing-now updates and permanent listens after the scrobble threshold.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
                   {/* Player View & Position Settings */}
                   <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
                     <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.monitor} Player Layout & Viewing Options</h3>
@@ -4640,7 +4825,7 @@ export default function SpiceApp() {
                         {Icons.tool} System Diagnostics & Live Terminal
                       </h3>
                       <span style={{ fontSize: '0.75rem', background: 'rgba(255,255,255,0.04)', color: 'var(--text-secondary)', padding: '4px 10px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.06)' }}>
-                        Spice Media Core v1.0.16 (Phase 12 Metadata Discovery Providers)
+                        Spice Media Core v1.0.17 (Phase 13 Listening Profile Sync)
                       </span>
                     </div>
 
@@ -5865,7 +6050,7 @@ export default function SpiceApp() {
           <div style={{ opacity: 0.3, fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
             <span>Spice Premium Audio Resolution Engine</span>
             <span>•</span>
-            <span>PWA v1.0.16</span>
+            <span>PWA v1.0.17</span>
           </div>
 
         </div>

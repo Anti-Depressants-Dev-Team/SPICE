@@ -1,99 +1,115 @@
-import type { SpiceTrack } from './youtube';
+import { createHash } from 'crypto';
 
 const LASTFM_API_URL = 'https://ws.audioscrobbler.com/2.0/';
-const LASTFM_SOURCE_ID = 'lastfm';
-const LASTFM_TRACK_PREFIX = `${LASTFM_SOURCE_ID}:`;
 const DEFAULT_TIMEOUT_MS = 8000;
 
-interface LastFmImage {
-  '#text'?: string;
-  size?: string;
+export interface ProfileListenTrack {
+  title: string;
+  artist: string;
+  album?: string;
+  durationMs?: number;
+  sourceId?: string;
+  id?: string;
+  permalinkUrl?: string;
 }
 
-interface LastFmTrack {
-  name?: string;
-  artist?: string;
-  mbid?: string;
-  url?: string;
-  listeners?: string;
-  image?: LastFmImage[] | LastFmImage;
+interface LastFmSubmitInput {
+  sessionKey: string;
+  track: ProfileListenTrack;
+  timestamp?: number;
 }
 
-interface LastFmSearchResponse {
-  results?: {
-    trackmatches?: {
-      track?: LastFmTrack[] | LastFmTrack;
-    };
-  };
+interface LastFmApiResponse {
   error?: number;
   message?: string;
 }
 
-export interface LastFmDiscoveryTrack extends SpiceTrack {
-  permalinkUrl?: string;
+export async function submitLastFmNowPlaying(input: LastFmSubmitInput) {
+  return postLastFm({
+    method: 'track.updateNowPlaying',
+    sessionKey: input.sessionKey,
+    track: input.track,
+  });
 }
 
-export async function searchLastFmTracks(query: string, limit: number) {
-  const apiKey = process.env.LASTFM_API_KEY?.trim();
-  if (!apiKey) {
-    throw new Error('Set LASTFM_API_KEY to enable Last.fm discovery search.');
+export async function submitLastFmScrobble(input: LastFmSubmitInput) {
+  if (!input.timestamp) {
+    throw new Error('Last.fm scrobble requires a playback start timestamp.');
   }
 
-  const params = new URLSearchParams({
-    method: 'track.search',
-    track: query,
-    api_key: apiKey,
-    format: 'json',
-    limit: String(limit),
+  return postLastFm({
+    method: 'track.scrobble',
+    sessionKey: input.sessionKey,
+    track: input.track,
+    extraParams: {
+      timestamp: String(input.timestamp),
+    },
   });
+}
 
-  const response = await fetch(`${LASTFM_API_URL}?${params.toString()}`, {
-    headers: { 'User-Agent': 'SPICE-Music-Player/1.0' },
+async function postLastFm({
+  method,
+  sessionKey,
+  track,
+  extraParams = {},
+}: {
+  method: 'track.updateNowPlaying' | 'track.scrobble';
+  sessionKey: string;
+  track: ProfileListenTrack;
+  extraParams?: Record<string, string>;
+}) {
+  const apiKey = process.env.LASTFM_API_KEY?.trim();
+  const sharedSecret = process.env.LASTFM_SHARED_SECRET?.trim() || process.env.LASTFM_API_SECRET?.trim();
+  if (!apiKey || !sharedSecret) {
+    throw new Error('Set LASTFM_API_KEY and LASTFM_SHARED_SECRET to enable Last.fm profile updates.');
+  }
+
+  const params: Record<string, string> = {
+    method,
+    artist: track.artist,
+    track: track.title,
+    api_key: apiKey,
+    sk: sessionKey,
+    format: 'json',
+    ...extraParams,
+  };
+
+  if (track.album) {
+    params.album = track.album;
+  }
+  if (track.durationMs) {
+    params.duration = String(Math.max(1, Math.round(track.durationMs / 1000)));
+  }
+
+  params.api_sig = signLastFmParams(params, sharedSecret);
+
+  const response = await fetch(LASTFM_API_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'User-Agent': 'SPICE-Music-Player/1.0',
+    },
+    body: new URLSearchParams(params),
     signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
   });
 
-  if (!response.ok) {
-    throw new Error(`Last.fm search failed with status ${response.status}.`);
+  const data = await response.json().catch(() => ({})) as LastFmApiResponse;
+
+  if (!response.ok || data.error) {
+    throw new Error(data.message || `Last.fm profile update failed with status ${response.status}.`);
   }
 
-  const data = await response.json() as LastFmSearchResponse;
-  if (data.error) {
-    throw new Error(data.message || `Last.fm API error ${data.error}.`);
-  }
-
-  return normalizeArray(data.results?.trackmatches?.track)
-    .filter((track) => track.name && track.artist)
-    .map(lastFmTrackToSpiceTrack)
-    .slice(0, limit);
+  return data;
 }
 
-function lastFmTrackToSpiceTrack(track: LastFmTrack): LastFmDiscoveryTrack {
-  const artistName = track.artist || 'Last.fm Artist';
-  const trackName = track.name || 'Last.fm Track';
+function signLastFmParams(params: Record<string, string>, sharedSecret: string) {
+  const signatureBase = Object.entries(params)
+    .filter(([key]) => key !== 'format' && key !== 'callback' && key !== 'api_sig')
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}${value}`)
+    .join('');
 
-  return {
-    sourceId: LASTFM_SOURCE_ID,
-    id: `${LASTFM_TRACK_PREFIX}${track.mbid || encodeTrackKey(artistName, trackName)}`,
-    title: trackName,
-    artists: [{ id: `${LASTFM_SOURCE_ID}:artist:${artistName}`, name: artistName }],
-    artworkUrl: bestImage(track.image),
-    permalinkUrl: track.url,
-  };
-}
-
-function normalizeArray<T>(value: T[] | T | undefined): T[] {
-  if (!value) return [];
-  return Array.isArray(value) ? value : [value];
-}
-
-function encodeTrackKey(artist: string, title: string) {
-  return Buffer.from(`${artist}\0${title}`).toString('base64url');
-}
-
-function bestImage(images: LastFmImage[] | LastFmImage | undefined) {
-  return normalizeArray(images)
-    .slice()
-    .reverse()
-    .map((image) => image['#text'])
-    .find((url) => !!url);
+  return createHash('md5')
+    .update(`${signatureBase}${sharedSecret}`, 'utf8')
+    .digest('hex');
 }
