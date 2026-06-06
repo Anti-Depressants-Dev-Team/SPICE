@@ -13,6 +13,8 @@ interface ProfileListenRequest {
   providers?: {
     lastfm?: {
       sessionKey?: string;
+      apiKey?: string;
+      sharedSecret?: string;
     };
     listenbrainz?: {
       token?: string;
@@ -68,12 +70,16 @@ export async function POST(request: NextRequest) {
 
   const lastFmSessionKey = body.providers?.lastfm?.sessionKey?.trim();
   if (lastFmSessionKey) {
+    const credentials = {
+      apiKey: body.providers?.lastfm?.apiKey,
+      sharedSecret: body.providers?.lastfm?.sharedSecret,
+    };
     tasks.push((async () => {
       try {
         if (body.type === 'playing_now') {
-          await submitLastFmNowPlaying({ sessionKey: lastFmSessionKey, track });
+          await submitLastFmNowPlaying({ sessionKey: lastFmSessionKey, track, credentials });
         } else {
-          await submitLastFmScrobble({ sessionKey: lastFmSessionKey, track, timestamp: listenedAt });
+          await submitLastFmScrobble({ sessionKey: lastFmSessionKey, track, timestamp: listenedAt, credentials });
         }
         results.lastfm = { ok: true };
       } catch (error) {

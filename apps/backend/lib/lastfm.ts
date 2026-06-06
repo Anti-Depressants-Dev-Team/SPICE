@@ -1,7 +1,13 @@
 import { createHash } from 'crypto';
 
 const LASTFM_API_URL = 'https://ws.audioscrobbler.com/2.0/';
+const LASTFM_AUTH_URL = 'https://www.last.fm/api/auth/';
 const DEFAULT_TIMEOUT_MS = 8000;
+
+export interface LastFmApiCredentials {
+  apiKey?: string;
+  sharedSecret?: string;
+}
 
 export interface ProfileListenTrack {
   title: string;
@@ -17,6 +23,7 @@ interface LastFmSubmitInput {
   sessionKey: string;
   track: ProfileListenTrack;
   timestamp?: number;
+  credentials?: LastFmApiCredentials;
 }
 
 interface LastFmApiResponse {
@@ -24,11 +31,24 @@ interface LastFmApiResponse {
   message?: string;
 }
 
+interface LastFmTokenResponse extends LastFmApiResponse {
+  token?: string;
+}
+
+interface LastFmSessionResponse extends LastFmApiResponse {
+  session?: {
+    name?: string;
+    key?: string;
+    subscriber?: number;
+  };
+}
+
 export async function submitLastFmNowPlaying(input: LastFmSubmitInput) {
   return postLastFm({
     method: 'track.updateNowPlaying',
     sessionKey: input.sessionKey,
     track: input.track,
+    credentials: input.credentials,
   });
 }
 
@@ -41,34 +61,86 @@ export async function submitLastFmScrobble(input: LastFmSubmitInput) {
     method: 'track.scrobble',
     sessionKey: input.sessionKey,
     track: input.track,
+    credentials: input.credentials,
     extraParams: {
       timestamp: String(input.timestamp),
     },
   });
 }
 
+export async function createLastFmAuthToken(credentials: LastFmApiCredentials) {
+  const resolvedCredentials = resolveLastFmCredentials(credentials);
+  const data = await postLastFmAuth<LastFmTokenResponse>(
+    {
+      method: 'auth.getToken',
+      api_key: resolvedCredentials.apiKey,
+      format: 'json',
+    },
+    resolvedCredentials.sharedSecret,
+  );
+
+  if (!data.token) {
+    throw new Error('Last.fm did not return an auth token.');
+  }
+
+  return {
+    token: data.token,
+    authUrl: `${LASTFM_AUTH_URL}?${new URLSearchParams({
+      api_key: resolvedCredentials.apiKey,
+      token: data.token,
+    }).toString()}`,
+  };
+}
+
+export async function createLastFmSession(credentials: LastFmApiCredentials & { token: string }) {
+  const token = credentials.token.trim();
+  if (!token) {
+    throw new Error('Last.fm auth token is required.');
+  }
+
+  const resolvedCredentials = resolveLastFmCredentials(credentials);
+  const data = await postLastFmAuth<LastFmSessionResponse>(
+    {
+      method: 'auth.getSession',
+      token,
+      api_key: resolvedCredentials.apiKey,
+      format: 'json',
+    },
+    resolvedCredentials.sharedSecret,
+  );
+
+  const sessionKey = data.session?.key?.trim();
+  if (!sessionKey) {
+    throw new Error('Last.fm did not return a session key.');
+  }
+
+  return {
+    sessionKey,
+    name: data.session?.name,
+    subscriber: data.session?.subscriber,
+  };
+}
+
 async function postLastFm({
   method,
   sessionKey,
   track,
+  credentials,
   extraParams = {},
 }: {
   method: 'track.updateNowPlaying' | 'track.scrobble';
   sessionKey: string;
   track: ProfileListenTrack;
+  credentials?: LastFmApiCredentials;
   extraParams?: Record<string, string>;
 }) {
-  const apiKey = process.env.LASTFM_API_KEY?.trim();
-  const sharedSecret = process.env.LASTFM_SHARED_SECRET?.trim() || process.env.LASTFM_API_SECRET?.trim();
-  if (!apiKey || !sharedSecret) {
-    throw new Error('Set LASTFM_API_KEY and LASTFM_SHARED_SECRET to enable Last.fm profile updates.');
-  }
+  const resolvedCredentials = resolveLastFmCredentials(credentials);
 
   const params: Record<string, string> = {
     method,
     artist: track.artist,
     track: track.title,
-    api_key: apiKey,
+    api_key: resolvedCredentials.apiKey,
     sk: sessionKey,
     format: 'json',
     ...extraParams,
@@ -81,8 +153,21 @@ async function postLastFm({
     params.duration = String(Math.max(1, Math.round(track.durationMs / 1000)));
   }
 
-  params.api_sig = signLastFmParams(params, sharedSecret);
+  params.api_sig = signLastFmParams(params, resolvedCredentials.sharedSecret);
 
+  const data = await postLastFmParams<LastFmApiResponse>(params);
+  return data;
+}
+
+async function postLastFmAuth<T extends LastFmApiResponse>(params: Record<string, string>, sharedSecret: string) {
+  const signedParams = {
+    ...params,
+    api_sig: signLastFmParams(params, sharedSecret),
+  };
+  return postLastFmParams<T>(signedParams);
+}
+
+async function postLastFmParams<T extends LastFmApiResponse>(params: Record<string, string>) {
   const response = await fetch(LASTFM_API_URL, {
     method: 'POST',
     headers: {
@@ -93,13 +178,25 @@ async function postLastFm({
     signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
   });
 
-  const data = await response.json().catch(() => ({})) as LastFmApiResponse;
+  const data = await response.json().catch(() => ({})) as T;
 
   if (!response.ok || data.error) {
     throw new Error(data.message || `Last.fm profile update failed with status ${response.status}.`);
   }
 
   return data;
+}
+
+function resolveLastFmCredentials(credentials?: LastFmApiCredentials) {
+  const apiKey = credentials?.apiKey?.trim() || process.env.LASTFM_API_KEY?.trim();
+  const sharedSecret = credentials?.sharedSecret?.trim()
+    || process.env.LASTFM_SHARED_SECRET?.trim()
+    || process.env.LASTFM_API_SECRET?.trim();
+  if (!apiKey || !sharedSecret) {
+    throw new Error('Set Last.fm API key and shared secret in Settings or backend env.');
+  }
+
+  return { apiKey, sharedSecret };
 }
 
 function signLastFmParams(params: Record<string, string>, sharedSecret: string) {
