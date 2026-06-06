@@ -638,16 +638,6 @@
             })();
         }, []);
 
-        // --- Auto-load default service (backup for main.js auto-load) ---
-        useEffect(function() {
-            var timer = setTimeout(function() {
-                if (!serviceActiveRef.current) {
-                    callApi('loadService', 'yt');
-                }
-            }, 1500);
-            return function() { clearTimeout(timer); };
-        }, []);
-
         // --- Browser Polling (non-Electron fallback) ---
         useEffect(function() {
             if (window.api) return;

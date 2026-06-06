@@ -177,9 +177,9 @@ function createWindow() {
     mainWindow.show();
     // mainWindow.webContents.openDevTools({ mode: "detach" }); // Disabled to stop DevTools console from popping up automatically
 
-    // Check for Default Service Startup
-    // If not set, use 'yt' (YouTube Music)
-    const startupService = store ? store.get("defaultService", "yt") : "yt";
+    // Check for Default Service Startup.
+    // If not set, stay on Home instead of silently launching a service.
+    const startupService = store ? store.get("defaultService", "home") : "home";
 
     if (
       startupService &&
@@ -2307,7 +2307,7 @@ app.whenReady().then(async () => {
       adBlockerEnabled: store ? store.get("adBlockerEnabled", true) : true,
       // Return type explicitly so UI can show correct state
       adBlockerType: store ? store.get("adBlockerType", "spice") : "spice",
-      defaultService: store ? store.get("defaultService", "yt") : "yt",
+      defaultService: store ? store.get("defaultService", "home") : "home",
       discordRpcEnabled: store ? store.get("discordRpcEnabled", true) : true,
       vkPlayerEnabled: store ? store.get("vkPlayerEnabled", false) : false,
       topBarSearchEnabled: store
