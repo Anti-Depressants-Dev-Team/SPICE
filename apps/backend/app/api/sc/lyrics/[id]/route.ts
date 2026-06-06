@@ -11,18 +11,37 @@ export function OPTIONS() {
 }
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
 
   try {
-    const track = await getSoundCloudTrackMetadata(id);
+    const titleOverride = request.nextUrl.searchParams.get('title')?.trim() ?? '';
+    const artistOverride = request.nextUrl.searchParams.get('artist')?.trim() ?? '';
+    const parsedDurationMs = Number(request.nextUrl.searchParams.get('durationMs') ?? '');
+    const durationOverrideMs = Number.isFinite(parsedDurationMs) && parsedDurationMs > 0
+      ? Math.round(parsedDurationMs)
+      : 0;
+
+    let trackId = id;
+    let title = titleOverride;
+    let artist = artistOverride;
+    let durationMs = durationOverrideMs || 180000;
+
+    if (!title || !artist || !durationOverrideMs) {
+      const track = await getSoundCloudTrackMetadata(id);
+      trackId = track.id;
+      title = title || track.title;
+      artist = artist || track.artists[0]?.name || '';
+      durationMs = durationOverrideMs || track.durationMs || 180000;
+    }
+
     return jsonResponse(await resolveLyrics({
-      trackId: track.id,
-      title: track.title,
-      artist: track.artists[0]?.name || '',
-      durationMs: track.durationMs || 180000,
+      trackId,
+      title,
+      artist,
+      durationMs,
     }));
   } catch (error) {
     return jsonResponse(

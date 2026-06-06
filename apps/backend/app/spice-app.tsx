@@ -381,13 +381,45 @@ interface Track {
   previewOnly?: boolean;
 }
 
-type SearchProvider = 'hybrid' | 'youtube_music' | 'youtube_videos' | 'soundcloud';
+type SearchProvider = 'hybrid' | 'youtube_music' | 'youtube_videos' | 'soundcloud' | 'lastfm' | 'listenbrainz';
+type AccentTheme = 'pink' | 'blue' | 'orange' | 'green' | 'gold';
+type VisualSurface = 'midnight' | 'glass' | 'solid' | 'aurora';
+type ArtworkShape = 'rounded' | 'soft' | 'circle';
+type MotionLevel = 'full' | 'calm' | 'off';
+type InterfaceScale = 'compact' | 'comfortable' | 'spacious';
 
 const SEARCH_PROVIDER_LABELS: Record<SearchProvider, string> = {
   hybrid: 'Hybrid',
   youtube_music: 'YouTube Music',
   youtube_videos: 'YouTube Videos',
   soundcloud: 'SoundCloud',
+  lastfm: 'Last.fm',
+  listenbrainz: 'ListenBrainz',
+};
+
+const VISUAL_SURFACE_LABELS: Record<VisualSurface, string> = {
+  midnight: 'Midnight Black',
+  glass: 'Soft Glass',
+  solid: 'Flat Graphite',
+  aurora: 'Aurora Glow',
+};
+
+const ARTWORK_SHAPE_LABELS: Record<ArtworkShape, string> = {
+  rounded: 'Rounded Covers',
+  soft: 'Soft Squares',
+  circle: 'Circular Artwork',
+};
+
+const MOTION_LEVEL_LABELS: Record<MotionLevel, string> = {
+  full: 'Full Motion',
+  calm: 'Calm Motion',
+  off: 'Motion Off',
+};
+
+const INTERFACE_SCALE_LABELS: Record<InterfaceScale, string> = {
+  compact: 'Compact',
+  comfortable: 'Comfortable',
+  spacious: 'Spacious',
 };
 
 interface Playlist {
@@ -451,24 +483,77 @@ const formatTime = (seconds: number) => {
 const isSoundCloudTrack = (track: Track) =>
   track.sourceId === 'soundcloud' || track.id.startsWith('soundcloud:');
 
+const isLastFmTrack = (track: Track) =>
+  track.sourceId === 'lastfm' || track.id.startsWith('lastfm:');
+
+const isListenBrainzTrack = (track: Track) =>
+  track.sourceId === 'listenbrainz' || track.id.startsWith('listenbrainz:');
+
+const isMetadataDiscoveryTrack = (track: Track) =>
+  isLastFmTrack(track) || isListenBrainzTrack(track);
+
+const isYouTubeTrack = (track: Track) =>
+  track.sourceId === 'youtube_music'
+    || track.sourceId === 'youtube_video'
+    || (!track.sourceId && !isSoundCloudTrack(track) && !isMetadataDiscoveryTrack(track));
+
 const soundCloudTrackId = (track: Track) =>
   track.id.startsWith('soundcloud:') ? track.id.slice('soundcloud:'.length) : track.id;
 
 const trackSourceLabel = (track: Track) =>
   isSoundCloudTrack(track)
     ? 'SoundCloud'
-    : track.sourceId === 'youtube_video'
-      ? 'YouTube Video'
-      : 'YouTube Music';
+    : isLastFmTrack(track)
+      ? 'Last.fm'
+      : isListenBrainzTrack(track)
+        ? 'ListenBrainz'
+        : track.sourceId === 'youtube_video'
+          ? 'YouTube Video'
+          : 'YouTube Music';
 
 const isSearchProvider = (value: string | null): value is SearchProvider =>
-  value === 'hybrid' || value === 'youtube_music' || value === 'youtube_videos' || value === 'soundcloud';
+  value === 'hybrid'
+    || value === 'youtube_music'
+    || value === 'youtube_videos'
+    || value === 'soundcloud'
+    || value === 'lastfm'
+    || value === 'listenbrainz';
+
+const isAccentTheme = (value: string | null): value is AccentTheme =>
+  value === 'pink' || value === 'blue' || value === 'orange' || value === 'green' || value === 'gold';
+
+const isVisualSurface = (value: string | null): value is VisualSurface =>
+  value === 'midnight' || value === 'glass' || value === 'solid' || value === 'aurora';
+
+const isArtworkShape = (value: string | null): value is ArtworkShape =>
+  value === 'rounded' || value === 'soft' || value === 'circle';
+
+const isMotionLevel = (value: string | null): value is MotionLevel =>
+  value === 'full' || value === 'calm' || value === 'off';
+
+const isInterfaceScale = (value: string | null): value is InterfaceScale =>
+  value === 'compact' || value === 'comfortable' || value === 'spacious';
 
 const canShowVideoForTrack = (track: Track) =>
-  track.id !== 'placeholder' && !isSoundCloudTrack(track);
+  track.id !== 'placeholder' && isYouTubeTrack(track);
 
 const playableSearchTracks = (tracks: Track[]) =>
   tracks.filter((track) => !track.previewOnly);
+
+const lyricsMetadataQuery = (track: Track) => {
+  const params = new URLSearchParams();
+  if (track.title) params.set('title', track.title);
+
+  const artist = track.artists?.map((entry) => entry.name).filter(Boolean).join(', ');
+  if (artist) params.set('artist', artist);
+
+  if (track.durationMs && Number.isFinite(track.durationMs)) {
+    params.set('durationMs', String(Math.round(track.durationMs)));
+  }
+
+  const query = params.toString();
+  return query ? `?${query}` : '';
+};
 
 const dedupeTracks = (tracks: Track[]) => {
   const seen = new Set<string>();
@@ -618,7 +703,11 @@ export default function SpiceApp() {
   const [selectedPlaylist, setSelectedPlaylist] = useState<Playlist | null>(null);
 
   // Settings Configuration states
-  const [accentTheme, setAccentTheme] = useState<'pink' | 'blue' | 'orange' | 'green' | 'gold'>('pink');
+  const [accentTheme, setAccentTheme] = useState<AccentTheme>('pink');
+  const [visualSurface, setVisualSurface] = useState<VisualSurface>('midnight');
+  const [artworkShape, setArtworkShape] = useState<ArtworkShape>('rounded');
+  const [motionLevel, setMotionLevel] = useState<MotionLevel>('full');
+  const [interfaceScale, setInterfaceScale] = useState<InterfaceScale>('comfortable');
   const [audioQuality, setAudioQuality] = useState<'standard' | 'high' | 'low'>('standard');
   const [streamProtocol, setStreamProtocol] = useState<'proxy' | 'web' | 'embed'>('proxy');
   const [showQueueDrawer, setShowQueueDrawer] = useState(false);
@@ -972,7 +1061,19 @@ export default function SpiceApp() {
     setIsMounted(true);
     if (typeof window !== 'undefined') {
       const savedTheme = localStorage.getItem('spice_accent_theme');
-      if (savedTheme) setAccentTheme(savedTheme as any);
+      if (isAccentTheme(savedTheme)) setAccentTheme(savedTheme);
+
+      const savedSurface = localStorage.getItem('spice_visual_surface');
+      if (isVisualSurface(savedSurface)) setVisualSurface(savedSurface);
+
+      const savedArtworkShape = localStorage.getItem('spice_artwork_shape');
+      if (isArtworkShape(savedArtworkShape)) setArtworkShape(savedArtworkShape);
+
+      const savedMotionLevel = localStorage.getItem('spice_motion_level');
+      if (isMotionLevel(savedMotionLevel)) setMotionLevel(savedMotionLevel);
+
+      const savedInterfaceScale = localStorage.getItem('spice_interface_scale');
+      if (isInterfaceScale(savedInterfaceScale)) setInterfaceScale(savedInterfaceScale);
 
       const savedQuality = localStorage.getItem('spice_audio_quality');
       if (savedQuality) setAudioQuality(savedQuality as any);
@@ -1188,7 +1289,7 @@ export default function SpiceApp() {
   // Track progress updates for Embed mode via standard interval
   useEffect(() => {
     let interval: NodeJS.Timeout;
-    if (isPlaying && streamProtocol === 'embed' && !isSoundCloudTrack(currentTrack) && ytPlayerRef.current && typeof ytPlayerRef.current.getCurrentTime === 'function') {
+    if (isPlaying && streamProtocol === 'embed' && isYouTubeTrack(currentTrack) && ytPlayerRef.current && typeof ytPlayerRef.current.getCurrentTime === 'function') {
       interval = setInterval(() => {
         try {
           const currentTime = ytPlayerRef.current.getCurrentTime();
@@ -1205,7 +1306,7 @@ export default function SpiceApp() {
 
   // Sync volume with Embed Player
   useEffect(() => {
-    if (streamProtocol === 'embed' && !isSoundCloudTrack(currentTrack) && ytPlayerRef.current && typeof ytPlayerRef.current.setVolume === 'function') {
+    if (streamProtocol === 'embed' && isYouTubeTrack(currentTrack) && ytPlayerRef.current && typeof ytPlayerRef.current.setVolume === 'function') {
       ytPlayerRef.current.setVolume(volume);
     }
   }, [currentTrack.id, volume, streamProtocol]);
@@ -1696,7 +1797,7 @@ export default function SpiceApp() {
     logDebug('player', `Audio track ended. repeatMode: ${currentRepeatMode}, protocol: ${currentStreamProtocol}`);
 
     if (currentRepeatMode === 'one') {
-      if (currentStreamProtocol === 'embed' && !isSoundCloudTrack(currentTrack) && ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
+      if (currentStreamProtocol === 'embed' && isYouTubeTrack(currentTrack) && ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
         logDebug('player', 'Repeat mode is ONE. Seeking to 0 in YouTube embed...');
         ytPlayerRef.current.seekTo(0, true);
         ytPlayerRef.current.playVideo();
@@ -1713,7 +1814,7 @@ export default function SpiceApp() {
       logDebug('player', 'Queue ended and repeatMode is NONE. Stopping playback.');
       setIsPlaying(false);
       setProgress(0);
-      if (currentStreamProtocol === 'embed' && !isSoundCloudTrack(currentTrack) && ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
+      if (currentStreamProtocol === 'embed' && isYouTubeTrack(currentTrack) && ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
         ytPlayerRef.current.seekTo(0, true);
         ytPlayerRef.current.pauseVideo();
       } else if (audioRef.current) {
@@ -1798,9 +1899,10 @@ export default function SpiceApp() {
 
     const fetchLyrics = async () => {
       try {
+        const metadataQuery = lyricsMetadataQuery(currentTrack);
         const fetchUrl = isSoundCloudTrack(currentTrack)
-          ? `/api/sc/lyrics/${encodeURIComponent(soundCloudTrackId(currentTrack))}`
-          : `/api/yt/lyrics/${encodeURIComponent(currentTrack.id)}`;
+          ? `/api/sc/lyrics/${encodeURIComponent(soundCloudTrackId(currentTrack))}${metadataQuery}`
+          : `/api/yt/lyrics/${encodeURIComponent(currentTrack.id)}${metadataQuery}`;
         logDebug('lyrics', `Fetching lyrics from API endpoint: ${fetchUrl}`);
         const res = await fetch(fetchUrl);
         if (!res.ok) {
@@ -1852,7 +1954,7 @@ export default function SpiceApp() {
     return () => {
       active = false;
     };
-  }, [currentTrack.id, currentTrack.durationMs]);
+  }, [currentTrack.id, currentTrack.title, currentTrack.artists, currentTrack.durationMs]);
 
   const openVideoPlayer = () => {
     if (!canShowVideoForTrack(currentTrack)) return;
@@ -1888,6 +1990,29 @@ export default function SpiceApp() {
     }
   };
 
+  const resolveDiscoveryTrackToPlayable = async (track: Track) => {
+    const artist = track.artists.map((entry) => entry.name).filter(Boolean).join(' ');
+    const query = [track.title, artist].filter(Boolean).join(' ');
+    const fetchPlayableMatch = async (kind: 'tracks' | 'videos') => {
+      const params = new URLSearchParams({
+        q: query,
+        limit: '1',
+        kind,
+      });
+      const response = await fetch(`/api/yt/search?${params.toString()}`);
+      if (!response.ok) return null;
+      const data = await response.json();
+      const [match] = (data.tracks ?? []).map(enrichTrackSnapshot) as Track[];
+      return match ?? null;
+    };
+
+    const match = await fetchPlayableMatch('tracks') ?? await fetchPlayableMatch('videos');
+    if (!match) {
+      throw new Error(`No playable YouTube match found for ${trackSourceLabel(track)} result "${track.title}".`);
+    }
+    return match;
+  };
+
   // Play a track
   const playTrack = async (track: Track, newQueue?: Track[], startSearchIndex?: number) => {
     if (errorSkipTimeoutRef.current) {
@@ -1898,6 +2023,28 @@ export default function SpiceApp() {
     if (!track || track.id === 'placeholder') {
       setIsLoadingStream(false);
       logDebug('player', 'Ready to stream. Select any track from the lists to begin playback.');
+      return;
+    }
+
+    if (isMetadataDiscoveryTrack(track)) {
+      setError(undefined);
+      setIsPlaying(false);
+      setStreamUrl(null);
+      setShowVideoPlayer(false);
+      setIsLoadingStream(true);
+      logDebug('player', `Resolving ${trackSourceLabel(track)} metadata result "${track.title}" through YouTube Music for playback.`);
+
+      try {
+        const playableTrack = await resolveDiscoveryTrackToPlayable(track);
+        const playableQueue = newQueue?.map((entry) => entry.id === track.id ? playableTrack : entry);
+        logDebug('player', `Matched ${trackSourceLabel(track)} result to playable YouTube item "${playableTrack.title}".`);
+        await playTrack(playableTrack, playableQueue, startSearchIndex);
+      } catch (err: any) {
+        console.error(err);
+        logDebug('error', `Metadata provider playback resolution failed: ${err.message || err}`);
+        setError('Could not find a playable match for this metadata result.');
+        setIsLoadingStream(false);
+      }
       return;
     }
 
@@ -1934,9 +2081,10 @@ export default function SpiceApp() {
 
     try {
       const isSoundCloud = isSoundCloudTrack(track);
+      const isYouTube = isYouTubeTrack(track);
       logDebug('player', `Initiating ${trackSourceLabel(track)} format resolution for track "${track.title}" (ID: ${track.id})`);
       
-      if ((streamProtocol === 'embed' || showVideoPlayer) && !isSoundCloud) {
+      if ((streamProtocol === 'embed' || showVideoPlayer) && isYouTube) {
         logDebug('stream', `YouTube Embedded Player active. Loading iframe player for track ID: ${track.id}`);
         setStreamProtocol('embed');
         setStreamUrl('youtube-embed-active');
@@ -1998,7 +2146,7 @@ export default function SpiceApp() {
       console.error(err);
       logDebug('error', `Track streaming failed: ${err.message || err}`);
       
-      if (!isSoundCloudTrack(track) && streamProtocol !== 'embed') {
+      if (isYouTubeTrack(track) && streamProtocol !== 'embed') {
         logDebug('diagnostics', `Direct stream resolution failed. Initiating self-healing fallback to YouTube Embedded Player...`);
         setStreamProtocol('embed');
         localStorage.setItem('spice_stream_protocol', 'embed');
@@ -2045,7 +2193,7 @@ export default function SpiceApp() {
       playTrack(currentTrack);
       return;
     }
-    if (streamProtocol === 'embed' && !isSoundCloudTrack(currentTrack) && ytPlayerRef.current) {
+    if (streamProtocol === 'embed' && isYouTubeTrack(currentTrack) && ytPlayerRef.current) {
       if (isPlaying) {
         ytPlayerRef.current.pauseVideo();
         setIsPlaying(false);
@@ -2109,7 +2257,7 @@ export default function SpiceApp() {
     const newProgress = percentage * duration;
 
     setProgress(newProgress);
-    if (streamProtocol === 'embed' && !isSoundCloudTrack(currentTrack) && ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
+    if (streamProtocol === 'embed' && isYouTubeTrack(currentTrack) && ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
       ytPlayerRef.current.seekTo(newProgress, true);
     }
     if (audioRef.current) {
@@ -2118,12 +2266,12 @@ export default function SpiceApp() {
   };
 
   const handlePrev = (overrideIndex?: any) => {
-    const progressTime = streamProtocolRef.current === 'embed' && !isSoundCloudTrack(currentTrack) && ytPlayerRef.current && typeof ytPlayerRef.current.getCurrentTime === 'function'
+    const progressTime = streamProtocolRef.current === 'embed' && isYouTubeTrack(currentTrack) && ytPlayerRef.current && typeof ytPlayerRef.current.getCurrentTime === 'function'
       ? ytPlayerRef.current.getCurrentTime()
       : progress;
 
     if (progressTime > 3) {
-      if (streamProtocolRef.current === 'embed' && !isSoundCloudTrack(currentTrack) && ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
+      if (streamProtocolRef.current === 'embed' && isYouTubeTrack(currentTrack) && ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
         ytPlayerRef.current.seekTo(0, true);
         setProgress(0);
         setIsPlaying(true);
@@ -2226,7 +2374,7 @@ export default function SpiceApp() {
 
   const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
     if (duration === 0) return;
-    if (streamProtocol === 'embed' && !isSoundCloudTrack(currentTrack) && ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
+    if (streamProtocol === 'embed' && isYouTubeTrack(currentTrack) && ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
       const rect = e.currentTarget.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const pct = x / rect.width;
@@ -2250,9 +2398,15 @@ export default function SpiceApp() {
         q: query,
         limit: String(limit),
       });
-      const endpoint = targetProvider === 'soundcloud' ? '/api/sc/search' : '/api/yt/search';
+      const endpoint = {
+        youtube_music: '/api/yt/search',
+        youtube_videos: '/api/yt/search',
+        soundcloud: '/api/sc/search',
+        lastfm: '/api/lastfm/search',
+        listenbrainz: '/api/listenbrainz/search',
+      }[targetProvider];
 
-      if (targetProvider !== 'soundcloud') {
+      if (targetProvider === 'youtube_music' || targetProvider === 'youtube_videos') {
         params.set('kind', targetProvider === 'youtube_videos' ? 'videos' : 'tracks');
       }
 
@@ -2267,10 +2421,12 @@ export default function SpiceApp() {
         fetchProvider('youtube_music', 8),
         fetchProvider('youtube_videos', 8),
         fetchProvider('soundcloud', 8),
+        fetchProvider('lastfm', 6),
+        fetchProvider('listenbrainz', 6),
       ]);
       return dedupeTracks(
         batches.flatMap((batch) => batch.status === 'fulfilled' ? batch.value : []),
-      ).slice(0, 24);
+      ).slice(0, 30);
     }
 
     return fetchProvider(provider, 20);
@@ -2306,8 +2462,12 @@ export default function SpiceApp() {
         rememberSearchResults(query, tracks, provider);
         setSearchResults(tracks);
         setSearchResultsSource('network');
+        setError(undefined);
       } catch (err: any) {
         console.error(err);
+        if (requestId === searchRequestRef.current) {
+          setError(`${SEARCH_PROVIDER_LABELS[provider]} search failed: ${err.message || err}`);
+        }
       } finally {
         if (requestId === searchRequestRef.current) {
           setIsSearching(false);
@@ -2744,6 +2904,10 @@ export default function SpiceApp() {
             --accent-pink: #3b82f6 !important;
             --accent-pink-rgb: 59, 130, 246 !important;
             --accent-purple: #06b6d4 !important;
+            --accent-violet: #3b82f6 !important;
+            --accent-cyan: #06b6d4 !important;
+            --accent-gradient: linear-gradient(135deg, #06b6d4, #3b82f6) !important;
+            --text-accent: #93c5fd !important;
           }
         `;
         break;
@@ -2753,6 +2917,10 @@ export default function SpiceApp() {
             --accent-pink: #f97316 !important;
             --accent-pink-rgb: 249, 115, 22 !important;
             --accent-purple: #ef4444 !important;
+            --accent-violet: #f97316 !important;
+            --accent-cyan: #ef4444 !important;
+            --accent-gradient: linear-gradient(135deg, #f97316, #ef4444) !important;
+            --text-accent: #fdba74 !important;
           }
         `;
         break;
@@ -2762,6 +2930,10 @@ export default function SpiceApp() {
             --accent-pink: #10b981 !important;
             --accent-pink-rgb: 16, 185, 129 !important;
             --accent-purple: #059669 !important;
+            --accent-violet: #10b981 !important;
+            --accent-cyan: #059669 !important;
+            --accent-gradient: linear-gradient(135deg, #10b981, #059669) !important;
+            --text-accent: #6ee7b7 !important;
           }
         `;
         break;
@@ -2771,6 +2943,10 @@ export default function SpiceApp() {
             --accent-pink: #f59e0b !important;
             --accent-pink-rgb: 245, 158, 11 !important;
             --accent-purple: #d97706 !important;
+            --accent-violet: #f59e0b !important;
+            --accent-cyan: #d97706 !important;
+            --accent-gradient: linear-gradient(135deg, #f59e0b, #d97706) !important;
+            --text-accent: #fcd34d !important;
           }
         `;
         break;
@@ -2780,10 +2956,127 @@ export default function SpiceApp() {
             --accent-pink: #ec4899 !important;
             --accent-pink-rgb: 236, 72, 153 !important;
             --accent-purple: #a855f7 !important;
+            --accent-violet: #a855f7 !important;
+            --accent-cyan: #ec4899 !important;
+            --accent-gradient: linear-gradient(135deg, #a855f7, #ec4899) !important;
+            --text-accent: #f9a8d4 !important;
           }
         `;
         break;
     }
+
+    const surfaceCssByMode: Record<VisualSurface, string> = {
+      midnight: `
+        --body-bg: #000000;
+        --card-bg: rgba(10, 10, 10, 0.92);
+        --border-color: rgba(255, 255, 255, 0.08);
+        --bg-primary: #000000;
+        --bg-surface: #0a0a0a;
+        --bg-surface-hover: #151515;
+        --bg-glass: rgba(8, 8, 10, 0.9);
+        --spice-app-background: #000000;
+        --spice-panel-filter: blur(20px);
+      `,
+      glass: `
+        --body-bg: #050507;
+        --card-bg: rgba(17, 17, 24, 0.68);
+        --border-color: rgba(255, 255, 255, 0.12);
+        --bg-primary: #050507;
+        --bg-surface: rgba(14, 14, 18, 0.78);
+        --bg-surface-hover: rgba(34, 34, 42, 0.82);
+        --bg-glass: rgba(12, 12, 18, 0.72);
+        --spice-app-background: radial-gradient(circle at 12% 8%, rgba(var(--accent-pink-rgb), 0.16), transparent 32%), #050507;
+        --spice-panel-filter: blur(24px);
+      `,
+      solid: `
+        --body-bg: #050505;
+        --card-bg: #111113;
+        --border-color: rgba(255, 255, 255, 0.1);
+        --bg-primary: #050505;
+        --bg-surface: #111113;
+        --bg-surface-hover: #1b1b1f;
+        --bg-glass: #0d0d10;
+        --spice-app-background: #050505;
+        --spice-panel-filter: none;
+      `,
+      aurora: `
+        --body-bg: #030305;
+        --card-bg: rgba(14, 12, 22, 0.78);
+        --border-color: rgba(var(--accent-pink-rgb), 0.16);
+        --bg-primary: #030305;
+        --bg-surface: rgba(12, 10, 18, 0.9);
+        --bg-surface-hover: rgba(35, 26, 48, 0.9);
+        --bg-glass: rgba(9, 8, 16, 0.78);
+        --spice-app-background: radial-gradient(circle at 16% 10%, rgba(var(--accent-pink-rgb), 0.22), transparent 28%), radial-gradient(circle at 86% 20%, rgba(168, 85, 247, 0.16), transparent 34%), #030305;
+        --spice-panel-filter: blur(24px);
+      `,
+    };
+    const artRadiusByShape: Record<ArtworkShape, string> = {
+      rounded: '10px',
+      soft: '18px',
+      circle: '9999px',
+    };
+    const scaleCssByMode: Record<InterfaceScale, string> = {
+      compact: '--sidebar-width: 240px; --now-playing-height: 78px; --spice-content-x: 32px; --spice-content-y: 24px;',
+      comfortable: '--sidebar-width: 260px; --now-playing-height: 88px; --spice-content-x: 48px; --spice-content-y: 32px;',
+      spacious: '--sidebar-width: 290px; --now-playing-height: 104px; --spice-content-x: 64px; --spice-content-y: 44px;',
+    };
+    const motionCssByLevel: Record<MotionLevel, string> = {
+      full: '',
+      calm: `
+        .vinyl-spin { animation-duration: 34s !important; }
+        .now-playing__waveform-bar { animation-duration: 1.35s !important; }
+        .animate-in { animation-duration: 0.18s !important; }
+      `,
+      off: `
+        html { scroll-behavior: auto !important; }
+        *, *::before, *::after {
+          animation-duration: 0.001ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.001ms !important;
+          scroll-behavior: auto !important;
+        }
+        .vinyl-spin,
+        .now-playing__waveform-bar,
+        .animate-in,
+        .animate-spin {
+          animation: none !important;
+        }
+      `,
+    };
+
+    base += `
+      :root {
+        ${surfaceCssByMode[visualSurface]}
+        ${scaleCssByMode[interfaceScale]}
+        --spice-art-radius: ${artRadiusByShape[artworkShape]};
+      }
+      .app {
+        background: var(--spice-app-background) !important;
+      }
+      .main__content {
+        padding: var(--spice-content-y) var(--spice-content-x) calc(var(--space-4xl) + 40px) !important;
+      }
+      .sidebar,
+      .now-playing,
+      .queue-drawer,
+      .lyrics-drawer,
+      .mini-player,
+      .expanded-player {
+        backdrop-filter: var(--spice-panel-filter) !important;
+        -webkit-backdrop-filter: var(--spice-panel-filter) !important;
+      }
+      .card__art-wrapper,
+      .card__art,
+      .quick-card__art,
+      .library-item__art,
+      .now-playing__art,
+      .expanded-player__art-box,
+      .mini-player img {
+        border-radius: var(--spice-art-radius) !important;
+      }
+      ${motionCssByLevel[motionLevel]}
+    `;
 
     if (playerPlacement === 'top') {
       base += `
@@ -3358,6 +3651,8 @@ export default function SpiceApp() {
                         <option value="youtube_music">YouTube Music</option>
                         <option value="youtube_videos">YouTube Videos</option>
                         <option value="soundcloud">SoundCloud</option>
+                        <option value="lastfm">Last.fm</option>
+                        <option value="listenbrainz">ListenBrainz</option>
                       </select>
                     </div>
                   </div>
@@ -4120,6 +4415,104 @@ export default function SpiceApp() {
                     </div>
                   </div>
 
+                  {/* Visual Customization */}
+                  <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
+                    <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.palette} Visual Customization</h3>
+                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0 0 20px 0', lineHeight: 1.4 }}>
+                      Tune the app surface, cover shape, motion level, and layout density. These preferences save locally and apply instantly.
+                    </p>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.25fr) minmax(220px, 0.75fr)', gap: '20px', alignItems: 'stretch' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '16px' }}>
+                        <div>
+                          <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>Surface Style</label>
+                          <select
+                            value={visualSurface}
+                            onChange={(e) => {
+                              if (!isVisualSurface(e.target.value)) return;
+                              setVisualSurface(e.target.value);
+                              localStorage.setItem('spice_visual_surface', e.target.value);
+                            }}
+                            style={{ width: '100%', padding: '10px 14px', background: '#0a0a0a', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', outline: 'none', cursor: 'pointer' }}
+                          >
+                            {(Object.entries(VISUAL_SURFACE_LABELS) as [VisualSurface, string][]).map(([id, label]) => (
+                              <option key={id} value={id}>{label}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div>
+                          <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>Artwork Shape</label>
+                          <select
+                            value={artworkShape}
+                            onChange={(e) => {
+                              if (!isArtworkShape(e.target.value)) return;
+                              setArtworkShape(e.target.value);
+                              localStorage.setItem('spice_artwork_shape', e.target.value);
+                            }}
+                            style={{ width: '100%', padding: '10px 14px', background: '#0a0a0a', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', outline: 'none', cursor: 'pointer' }}
+                          >
+                            {(Object.entries(ARTWORK_SHAPE_LABELS) as [ArtworkShape, string][]).map(([id, label]) => (
+                              <option key={id} value={id}>{label}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div>
+                          <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>Motion Level</label>
+                          <select
+                            value={motionLevel}
+                            onChange={(e) => {
+                              if (!isMotionLevel(e.target.value)) return;
+                              setMotionLevel(e.target.value);
+                              localStorage.setItem('spice_motion_level', e.target.value);
+                            }}
+                            style={{ width: '100%', padding: '10px 14px', background: '#0a0a0a', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', outline: 'none', cursor: 'pointer' }}
+                          >
+                            {(Object.entries(MOTION_LEVEL_LABELS) as [MotionLevel, string][]).map(([id, label]) => (
+                              <option key={id} value={id}>{label}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div>
+                          <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>Interface Density</label>
+                          <select
+                            value={interfaceScale}
+                            onChange={(e) => {
+                              if (!isInterfaceScale(e.target.value)) return;
+                              setInterfaceScale(e.target.value);
+                              localStorage.setItem('spice_interface_scale', e.target.value);
+                            }}
+                            style={{ width: '100%', padding: '10px 14px', background: '#0a0a0a', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', outline: 'none', cursor: 'pointer' }}
+                          >
+                            {(Object.entries(INTERFACE_SCALE_LABELS) as [InterfaceScale, string][]).map(([id, label]) => (
+                              <option key={id} value={id}>{label}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      <div style={{ border: '1px solid var(--border-color)', borderRadius: '14px', padding: '16px', background: 'linear-gradient(135deg, rgba(var(--accent-pink-rgb), 0.12), rgba(255,255,255,0.03))', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: '178px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+                          <div style={{ width: '52px', height: '52px', borderRadius: 'var(--spice-art-radius)', background: 'var(--accent-gradient)', boxShadow: '0 10px 28px rgba(var(--accent-pink-rgb), 0.28)' }} />
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ color: '#fff', fontWeight: 800, fontSize: '0.95rem' }}>Live Preview</div>
+                            <div style={{ color: 'var(--text-secondary)', fontSize: '0.78rem' }}>{VISUAL_SURFACE_LABELS[visualSurface]} / {INTERFACE_SCALE_LABELS[interfaceScale]}</div>
+                          </div>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
+                          {[0.35, 0.6, 0.9].map((opacity, i) => (
+                            <div key={i} style={{ height: i === 1 ? '34px' : '24px', borderRadius: '8px', background: `rgba(var(--accent-pink-rgb), ${opacity})`, alignSelf: 'end' }} />
+                          ))}
+                        </div>
+                        <div style={{ marginTop: '14px', fontSize: '0.74rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                          Motion: {MOTION_LEVEL_LABELS[motionLevel]} · Covers: {ARTWORK_SHAPE_LABELS[artworkShape]}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
                   {/* Audio Settings */}
                   <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
                     <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.headphones} Audio & Streaming Preferences</h3>
@@ -4247,7 +4640,7 @@ export default function SpiceApp() {
                         {Icons.tool} System Diagnostics & Live Terminal
                       </h3>
                       <span style={{ fontSize: '0.75rem', background: 'rgba(255,255,255,0.04)', color: 'var(--text-secondary)', padding: '4px 10px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.06)' }}>
-                        Spice Media Core v1.0.14 (Phase 10 Hybrid Video Search)
+                        Spice Media Core v1.0.16 (Phase 12 Metadata Discovery Providers)
                       </span>
                     </div>
 
@@ -4764,7 +5157,7 @@ export default function SpiceApp() {
                     onClick={() => {
                       if (!lyricsData.isSynced) return;
                       setProgress(line.time);
-                      if (streamProtocol === 'embed' && !isSoundCloudTrack(currentTrack) && ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
+                      if (streamProtocol === 'embed' && isYouTubeTrack(currentTrack) && ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
                         ytPlayerRef.current.seekTo(line.time, true);
                       }
                       if (audioRef.current) {
@@ -5389,7 +5782,7 @@ export default function SpiceApp() {
                               onClick={() => {
                                 if (!lyricsData.isSynced) return;
                                 setProgress(line.time);
-                                if (streamProtocol === 'embed' && !isSoundCloudTrack(currentTrack) && ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
+                                if (streamProtocol === 'embed' && isYouTubeTrack(currentTrack) && ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
                                   ytPlayerRef.current.seekTo(line.time, true);
                                 }
                                 if (audioRef.current) {
@@ -5472,7 +5865,7 @@ export default function SpiceApp() {
           <div style={{ opacity: 0.3, fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
             <span>Spice Premium Audio Resolution Engine</span>
             <span>•</span>
-            <span>PWA v1.0.14</span>
+            <span>PWA v1.0.16</span>
           </div>
 
         </div>

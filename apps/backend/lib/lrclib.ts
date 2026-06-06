@@ -32,9 +32,6 @@ const MISSING_LYRICS_CACHE_TTL_MS = 10 * 60 * 1000;
 const LYRICS_REQUEST_TIMEOUT_MS = 9000;
 
 export async function resolveLyrics(input: ResolveLyricsInput): Promise<LyricsPayload> {
-  const cached = getCachedLyrics(input.trackId);
-  if (cached) return cached;
-
   const durationMs = input.durationMs || 180000;
   const durationSec = Math.round(durationMs / 1000);
   const searchTerms = deriveLyricsSearchTerms(
@@ -44,6 +41,10 @@ export async function resolveLyrics(input: ResolveLyricsInput): Promise<LyricsPa
   );
   const title = searchTerms.title;
   const artist = searchTerms.artist;
+  const cacheKey = lyricsCacheKey(input.trackId, title, artist, durationSec);
+  const cached = getCachedLyrics(cacheKey);
+  if (cached) return cached;
+
   let plainLyrics = '';
   let syncedLyrics = '';
 
@@ -67,11 +68,20 @@ export async function resolveLyrics(input: ResolveLyricsInput): Promise<LyricsPa
     syncedLyrics,
     isSynced: !!syncedLyrics,
   };
-  lyricsCache.set(input.trackId, {
+  lyricsCache.set(cacheKey, {
     expiresAt: Date.now() + (plainLyrics || syncedLyrics ? LYRICS_CACHE_TTL_MS : MISSING_LYRICS_CACHE_TTL_MS),
     payload,
   });
   return payload;
+}
+
+function lyricsCacheKey(trackId: string, title: string, artist: string, durationSec: number) {
+  return [
+    trackId,
+    normalizeMatchText(title) || 'untitled',
+    normalizeMatchText(artist) || 'unknown-artist',
+    durationSec,
+  ].join('::');
 }
 
 async function getDirectLyrics(
@@ -151,7 +161,7 @@ function looksLikeVideoChannelArtist(artist: string) {
 }
 
 function deriveLyricsSearchTerms(title: string, artist: string, originalArtist: string) {
-  const splitTitle = title.match(/^(.{2,80}?)\s+[-–—]\s+(.{2,160})$/);
+  const splitTitle = title.match(/^(.{2,80}?)\s+[-\u2013\u2014]\s+(.{2,160})$/);
   if (!splitTitle) return { title, artist };
 
   const candidateArtist = cleanArtistName(splitTitle[1]);

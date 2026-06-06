@@ -20,6 +20,8 @@ export interface TrackSnapshot {
   durationMs?: number;
   artworkUrl?: string;
   sourceId?: string;
+  permalinkUrl?: string;
+  previewOnly?: boolean;
 }
 
 export interface SearchCacheEntry {
@@ -112,6 +114,8 @@ export function mergeTrackSnapshots(
     durationMs: preferred.durationMs ?? fallback.durationMs,
     artworkUrl: preferred.artworkUrl ?? fallback.artworkUrl,
     sourceId: preferred.sourceId ?? fallback.sourceId,
+    permalinkUrl: preferred.permalinkUrl ?? fallback.permalinkUrl,
+    previewOnly: preferred.previewOnly ?? fallback.previewOnly,
   };
 }
 

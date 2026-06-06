@@ -11,27 +11,36 @@ export function OPTIONS() {
 }
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
 
   try {
-    let title = '';
-    let artist = '';
-    let durationMs = 180000;
+    const titleOverride = request.nextUrl.searchParams.get('title')?.trim() ?? '';
+    const artistOverride = request.nextUrl.searchParams.get('artist')?.trim() ?? '';
+    const parsedDurationMs = Number(request.nextUrl.searchParams.get('durationMs') ?? '');
+    const durationOverrideMs = Number.isFinite(parsedDurationMs) && parsedDurationMs > 0
+      ? Math.round(parsedDurationMs)
+      : 0;
 
-    try {
-      const yt = await getYouTube();
-      const info = await yt.getBasicInfo(id);
-      title = info.basic_info.title || '';
-      artist = info.basic_info.author || '';
-      durationMs = info.basic_info.duration ? info.basic_info.duration * 1000 : 180000;
-    } catch {
-      const details = await getTrackDetails(id);
-      title = details.track.title;
-      artist = details.track.artists?.[0]?.name || '';
-      durationMs = details.track.durationMs || 180000;
+    let title = titleOverride;
+    let artist = artistOverride;
+    let durationMs = durationOverrideMs || 180000;
+
+    if (!title || !artist || !durationOverrideMs) {
+      try {
+        const yt = await getYouTube();
+        const info = await yt.getBasicInfo(id);
+        title = title || info.basic_info.title || '';
+        artist = artist || info.basic_info.author || '';
+        durationMs = durationOverrideMs || (info.basic_info.duration ? info.basic_info.duration * 1000 : 180000);
+      } catch {
+        const details = await getTrackDetails(id);
+        title = title || details.track.title;
+        artist = artist || details.track.artists?.[0]?.name || '';
+        durationMs = durationOverrideMs || details.track.durationMs || 180000;
+      }
     }
 
     return jsonResponse(await resolveLyrics({
