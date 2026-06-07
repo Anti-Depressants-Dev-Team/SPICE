@@ -1,5 +1,11 @@
 # SPICE Walkthrough
 
+## v1.0.19
+
+- Add `/api/lastfm/callback` so Last.fm's configured callback URL resolves locally, captures returned auth tokens into browser storage, and sends the user back to SPICE.
+- Document the local Last.fm callback URL in Settings next to the API key/shared secret fields.
+- Configure the local ignored backend `.env` with the provided Last.fm API credentials; the secret is not committed.
+
 ## v1.0.18
 
 - Add Last.fm API key and shared-secret controls to Settings, with local storage for private/local installs and backend environment variables still available as fallback.
