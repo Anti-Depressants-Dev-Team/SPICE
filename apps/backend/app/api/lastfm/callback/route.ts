@@ -1,40 +1,97 @@
 import type { NextRequest } from 'next/server';
 
+import { createLastFmSession } from '@/lib/lastfm';
+
 export const runtime = 'nodejs';
 
 export async function GET(request: NextRequest) {
   const token = request.nextUrl.searchParams.get('token')?.trim() || '';
-  const html = token ? tokenCaptureHtml(token) : callbackInfoHtml(request.nextUrl.origin);
+  const result = token
+    ? await completeLastFmLink(token, request.nextUrl.origin)
+    : { html: callbackInfoHtml(request.nextUrl.origin), status: 200 };
 
-  return new Response(html, {
+  return new Response(result.html, {
+    status: result.status,
     headers: {
       'Content-Type': 'text/html; charset=utf-8',
     },
   });
 }
 
+async function completeLastFmLink(token: string, origin: string) {
+  try {
+    const session = await createLastFmSession({ token });
+    const linkedUser = session.name?.trim() || 'Last.fm account';
+    return {
+      html: linkedHtml({
+        sessionKey: session.sessionKey,
+        linkedUser,
+        origin,
+      }),
+      status: 200,
+    };
+  } catch (error) {
+    return {
+      html: errorHtml(error instanceof Error ? error.message : 'Last.fm session exchange failed.'),
+      status: 502,
+    };
+  }
+}
+
 function callbackInfoHtml(origin: string) {
   return pageHtml(`
     <h1>Last.fm Callback Ready</h1>
-    <p>Use this callback URL in your Last.fm API application settings:</p>
+    <p>SPICE uses this callback URL to finish Last.fm account setup after the popup sign-in:</p>
     <code>${escapeHtml(`${origin}/api/lastfm/callback`)}</code>
-    <p>SPICE primarily uses Last.fm's desktop auth flow, so this page is only a fallback when Last.fm redirects back with a token.</p>
+    <p>Return to Settings and click <strong>Set up Last.fm</strong> to open the Last.fm sign-in popup.</p>
     <a href="/">Return to SPICE</a>
   `);
 }
 
-function tokenCaptureHtml(token: string) {
-  const safeToken = JSON.stringify(token);
+function linkedHtml({
+  sessionKey,
+  linkedUser,
+  origin,
+}: {
+  sessionKey: string;
+  linkedUser: string;
+  origin: string;
+}) {
+  const safeSessionKey = JSON.stringify(sessionKey);
+  const safeLinkedUser = JSON.stringify(linkedUser);
+  const safeOrigin = JSON.stringify(origin);
   return pageHtml(`
-    <h1>Last.fm Token Captured</h1>
-    <p>The authorization token was saved locally. Return to Settings and click <strong>Complete Link</strong>.</p>
+    <h1>Last.fm Linked</h1>
+    <p>Signed in as <strong>${escapeHtml(linkedUser)}</strong>. SPICE saved the session locally and enabled profile sync.</p>
     <script>
-      localStorage.setItem('spice_lastfm_link_token', ${safeToken});
+      const sessionKey = ${safeSessionKey};
+      const linkedUser = ${safeLinkedUser};
+      localStorage.setItem('spice_lastfm_session_key', sessionKey);
+      localStorage.setItem('spice_lastfm_linked_user', linkedUser);
+      localStorage.setItem('spice_profile_sync_enabled', 'true');
+      localStorage.removeItem('spice_lastfm_link_token');
+      if (window.opener && !window.opener.closed) {
+        window.opener.postMessage({
+          type: 'spice:lastfm-linked',
+          sessionKey,
+          name: linkedUser,
+        }, ${safeOrigin});
+      }
       setTimeout(() => {
-        window.location.href = '/';
-      }, 1200);
+        window.close();
+      }, 900);
     </script>
-    <a href="/">Return to SPICE now</a>
+    <p>If this popup does not close automatically, you can close it and return to SPICE.</p>
+    <a href="/">Return to SPICE</a>
+  `);
+}
+
+function errorHtml(message: string) {
+  return pageHtml(`
+    <h1>Last.fm Link Failed</h1>
+    <p>${escapeHtml(message)}</p>
+    <p>Close this popup, confirm the backend Last.fm env credentials are set, then try again from Settings.</p>
+    <a href="/">Return to SPICE</a>
   `);
 }
 

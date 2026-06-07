@@ -1,12 +1,12 @@
 import type { NextRequest } from 'next/server';
 
 import { jsonResponse, optionsResponse } from '@/lib/cors';
-import { createLastFmAuthToken, createLastFmSession } from '@/lib/lastfm';
+import { createLastFmAuthToken, createLastFmSession, createLastFmWebAuthUrl } from '@/lib/lastfm';
 
 export const runtime = 'nodejs';
 
 interface LastFmAuthRequest {
-  action?: 'token' | 'session';
+  action?: 'web_auth' | 'token' | 'session';
   apiKey?: string;
   sharedSecret?: string;
   token?: string;
@@ -25,6 +25,16 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    if (body.action === 'web_auth') {
+      return jsonResponse(createLastFmWebAuthUrl(
+        {
+          apiKey: body.apiKey,
+          sharedSecret: body.sharedSecret,
+        },
+        `${request.nextUrl.origin}/api/lastfm/callback`,
+      ));
+    }
+
     if (body.action === 'token') {
       return jsonResponse(await createLastFmAuthToken({
         apiKey: body.apiKey,

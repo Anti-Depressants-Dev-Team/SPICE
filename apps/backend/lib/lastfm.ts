@@ -92,6 +92,22 @@ export async function createLastFmAuthToken(credentials: LastFmApiCredentials) {
   };
 }
 
+export function createLastFmWebAuthUrl(credentials: LastFmApiCredentials = {}, callbackUrl?: string) {
+  const resolvedCredentials = resolveLastFmCredentials(credentials);
+  const params = new URLSearchParams({
+    api_key: resolvedCredentials.apiKey,
+  });
+  const trimmedCallbackUrl = callbackUrl?.trim();
+  if (trimmedCallbackUrl) {
+    params.set('cb', trimmedCallbackUrl);
+  }
+
+  return {
+    authUrl: `${LASTFM_AUTH_URL}?${params.toString()}`,
+    callbackUrl: trimmedCallbackUrl || undefined,
+  };
+}
+
 export async function createLastFmSession(credentials: LastFmApiCredentials & { token: string }) {
   const token = credentials.token.trim();
   if (!token) {
@@ -193,7 +209,7 @@ function resolveLastFmCredentials(credentials?: LastFmApiCredentials) {
     || process.env.LASTFM_SHARED_SECRET?.trim()
     || process.env.LASTFM_API_SECRET?.trim();
   if (!apiKey || !sharedSecret) {
-    throw new Error('Set Last.fm API key and shared secret in Settings or backend env.');
+    throw new Error('Set Last.fm API key and shared secret in the backend env.');
   }
 
   return { apiKey, sharedSecret };
