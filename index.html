@@ -172,7 +172,7 @@
         var onLoad = props.onLoad;
 
         return html`
-            <div class="flex-1 flex flex-col items-center justify-center text-center px-6 animate-fade-in select-none"
+            <div class="flex-1 relative flex flex-col items-center justify-center text-center px-6 animate-fade-in select-none"
                  style=${{ background: 'radial-gradient(ellipse at 50% 40%, rgba(168,85,247,0.06) 0%, transparent 70%)' }}>
 
                 <!-- Animated Spice Logo -->
@@ -185,8 +185,13 @@
                               WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
                     SPICE
                 </h1>
-                <p class="text-gray-600 text-xs tracking-[0.3em] uppercase mb-16 font-medium">
+                <p class="text-gray-600 text-xs tracking-[0.3em] uppercase mb-5 font-medium">
                     Your music · Elevated
+                </p>
+
+                <p class="text-gray-500 text-sm mb-14">
+                    Ready to <span class="text-purple-400 font-semibold"
+                        style=${{ textShadow: '0 0 16px rgba(168,85,247,0.85)' }}>Spice</span> things up?
                 </p>
 
                 <!-- Service Cards -->
@@ -204,19 +209,6 @@
                         <span class="text-[11px] text-gray-600 mt-1">Ad-free streaming</span>
                     </button>
 
-                    <!-- SoundCloud -->
-                    <button class="group glass rounded-2xl w-[240px] h-[200px] flex flex-col items-center justify-center
-                                   cursor-pointer transition-all duration-300 hover:-translate-y-1.5
-                                   hover:border-purple-500/30 hover:shadow-[0_8px_40px_rgba(168,85,247,0.15)]
-                                   active:scale-95"
-                            onClick=${function() { onLoad('sc'); }}>
-                        <div class="text-purple-500 mb-5 transition-transform duration-300 group-hover:scale-110">
-                            ${icon(IC.cloud, 44)}
-                        </div>
-                        <h2 class="text-base font-semibold tracking-wide">SoundCloud</h2>
-                        <span class="text-[11px] text-gray-600 mt-1">Experimental</span>
-                    </button>
-
                     <!-- Spice Music -->
                     <button class="group glass rounded-2xl w-[240px] h-[200px] flex flex-col items-center justify-center
                                    cursor-pointer transition-all duration-300 hover:-translate-y-1.5
@@ -232,6 +224,25 @@
                         </div>
                         <span class="text-[11px] text-gray-600 mt-1">Wrapped web player</span>
                     </button>
+                </div>
+
+                <!-- Deprecated Services -->
+                <div class="absolute right-6 bottom-6 text-left no-drag">
+                    <label class="block text-[10px] uppercase tracking-[0.22em] text-gray-700 mb-2">
+                        Deprecated
+                    </label>
+                    <select class="bg-white/[0.04] text-gray-400 border border-white/[0.08] rounded-full
+                                   px-3 py-2 text-xs outline-none cursor-pointer hover:text-gray-200
+                                   hover:border-purple-500/30 focus:border-purple-500/40 transition-all"
+                            onChange=${function(e) {
+                                if (e.target.value) {
+                                    onLoad(e.target.value);
+                                    e.target.value = '';
+                                }
+                            }}>
+                        <option value="">Legacy services</option>
+                        <option value="sc">SoundCloud</option>
+                    </select>
                 </div>
             </div>
         `;
