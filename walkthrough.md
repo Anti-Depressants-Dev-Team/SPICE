@@ -1,5 +1,23 @@
 # SPICE Walkthrough
 
+## v1.0.29
+
+- Add backend tests for Last.fm request signing, scrobble timestamp validation, and account-backed Last.fm session fallback.
+- Add Spice Connect tests for device-state normalization, command validation, and resilient remote payload parsing.
+- Extract small profile-listen and Spice Connect helper modules so API route behavior is covered without mocking the full Next.js runtime.
+
+## v1.0.28
+
+- Add a private on-device recommendation profile that scores artists and language hints from local history, likes, and playlists.
+- Populate Home with a personalized recommendation row and Search with suggested picks when the query is empty.
+- Keep recommendation inputs local; only coarse source searches such as artist or language seeds are sent through existing search endpoints.
+
+## v1.0.27
+
+- Rename the account-backed remote-control feature to Spice Connect across Settings, status messages, diagnostics logs, API fallback messages, and public service copy.
+- Keep the internal `/api/remote/*` endpoints and database table names stable while presenting the feature as a branded cross-device control layer.
+- Update default connected-device names and Settings copy so users understand Spice Connect requires the same SPICE account on both devices.
+
 ## v1.0.26
 
 - Polish the phone layout with a compact home greeting card, cleaner content scrolling, tighter carousel cards, and safer bottom spacing.
@@ -15,9 +33,9 @@
 ## v1.0.24
 
 - Improve phone layouts with safer viewport sizing, fixed mobile Library navigation, tighter cards/lists, stacked settings forms, bottom safe-area spacing, and bounded mini/expanded players.
-- Add account-backed remote control tables for signed-in device state and queued playback commands.
+- Add account-backed Spice Connect tables for signed-in device state and queued playback commands.
 - Add `/api/remote/devices` and `/api/remote/commands` so devices on the same SPICE account can discover each other and send play/pause/next/previous/seek/volume commands.
-- Add a Settings remote-control panel for naming this device, enabling/disabling remote access, selecting another account device, and sending transport/volume controls.
+- Add a Settings Spice Connect panel for naming this device, enabling/disabling cross-device access, selecting another account device, and sending transport/volume controls.
 
 ## v1.0.23
 

@@ -3,31 +3,9 @@ import { verifySession } from '@/lib/auth';
 import { db } from '@/db';
 import { remoteDevices } from '@/db/schema';
 import { desc, eq } from 'drizzle-orm';
+import { normalizeSpiceConnectDeviceInput, parseJson, safeJsonStringify } from '@/lib/spice-connect';
 
 export const runtime = 'nodejs';
-
-function safeJsonStringify(value: unknown, fallback: string) {
-  try {
-    return JSON.stringify(value ?? null);
-  } catch {
-    return fallback;
-  }
-}
-
-function parseJson<T>(value: string | null, fallback: T): T {
-  if (!value) return fallback;
-  try {
-    return JSON.parse(value) as T;
-  } catch {
-    return fallback;
-  }
-}
-
-function boundedInteger(value: unknown, fallback: number, min: number, max: number) {
-  const parsed = typeof value === 'number' ? value : Number(value);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(min, Math.min(max, Math.round(parsed)));
-}
 
 export function OPTIONS() {
   return optionsResponse();
@@ -71,7 +49,7 @@ export async function GET(request: Request) {
     return jsonResponse(
       {
         error: 'remote_devices_failed',
-        message: error instanceof Error ? error.message : 'Failed to load remote devices.',
+        message: error instanceof Error ? error.message : 'Failed to load Spice Connect devices.',
       },
       { status: 500 },
     );
@@ -94,49 +72,39 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json().catch(() => ({}));
-    const deviceId = typeof body.deviceId === 'string' ? body.deviceId.slice(0, 120) : '';
-    if (!deviceId) {
+    const input = normalizeSpiceConnectDeviceInput(body);
+    if (!input) {
       return jsonResponse({ error: 'invalid_device', message: 'A deviceId is required.' }, { status: 400 });
     }
 
-    const displayName = typeof body.displayName === 'string' && body.displayName.trim()
-      ? body.displayName.trim().slice(0, 80)
-      : 'SPICE Device';
-    const queue = Array.isArray(body.queue) ? body.queue.slice(0, 80) : [];
-    const currentTrack = body.currentTrack && typeof body.currentTrack === 'object' ? body.currentTrack : null;
-    const queueIndex = boundedInteger(body.queueIndex, 0, 0, Math.max(queue.length - 1, 0));
-    const progressMs = boundedInteger((body.progress ?? 0) * 1000, 0, 0, 24 * 60 * 60 * 1000);
-    const durationMs = boundedInteger((body.duration ?? 0) * 1000, 0, 0, 24 * 60 * 60 * 1000);
-    const volume = boundedInteger(body.volume, 70, 0, 100);
-    const isPlaying = Boolean(body.isPlaying);
     const updatedAt = new Date();
 
     await db
       .insert(remoteDevices)
       .values({
         userId: session.userId,
-        deviceId,
-        displayName,
-        currentTrackJson: safeJsonStringify(currentTrack, 'null'),
-        queueJson: safeJsonStringify(queue, '[]'),
-        queueIndex,
-        isPlaying,
-        progressMs,
-        durationMs,
-        volume,
+        deviceId: input.deviceId,
+        displayName: input.displayName,
+        currentTrackJson: safeJsonStringify(input.currentTrack, 'null'),
+        queueJson: safeJsonStringify(input.queue, '[]'),
+        queueIndex: input.queueIndex,
+        isPlaying: input.isPlaying,
+        progressMs: input.progressMs,
+        durationMs: input.durationMs,
+        volume: input.volume,
         updatedAt,
       })
       .onConflictDoUpdate({
         target: [remoteDevices.userId, remoteDevices.deviceId],
         set: {
-          displayName,
-          currentTrackJson: safeJsonStringify(currentTrack, 'null'),
-          queueJson: safeJsonStringify(queue, '[]'),
-          queueIndex,
-          isPlaying,
-          progressMs,
-          durationMs,
-          volume,
+          displayName: input.displayName,
+          currentTrackJson: safeJsonStringify(input.currentTrack, 'null'),
+          queueJson: safeJsonStringify(input.queue, '[]'),
+          queueIndex: input.queueIndex,
+          isPlaying: input.isPlaying,
+          progressMs: input.progressMs,
+          durationMs: input.durationMs,
+          volume: input.volume,
           updatedAt,
         },
       });
@@ -146,7 +114,7 @@ export async function POST(request: Request) {
     return jsonResponse(
       {
         error: 'remote_device_update_failed',
-        message: error instanceof Error ? error.message : 'Failed to update remote device.',
+        message: error instanceof Error ? error.message : 'Failed to update Spice Connect device.',
       },
       { status: 500 },
     );

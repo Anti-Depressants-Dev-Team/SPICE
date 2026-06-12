@@ -16,6 +16,13 @@ import {
   rememberTrackSnapshots,
   savePlaybackState,
 } from './spice-storage';
+import {
+  buildPrivateTasteProfile,
+  buildRecommendationSeeds,
+  rankRecommendedTracks,
+  type RecommendationSeed,
+  type SeededRecommendationResult,
+} from './recommendations';
 
 // ── Icons ──────────────────────────────────────────────────────────
 const Icons = {
@@ -676,11 +683,11 @@ const createRemoteDeviceId = () => {
 };
 
 const defaultRemoteDeviceName = () => {
-  if (typeof navigator === 'undefined') return 'SPICE Device';
+  if (typeof navigator === 'undefined') return 'Spice Connect Device';
   const ua = navigator.userAgent.toLowerCase();
-  if (/iphone|android|mobile/.test(ua)) return 'SPICE Phone';
-  if (/ipad|tablet/.test(ua)) return 'SPICE Tablet';
-  return 'SPICE Desktop';
+  if (/iphone|android|mobile/.test(ua)) return 'Spice Connect Phone';
+  if (/ipad|tablet/.test(ua)) return 'Spice Connect Tablet';
+  return 'Spice Connect Desktop';
 };
 
 const sanitizePfpUrl = (url: string): string => {
@@ -957,7 +964,7 @@ export default function SpiceApp() {
     if (typeof window !== 'undefined') {
       return localStorage.getItem('spice_remote_device_name') || defaultRemoteDeviceName();
     }
-    return 'SPICE Device';
+    return 'Spice Connect Device';
   });
   const [remoteDevices, setRemoteDevices] = useState<RemoteDevice[]>([]);
   const [selectedRemoteDeviceId, setSelectedRemoteDeviceId] = useState('');
@@ -996,6 +1003,9 @@ export default function SpiceApp() {
   const [homeChill, setHomeChill] = useState<Track[]>([]);
   const [homeEnergy, setHomeEnergy] = useState<Track[]>([]);
   const [homeListenAgain, setHomeListenAgain] = useState<Track[]>([]);
+  const [homeRecommended, setHomeRecommended] = useState<Track[]>([]);
+  const [homeRecommendationSeed, setHomeRecommendationSeed] = useState<RecommendationSeed | null>(null);
+  const [isLoadingRecommendations, setIsLoadingRecommendations] = useState(false);
   const [isLoadingHome, setIsLoadingHome] = useState(true);
 
   // Search state
@@ -1160,6 +1170,7 @@ export default function SpiceApp() {
   const ytPlayerRef = useRef<any>(null);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const searchRequestRef = useRef(0);
+  const recommendationRequestRef = useRef(0);
 
   // References to preserve state variables and bypass stale React closures inside player events
   const queueIndexRef = useRef(queueIndex);
@@ -2880,12 +2891,12 @@ export default function SpiceApp() {
       });
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
-        throw new Error(data.message || `Remote state update failed with status ${response.status}.`);
+        throw new Error(data.message || `Spice Connect state update failed with status ${response.status}.`);
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Remote state update failed.';
+      const message = error instanceof Error ? error.message : 'Spice Connect state update failed.';
       setRemoteStatus(message);
-      logDebug('error', `Remote device state failed: ${message}`);
+      logDebug('error', `Spice Connect device state failed: ${message}`);
     }
   };
 
@@ -2898,7 +2909,7 @@ export default function SpiceApp() {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(data.message || `Remote device load failed with status ${response.status}.`);
+        throw new Error(data.message || `Spice Connect device load failed with status ${response.status}.`);
       }
 
       const devices = Array.isArray(data.devices)
@@ -2919,12 +2930,12 @@ export default function SpiceApp() {
       ));
 
       if (showStatus) {
-        setRemoteStatus(`Found ${Math.max(devices.length - 1, 0)} controllable device(s).`);
+        setRemoteStatus(`Found ${Math.max(devices.length - 1, 0)} Spice Connect device(s).`);
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Remote device load failed.';
+      const message = error instanceof Error ? error.message : 'Spice Connect device load failed.';
       setRemoteStatus(message);
-      logDebug('error', `Remote device load failed: ${message}`);
+      logDebug('error', `Spice Connect device load failed: ${message}`);
     }
   };
 
@@ -2961,7 +2972,7 @@ export default function SpiceApp() {
       }
     }
 
-    setRemoteStatus(`Remote command received: ${command.command}.`);
+    setRemoteStatus(`Spice Connect command received: ${command.command}.`);
   };
 
   const pollRemoteCommands = async () => {
@@ -2973,25 +2984,25 @@ export default function SpiceApp() {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(data.message || `Remote command poll failed with status ${response.status}.`);
+        throw new Error(data.message || `Spice Connect command poll failed with status ${response.status}.`);
       }
 
       const commands = Array.isArray(data.commands) ? data.commands as RemoteCommand[] : [];
       commands.forEach(applyRemoteCommand);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Remote command poll failed.';
+      const message = error instanceof Error ? error.message : 'Spice Connect command poll failed.';
       setRemoteStatus(message);
-      logDebug('error', `Remote command poll failed: ${message}`);
+      logDebug('error', `Spice Connect command poll failed: ${message}`);
     }
   };
 
   const sendRemoteCommand = async (command: RemoteCommandType, payload: RemoteCommand['payload'] = {}) => {
     if (!cloudToken) {
-      setRemoteStatus('Sign in to use remote control.');
+      setRemoteStatus('Sign in to use Spice Connect.');
       return;
     }
     if (!selectedRemoteDeviceId) {
-      setRemoteStatus('Choose another signed-in device first.');
+      setRemoteStatus('Choose another Spice Connect device first.');
       return;
     }
 
@@ -3011,15 +3022,15 @@ export default function SpiceApp() {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(data.message || `Remote command failed with status ${response.status}.`);
+        throw new Error(data.message || `Spice Connect command failed with status ${response.status}.`);
       }
 
-      setRemoteStatus(`Sent ${command} to remote device.`);
+      setRemoteStatus(`Sent ${command} through Spice Connect.`);
       void loadRemoteDevices();
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Remote command failed.';
+      const message = error instanceof Error ? error.message : 'Spice Connect command failed.';
       setRemoteStatus(message);
-      logDebug('error', `Remote command send failed: ${message}`);
+      logDebug('error', `Spice Connect command send failed: ${message}`);
     }
   };
 
@@ -3138,6 +3149,74 @@ export default function SpiceApp() {
     localStorage.setItem('spice_search_provider', provider);
     queueSearch(searchQuery, provider);
   };
+
+  useEffect(() => {
+    const profile = buildPrivateTasteProfile({
+      history,
+      likedTracks: Object.values(likedTrackDetails),
+      playlists: customPlaylists,
+    });
+    const seeds = buildRecommendationSeeds(profile, 4);
+    const requestId = ++recommendationRequestRef.current;
+    const primarySeed = seeds[0] ?? null;
+
+    setHomeRecommendationSeed(primarySeed);
+
+    if (!primarySeed) {
+      setHomeRecommended([]);
+      setIsLoadingRecommendations(false);
+      return;
+    }
+
+    const exclude = [currentTrack, ...history.slice(0, 20)];
+    const cachedBatches = seeds.flatMap((seed): SeededRecommendationResult<Track>[] => {
+      const cached = getCachedSearch(seed.query, 'hybrid');
+      if (!cached) return [];
+
+      return [{
+        seed,
+        tracks: playableSearchTracks(cached.tracks as Track[]),
+      }];
+    });
+
+    if (cachedBatches.length > 0) {
+      setHomeRecommended(rankRecommendedTracks(cachedBatches, profile, { exclude, limit: 12 }));
+    } else {
+      setHomeRecommended([]);
+    }
+
+    let cancelled = false;
+    setIsLoadingRecommendations(true);
+    const timeout = setTimeout(async () => {
+      try {
+        const batches = await Promise.allSettled(
+          seeds.map(async (seed): Promise<SeededRecommendationResult<Track>> => {
+            const tracks = await fetchSearchProviderResults(seed.query, 'hybrid');
+            rememberSearchResults(seed.query, tracks, 'hybrid');
+            return { seed, tracks };
+          }),
+        );
+
+        if (cancelled || requestId !== recommendationRequestRef.current) return;
+
+        const fulfilled = batches.flatMap((batch) =>
+          batch.status === 'fulfilled' ? [batch.value] : [],
+        );
+        const ranked = rankRecommendedTracks(fulfilled, profile, { exclude, limit: 12 });
+        rememberTrackSnapshots(ranked);
+        setHomeRecommended(ranked);
+      } finally {
+        if (!cancelled && requestId === recommendationRequestRef.current) {
+          setIsLoadingRecommendations(false);
+        }
+      }
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timeout);
+    };
+  }, [history, likedTrackDetails, customPlaylists, currentTrack]);
 
   // Playlists Operations
   const persistCustomPlaylists = (updated: Playlist[], syncOwnedPlaylists = true) => {
@@ -4388,6 +4467,56 @@ export default function SpiceApp() {
                     </section>
                   )}
 
+                  {/* Private recommendations */}
+                  {(isLoadingRecommendations || homeRecommended.length > 0) && (
+                    <section className="section animate-in">
+                      <div className="section__header">
+                        <div>
+                          <h2 className="section__title">
+                            {homeRecommendationSeed?.label || 'Recommended For You'}
+                            <span style={{ marginLeft: '10px', fontSize: '0.7rem', fontWeight: 700, color: 'var(--accent-pink)', border: '1px solid var(--border-color)', borderRadius: '999px', padding: '3px 8px', verticalAlign: 'middle' }}>
+                              Private mix
+                            </span>
+                          </h2>
+                          <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '6px 0 0' }}>
+                            {homeRecommendationSeed?.reason || 'Built locally from this profile. Only coarse source searches leave the device.'}
+                          </p>
+                        </div>
+                        {homeRecommendationSeed && (
+                          <button
+                            onClick={() => {
+                              setCurrentPage('search');
+                              queueSearch(homeRecommendationSeed.query);
+                            }}
+                            style={{ background: 'none', border: 'none', color: 'var(--accent-pink)', fontSize: '0.85rem', cursor: 'pointer' }}
+                          >
+                            Open Search
+                          </button>
+                        )}
+                      </div>
+                      <div className="carousel-wrapper">
+                        <div className="carousel">
+                          {isLoadingRecommendations && homeRecommended.length === 0 ? (
+                            [...Array(4)].map((_, i) => (
+                              <div key={i} style={{ width: '180px', height: '220px', background: 'var(--card-bg)', borderRadius: '12px', flexShrink: 0 }} />
+                            ))
+                          ) : (
+                            homeRecommended.map((song) => (
+                              <div key={`${song.sourceId || 'youtube_music'}:${song.id}`} className="card animate-in" onClick={() => playTrack(song, homeRecommended)}>
+                                <div className="card__art-wrapper">
+                                  <img className="card__art" src={song.artworkUrl || '/icon.svg'} alt={song.title} />
+                                  <div className="card__play-overlay">{Icons.play}</div>
+                                </div>
+                                <div className="card__title truncate">{song.title}</div>
+                                <div className="card__subtitle truncate">{song.artists.map(a => a.name).join(', ')}</div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    </section>
+                  )}
+
                   {/* Quick Picks (dynamic charts) */}
                   <section className="section">
                     <div className="section__header">
@@ -4555,22 +4684,78 @@ export default function SpiceApp() {
                       </div>
                     </section>
                   ) : (
-                    <section className="section animate-in">
-                      <div className="section__header">
-                        <h2 className="section__title">Browse All Categories</h2>
-                      </div>
-                      <div className="genre-grid">
-                        {genres.map((g, i) => (
-                          <div key={i} className="genre-card animate-in" style={{ background: g.gradient }} onClick={() => {
-                            setSearchQuery(g.name);
-                            handleSearchInput({ target: { value: g.name } } as any);
-                          }}>
-                            <span className="genre-card__title">{g.name}</span>
-                            <span className="genre-card__icon">{g.icon}</span>
+                    <>
+                      {!searchQuery.trim() && (isLoadingRecommendations || homeRecommended.length > 0) && (
+                        <section className="section animate-in">
+                          <div className="section__header">
+                            <div>
+                              <h2 className="section__title">Recommended Searches</h2>
+                              <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '6px 0 0' }}>
+                                {homeRecommendationSeed?.reason || 'Suggestions are scored on this device from your local profile.'}
+                              </p>
+                            </div>
                           </div>
-                        ))}
-                      </div>
-                    </section>
+                          {isLoadingRecommendations && homeRecommended.length === 0 ? (
+                            <div className="library-list">
+                              {[...Array(3)].map((_, i) => (
+                                <div key={i} className="library-item animate-in">
+                                  <div className="library-item__art" style={{ background: 'var(--card-bg)' }} />
+                                  <div className="library-item__info">
+                                    <span className="library-item__title">Finding private picks...</span>
+                                    <span className="library-item__subtitle">Local taste profile, no raw history upload</span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="library-list">
+                              {homeRecommended.slice(0, 8).map((song) => {
+                                const isLiked = likedTracks.has(song.id);
+                                const isPlayingCurrent = currentTrack.id === song.id;
+                                return (
+                                  <div key={`${song.sourceId || 'youtube_music'}:${song.id}`} className="library-item animate-in">
+                                    <img className="library-item__art" src={song.artworkUrl || '/icon.svg'} alt={song.title} onClick={() => playTrack(song, homeRecommended)} />
+                                    <div className="library-item__info" onClick={() => playTrack(song, homeRecommended)}>
+                                      <span className="library-item__title" style={isPlayingCurrent ? { color: 'var(--accent-pink)' } : {}}>
+                                        {song.title}
+                                      </span>
+                                      <span className="library-item__subtitle">
+                                        {song.artists.map(a => a.name).join(', ')} {song.durationMs ? `| ${formatTime(song.durationMs / 1000)}` : ''}
+                                        <span className="track-source-badge">{trackSourceLabel(song)}</span>
+                                      </span>
+                                    </div>
+                                    <button
+                                      className="library-item__action"
+                                      style={{ opacity: 1, color: isLiked ? 'var(--accent-pink)' : 'var(--text-muted)' }}
+                                      onClick={() => toggleLike(song)}
+                                    >
+                                      {isLiked ? Icons.heartFilled : Icons.heart}
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </section>
+                      )}
+
+                      <section className="section animate-in">
+                        <div className="section__header">
+                          <h2 className="section__title">Browse All Categories</h2>
+                        </div>
+                        <div className="genre-grid">
+                          {genres.map((g, i) => (
+                            <div key={i} className="genre-card animate-in" style={{ background: g.gradient }} onClick={() => {
+                              setSearchQuery(g.name);
+                              handleSearchInput({ target: { value: g.name } } as any);
+                            }}>
+                              <span className="genre-card__title">{g.name}</span>
+                              <span className="genre-card__icon">{g.icon}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </section>
+                    </>
                   )}
                 </>
               )}
@@ -5541,11 +5726,11 @@ export default function SpiceApp() {
                     </div>
                   </div>
 
-                  {/* Remote Control Settings */}
+                  {/* Spice Connect Settings */}
                   <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
-                    <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.monitor} Account Remote Control</h3>
+                    <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.monitor} Spice Connect</h3>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0 0 20px 0', lineHeight: 1.4 }}>
-                      Let signed-in devices on the same SPICE account control each other through the backend. This uses lightweight polling, so commands can take a couple seconds to land.
+                      Control playback across signed-in SPICE devices from the same account. Keep SPICE open on both devices and Spice Connect will sync commands every few seconds.
                     </p>
 
                     <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 0.85fr) minmax(0, 1.15fr)', gap: '20px', alignItems: 'start' }}>
@@ -5557,14 +5742,14 @@ export default function SpiceApp() {
                             onChange={(e) => {
                               setRemoteControlEnabled(e.target.checked);
                               localStorage.setItem('spice_remote_control_enabled', String(e.target.checked));
-                              setRemoteStatus(e.target.checked ? 'Remote control enabled on this device.' : 'Remote control disabled on this device.');
+                              setRemoteStatus(e.target.checked ? 'Spice Connect enabled on this device.' : 'Spice Connect disabled on this device.');
                             }}
                             style={{ accentColor: 'var(--accent-pink)' }}
                           />
-                          Enable this device for remote control
+                          Enable Spice Connect on this device
                         </label>
 
-                        <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>This Device Name</label>
+                        <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>This Spice Connect Device</label>
                         <input
                           type="text"
                           value={remoteDeviceName}
@@ -5572,21 +5757,21 @@ export default function SpiceApp() {
                             setRemoteDeviceName(e.target.value);
                             localStorage.setItem('spice_remote_device_name', e.target.value);
                           }}
-                          placeholder="Living room laptop"
+                          placeholder="Living room speaker"
                           style={{ width: '100%', padding: '10px 14px', background: '#0a0a0a', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', outline: 'none', marginBottom: '12px' }}
                         />
 
                         <p style={{ color: 'var(--text-secondary)', fontSize: '0.74rem', lineHeight: 1.4, margin: 0 }}>
-                          Device ID: {remoteDeviceId.slice(0, 8)}. Sign in on another device with the same account, keep SPICE open, then choose it here.
+                          Connect ID: {remoteDeviceId.slice(0, 8)}. Sign in on another device with the same account, keep SPICE open, then choose it here.
                         </p>
                       </div>
 
                       <div style={{ border: '1px solid var(--border-color)', borderRadius: '12px', padding: '16px', background: '#070707' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
                           <div>
-                            <div style={{ color: '#fff', fontWeight: 800, fontSize: '0.92rem' }}>Control Another Device</div>
+                            <div style={{ color: '#fff', fontWeight: 800, fontSize: '0.92rem' }}>Connect to Another Device</div>
                             <p style={{ color: 'var(--text-secondary)', fontSize: '0.74rem', lineHeight: 1.4, margin: '4px 0 0 0' }}>
-                              {cloudToken ? `${remoteTargetDevices.length} other device(s) visible on this account.` : 'Sign in to SPICE to see account devices.'}
+                              {cloudToken ? `${remoteTargetDevices.length} other Spice Connect device(s) visible.` : 'Sign in to SPICE to see Spice Connect devices.'}
                             </p>
                           </div>
                           <button
@@ -5608,7 +5793,7 @@ export default function SpiceApp() {
                           disabled={!cloudToken || !remoteControlEnabled || remoteTargetDevices.length === 0}
                           style={{ width: '100%', padding: '10px 14px', background: '#0a0a0a', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', outline: 'none', cursor: 'pointer', marginBottom: '14px' }}
                         >
-                          <option value="">{remoteTargetDevices.length === 0 ? 'No other account devices yet' : 'Choose a device'}</option>
+                          <option value="">{remoteTargetDevices.length === 0 ? 'No Spice Connect devices yet' : 'Choose a Spice Connect device'}</option>
                           {remoteTargetDevices.map((device) => (
                             <option key={device.deviceId} value={device.deviceId}>
                               {device.displayName} - {device.isPlaying ? 'Playing' : 'Idle'}
@@ -5648,7 +5833,7 @@ export default function SpiceApp() {
                             </div>
 
                             <label style={{ display: 'flex', alignItems: 'center', gap: '12px', color: 'var(--text-secondary)', fontSize: '0.78rem' }}>
-                              Remote Volume
+                              Connected Device Volume
                               <input
                                 type="range"
                                 min="0"
@@ -5715,7 +5900,7 @@ export default function SpiceApp() {
                         {Icons.tool} System Diagnostics & Live Terminal
                       </h3>
                       <span style={{ fontSize: '0.75rem', background: 'rgba(255,255,255,0.04)', color: 'var(--text-secondary)', padding: '4px 10px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.06)' }}>
-                        Spice Media Core v1.0.26 (Phase 22 Mobile Polish)
+                        Spice Media Core v1.0.29 (Phase 25 Backend Sync Tests)
                       </span>
                     </div>
 
@@ -7001,7 +7186,7 @@ export default function SpiceApp() {
           <div style={{ opacity: 0.3, fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
             <span>Spice Premium Audio Resolution Engine</span>
             <span>•</span>
-            <span>PWA v1.0.26</span>
+            <span>PWA v1.0.29</span>
           </div>
 
         </div>

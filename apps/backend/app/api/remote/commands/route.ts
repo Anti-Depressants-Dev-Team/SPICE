@@ -3,26 +3,9 @@ import { verifySession } from '@/lib/auth';
 import { db } from '@/db';
 import { remoteCommands } from '@/db/schema';
 import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
+import { normalizeSpiceConnectCommandInput, parseRemotePayload } from '@/lib/spice-connect';
 
 export const runtime = 'nodejs';
-
-const allowedCommands = new Set(['play', 'pause', 'toggle', 'next', 'previous', 'seek', 'volume']);
-
-function safePayload(value: unknown) {
-  try {
-    return JSON.stringify(value && typeof value === 'object' ? value : {});
-  } catch {
-    return '{}';
-  }
-}
-
-function parsePayload(value: string) {
-  try {
-    return JSON.parse(value);
-  } catch {
-    return {};
-  }
-}
 
 export function OPTIONS() {
   return optionsResponse();
@@ -72,7 +55,7 @@ export async function GET(request: Request) {
         sourceDeviceId: command.sourceDeviceId,
         targetDeviceId: command.targetDeviceId,
         command: command.command,
-        payload: parsePayload(command.payloadJson),
+        payload: parseRemotePayload(command.payloadJson),
         createdAt: command.createdAt.toISOString(),
       })),
     });
@@ -80,7 +63,7 @@ export async function GET(request: Request) {
     return jsonResponse(
       {
         error: 'remote_commands_failed',
-        message: error instanceof Error ? error.message : 'Failed to load remote commands.',
+        message: error instanceof Error ? error.message : 'Failed to load Spice Connect commands.',
       },
       { status: 500 },
     );
@@ -103,28 +86,20 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json().catch(() => ({}));
-    const targetDeviceId = typeof body.targetDeviceId === 'string' ? body.targetDeviceId.slice(0, 120) : '';
-    const sourceDeviceId = typeof body.sourceDeviceId === 'string' ? body.sourceDeviceId.slice(0, 120) : '';
-    const command = typeof body.command === 'string' ? body.command : '';
+    const input = normalizeSpiceConnectCommandInput(body);
 
-    if (!targetDeviceId || !sourceDeviceId) {
-      return jsonResponse({ error: 'invalid_device', message: 'Source and target device ids are required.' }, { status: 400 });
-    }
-    if (targetDeviceId === sourceDeviceId) {
-      return jsonResponse({ error: 'same_device', message: 'Choose another device to control.' }, { status: 400 });
-    }
-    if (!allowedCommands.has(command)) {
-      return jsonResponse({ error: 'invalid_command', message: 'Unsupported remote command.' }, { status: 400 });
+    if ('error' in input) {
+      return jsonResponse({ error: input.error, message: input.message }, { status: 400 });
     }
 
     const [created] = await db
       .insert(remoteCommands)
       .values({
         userId: session.userId,
-        targetDeviceId,
-        sourceDeviceId,
-        command,
-        payloadJson: safePayload(body.payload),
+        targetDeviceId: input.targetDeviceId,
+        sourceDeviceId: input.sourceDeviceId,
+        command: input.command,
+        payloadJson: input.payloadJson,
       })
       .returning();
 
@@ -141,7 +116,7 @@ export async function POST(request: Request) {
     return jsonResponse(
       {
         error: 'remote_command_send_failed',
-        message: error instanceof Error ? error.message : 'Failed to send remote command.',
+        message: error instanceof Error ? error.message : 'Failed to send Spice Connect command.',
       },
       { status: 500 },
     );

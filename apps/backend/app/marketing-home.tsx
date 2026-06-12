@@ -2,7 +2,7 @@ import styles from './marketing-home.module.css';
 
 const musicFeatures = [
   'Hybrid YouTube Music, video, and SoundCloud playback',
-  'Synced lyrics, mini player, shared playlists, and remote control',
+  'Synced lyrics, mini player, shared playlists, and Spice Connect',
   'Last.fm and ListenBrainz profile sync from your SPICE account',
 ];
 
@@ -11,7 +11,7 @@ const services = [
     status: 'Live',
     title: 'SPICE Music',
     href: 'https://music.spice-app.xyz',
-    description: 'The full player service: search, stream, save libraries, sync profiles, and control other signed-in devices.',
+    description: 'The full player service: search, stream, save libraries, sync profiles, and control other signed-in devices with Spice Connect.',
     cta: 'Open Music',
     live: true,
   },
