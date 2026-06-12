@@ -1,5 +1,11 @@
 # SPICE Walkthrough
 
+## v1.0.30
+
+- Split pause and resume into explicit player control paths so pausing a loading or fallback stream cannot restart the current track.
+- Add a playback intent guard for pending stream requests, preventing late audio/embed resolutions from auto-playing after the user has paused.
+- Tighten Spice Connect command polling and add a Player Bar Density setting with a slimmer now-playing bar option.
+
 ## v1.0.29
 
 - Add backend tests for Last.fm request signing, scrobble timestamp validation, and account-backed Last.fm session fallback.

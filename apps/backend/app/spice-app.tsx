@@ -396,6 +396,7 @@ type VisualSurface = 'midnight' | 'glass' | 'solid' | 'aurora';
 type ArtworkShape = 'rounded' | 'soft' | 'circle';
 type MotionLevel = 'full' | 'calm' | 'off';
 type InterfaceScale = 'compact' | 'comfortable' | 'spacious';
+type PlayerBarDensity = 'standard' | 'slim';
 
 const SEARCH_PROVIDER_LABELS: Record<SearchProvider, string> = {
   hybrid: 'Hybrid',
@@ -427,6 +428,11 @@ const INTERFACE_SCALE_LABELS: Record<InterfaceScale, string> = {
   compact: 'Compact',
   comfortable: 'Comfortable',
   spacious: 'Spacious',
+};
+
+const PLAYER_BAR_DENSITY_LABELS: Record<PlayerBarDensity, string> = {
+  standard: 'Standard Bar',
+  slim: 'Slim Bar',
 };
 
 const PROFILE_SYNC_STATUS_LABELS: Record<ProfileSyncStatus, string> = {
@@ -589,6 +595,9 @@ const isMotionLevel = (value: string | null): value is MotionLevel =>
 
 const isInterfaceScale = (value: string | null): value is InterfaceScale =>
   value === 'compact' || value === 'comfortable' || value === 'spacious';
+
+const isPlayerBarDensity = (value: string | null): value is PlayerBarDensity =>
+  value === 'standard' || value === 'slim';
 
 const canShowVideoForTrack = (track: Track) =>
   track.id !== 'placeholder' && isYouTubeTrack(track);
@@ -971,6 +980,7 @@ export default function SpiceApp() {
   const [remoteStatus, setRemoteStatus] = useState<string | null>(null);
   const [playerPlacement, setPlayerPlacement] = useState<'bottom' | 'top'>('bottom');
   const [playerViewMode, setPlayerViewMode] = useState<'bar' | 'expanded' | 'mini'>('bar');
+  const [playerBarDensity, setPlayerBarDensity] = useState<PlayerBarDensity>('standard');
   const [showVideoPlayer, setShowVideoPlayer] = useState(false);
   const [miniPlayerPos, setMiniPlayerPos] = useState<{ x: number; y: number } | null>(null);
   const [isDraggingMini, setIsDraggingMini] = useState(false);
@@ -1182,9 +1192,13 @@ export default function SpiceApp() {
   const progressRef = useRef(progress);
   const currentTrackRef = useRef(currentTrack);
   const isPlayingRef = useRef(isPlaying);
+  const streamUrlRef = useRef(streamUrl);
+  const isLoadingStreamRef = useRef(isLoadingStream);
   const durationRef = useRef(duration);
   const volumeRef = useRef(volume);
   const errorSkipTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const playbackRequestRef = useRef(0);
+  const shouldAutoPlayRef = useRef(false);
   const syncLockRef = useRef<boolean>(false);
   const scrobbleStateRef = useRef<ScrobbleState | null>(null);
 
@@ -1372,6 +1386,9 @@ export default function SpiceApp() {
       const savedViewMode = localStorage.getItem('spice_player_view_mode');
       if (savedViewMode) setPlayerViewMode(savedViewMode as any);
 
+      const savedPlayerBarDensity = localStorage.getItem('spice_player_bar_density');
+      if (isPlayerBarDensity(savedPlayerBarDensity)) setPlayerBarDensity(savedPlayerBarDensity);
+
       const savedShuffle = localStorage.getItem('spice_is_shuffle');
       if (savedShuffle) setIsShuffle(savedShuffle === 'true');
 
@@ -1531,10 +1548,23 @@ export default function SpiceApp() {
               logDebug('stream', 'YouTube Embed State: UNSTARTED (-1)');
             } else if (state === 1) { // Playing
               logDebug('stream', 'YouTube Embed State: ACTIVE AUDIO PLAYBACK (1)');
+              if (!shouldAutoPlayRef.current) {
+                if (typeof event.target?.pauseVideo === 'function') {
+                  event.target.pauseVideo();
+                }
+                isPlayingRef.current = false;
+                setIsPlaying(false);
+                isLoadingStreamRef.current = false;
+                setIsLoadingStream(false);
+                return;
+              }
+              isPlayingRef.current = true;
               setIsPlaying(true);
+              isLoadingStreamRef.current = false;
               setIsLoadingStream(false);
             } else if (state === 2) { // Paused
               logDebug('stream', 'YouTube Embed State: AUDIO PAUSED (2)');
+              isPlayingRef.current = false;
               setIsPlaying(false);
             } else if (state === 3) { // Buffering
               logDebug('stream', 'YouTube Embed State: BUFFERING AUDIO (3)');
@@ -2110,6 +2140,10 @@ export default function SpiceApp() {
   }, [cloudToken, activeProfileId]);
 
   const currentTrackKey = playbackTrackKey(currentTrack);
+  const setPlaybackPlaying = (nextPlaying: boolean) => {
+    isPlayingRef.current = nextPlaying;
+    setIsPlaying(nextPlaying);
+  };
 
   const handleAudioEnded = () => {
     // Increment songs played on completion
@@ -2197,6 +2231,8 @@ export default function SpiceApp() {
   useEffect(() => { progressRef.current = progress; }, [progress]);
   useEffect(() => { currentTrackRef.current = currentTrack; }, [currentTrack]);
   useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
+  useEffect(() => { streamUrlRef.current = streamUrl; }, [streamUrl]);
+  useEffect(() => { isLoadingStreamRef.current = isLoadingStream; }, [isLoadingStream]);
   useEffect(() => { durationRef.current = duration; }, [duration]);
   useEffect(() => { volumeRef.current = volume; }, [volume]);
 
@@ -2502,20 +2538,25 @@ export default function SpiceApp() {
     }
 
     if (!track || track.id === 'placeholder') {
+      shouldAutoPlayRef.current = false;
       setIsLoadingStream(false);
       logDebug('player', 'Ready to stream. Select any track from the lists to begin playback.');
       return;
     }
 
+    const requestId = ++playbackRequestRef.current;
+    shouldAutoPlayRef.current = true;
     setError(undefined);
-    setIsPlaying(false);
+    setPlaybackPlaying(false);
     setStreamUrl(null);
+    streamUrlRef.current = null;
     rememberTrackSnapshots([track, ...(newQueue || [])]);
     setCurrentTrack(track);
     if (isSoundCloudTrack(track)) {
       setShowVideoPlayer(false);
     }
     setIsLoadingStream(true);
+    isLoadingStreamRef.current = true;
 
     let updatedQueue = [...queue];
     let updatedIndex = queueIndex;
@@ -2545,10 +2586,13 @@ export default function SpiceApp() {
       
       if ((streamProtocol === 'embed' || showVideoPlayer) && isYouTube) {
         logDebug('stream', `YouTube Embedded Player active. Loading iframe player for track ID: ${track.id}`);
+        const shouldStartNow = requestId === playbackRequestRef.current && shouldAutoPlayRef.current;
         setStreamProtocol('embed');
         setStreamUrl('youtube-embed-active');
+        streamUrlRef.current = 'youtube-embed-active';
         setIsLoadingStream(false);
-        setIsPlaying(true);
+        isLoadingStreamRef.current = false;
+        setPlaybackPlaying(shouldStartNow);
 
         const filteredHist = history.filter(t => t.id !== track.id);
         const newHist = [track, ...filteredHist].slice(0, 50);
@@ -2564,7 +2608,11 @@ export default function SpiceApp() {
             ytPlayerRef.current.stopVideo();
           }
           ytPlayerRef.current.loadVideoById(track.id);
-          ytPlayerRef.current.playVideo();
+          if (shouldStartNow) {
+            ytPlayerRef.current.playVideo();
+          } else if (typeof ytPlayerRef.current.pauseVideo === 'function') {
+            ytPlayerRef.current.pauseVideo();
+          }
         }
         return;
       }
@@ -2577,17 +2625,21 @@ export default function SpiceApp() {
         ? `/api/sc/track/${encodeURIComponent(soundCloudTrackId(track))}?quality=${audioQuality}`
         : `/api/yt/track/${encodeURIComponent(track.id)}`;
       const resTrack = await fetch(trackEndpoint);
+      if (requestId !== playbackRequestRef.current) return;
       if (!resTrack.ok) throw new Error('Could not resolve audio streams for this track.');
       
       const payload = await resTrack.json();
+      if (requestId !== playbackRequestRef.current) return;
       const streams = payload.streams ?? [];
       if (streams.length === 0) throw new Error('No compatible stream format discovered.');
 
       const bestStream = streams[0];
       const streamLabel = bestStream.preset ? `preset ${bestStream.preset}` : `itag ${bestStream.itag}`;
+      const shouldStartNow = shouldAutoPlayRef.current;
       logDebug('stream', `Resolved ${streams.length} ${trackSourceLabel(track)} formats. Selected ${streamLabel} (${bestStream.container}, bitrate: ${Math.round(bestStream.bitrate / 1000)}kbps)`);
       setStreamUrl(bestStream.url);
-      setIsPlaying(true);
+      streamUrlRef.current = bestStream.url;
+      setPlaybackPlaying(shouldStartNow);
 
       // Track playback in history
       const filteredHist = history.filter(t => t.id !== track.id);
@@ -2602,18 +2654,22 @@ export default function SpiceApp() {
       autoSyncHistory(newHist);
 
     } catch (err: any) {
+      if (requestId !== playbackRequestRef.current) return;
       console.error(err);
       logDebug('error', `Track streaming failed: ${err.message || err}`);
       
       if (isYouTubeTrack(track) && streamProtocol !== 'embed') {
         logDebug('diagnostics', `Direct stream resolution failed. Initiating self-healing fallback to YouTube Embedded Player...`);
+        const shouldStartNow = shouldAutoPlayRef.current;
         setStreamProtocol('embed');
         localStorage.setItem('spice_stream_protocol', 'embed');
         
         logDebug('stream', `YouTube Embedded Player active. Loading iframe player for track ID: ${track.id}`);
         setStreamUrl('youtube-embed-active');
+        streamUrlRef.current = 'youtube-embed-active';
         setIsLoadingStream(false);
-        setIsPlaying(true);
+        isLoadingStreamRef.current = false;
+        setPlaybackPlaying(shouldStartNow);
 
         const filteredHist = history.filter(t => t.id !== track.id);
         const newHist = [track, ...filteredHist].slice(0, 50);
@@ -2629,7 +2685,11 @@ export default function SpiceApp() {
             ytPlayerRef.current.stopVideo();
           }
           ytPlayerRef.current.loadVideoById(track.id);
-          ytPlayerRef.current.playVideo();
+          if (shouldStartNow) {
+            ytPlayerRef.current.playVideo();
+          } else if (typeof ytPlayerRef.current.pauseVideo === 'function') {
+            ytPlayerRef.current.pauseVideo();
+          }
         }
         return;
       }
@@ -2643,34 +2703,85 @@ export default function SpiceApp() {
         setError('Playback connection failed. Please select a different track.');
       }
     } finally {
-      setIsLoadingStream(false);
+      if (requestId === playbackRequestRef.current) {
+        setIsLoadingStream(false);
+        isLoadingStreamRef.current = false;
+      }
+    }
+  };
+
+  const pauseCurrentPlayback = () => {
+    shouldAutoPlayRef.current = false;
+
+    if (errorSkipTimeoutRef.current) {
+      clearTimeout(errorSkipTimeoutRef.current);
+      errorSkipTimeoutRef.current = null;
+    }
+
+    const targetTrack = currentTrackRef.current;
+    if (streamProtocolRef.current === 'embed' && isYouTubeTrack(targetTrack) && ytPlayerRef.current) {
+      if (typeof ytPlayerRef.current.pauseVideo === 'function') {
+        ytPlayerRef.current.pauseVideo();
+      }
+      if (typeof ytPlayerRef.current.getCurrentTime === 'function') {
+        setProgress(Math.max(0, ytPlayerRef.current.getCurrentTime() || 0));
+      }
+    }
+
+    if (audioRef.current) {
+      audioRef.current.pause();
+      if (Number.isFinite(audioRef.current.currentTime)) {
+        setProgress(Math.max(0, audioRef.current.currentTime));
+      }
+    }
+
+    setPlaybackPlaying(false);
+  };
+
+  const resumeCurrentPlayback = () => {
+    const targetTrack = currentTrackRef.current;
+    if (!targetTrack || targetTrack.id === 'placeholder') return;
+
+    shouldAutoPlayRef.current = true;
+    setError(undefined);
+
+    if (streamProtocolRef.current === 'embed' && isYouTubeTrack(targetTrack) && ytPlayerRef.current) {
+      if (!streamUrlRef.current) {
+        setStreamUrl('youtube-embed-active');
+        streamUrlRef.current = 'youtube-embed-active';
+        if (typeof ytPlayerRef.current.loadVideoById === 'function') {
+          ytPlayerRef.current.loadVideoById(targetTrack.id);
+          if (typeof ytPlayerRef.current.playVideo === 'function') {
+            ytPlayerRef.current.playVideo();
+          }
+          setPlaybackPlaying(true);
+          return;
+        }
+      }
+      if (typeof ytPlayerRef.current.playVideo === 'function') {
+        ytPlayerRef.current.playVideo();
+        setPlaybackPlaying(true);
+        return;
+      }
+    }
+
+    if (audioRef.current && streamUrlRef.current) {
+      audioRef.current.play().then(() => {
+        setPlaybackPlaying(true);
+      }).catch(handleAudioError);
+      return;
+    }
+
+    if (!isLoadingStreamRef.current) {
+      playTrack(targetTrack);
     }
   };
 
   const togglePlayPause = () => {
-    if (!streamUrl && !isLoadingStream) {
-      playTrack(currentTrack);
-      return;
-    }
-    if (streamProtocol === 'embed' && isYouTubeTrack(currentTrack) && ytPlayerRef.current) {
-      if (isPlaying) {
-        ytPlayerRef.current.pauseVideo();
-        setIsPlaying(false);
-      } else {
-        ytPlayerRef.current.playVideo();
-        setIsPlaying(true);
-      }
-      return;
-    }
-    if (audioRef.current) {
-      if (isPlaying) {
-        audioRef.current.pause();
-        setIsPlaying(false);
-      } else {
-        audioRef.current.play().then(() => {
-          setIsPlaying(true);
-        }).catch(handleAudioError);
-      }
+    if (isPlayingRef.current) {
+      pauseCurrentPlayback();
+    } else {
+      resumeCurrentPlayback();
     }
   };
 
@@ -2944,10 +3055,10 @@ export default function SpiceApp() {
 
     switch (command.command) {
       case 'play':
-        if (!isPlayingRef.current) togglePlayPause();
+        if (!isPlayingRef.current) resumeCurrentPlayback();
         break;
       case 'pause':
-        if (isPlayingRef.current) togglePlayPause();
+        if (isPlayingRef.current || isLoadingStreamRef.current) pauseCurrentPlayback();
         break;
       case 'toggle':
         togglePlayPause();
@@ -3043,7 +3154,7 @@ export default function SpiceApp() {
     const interval = setInterval(() => {
       void reportRemoteDeviceState();
       void loadRemoteDevices();
-    }, 5000);
+    }, 2500);
 
     return () => clearInterval(interval);
   }, [isMounted, cloudToken, remoteControlEnabled, remoteDeviceId, remoteDeviceName]);
@@ -3054,7 +3165,7 @@ export default function SpiceApp() {
     void pollRemoteCommands();
     const interval = setInterval(() => {
       void pollRemoteCommands();
-    }, 2500);
+    }, 1000);
 
     return () => clearInterval(interval);
   }, [isMounted, cloudToken, remoteControlEnabled, remoteDeviceId]);
@@ -3918,6 +4029,85 @@ export default function SpiceApp() {
       comfortable: '--sidebar-width: 260px; --now-playing-height: 88px; --spice-content-x: 48px; --spice-content-y: 32px;',
       spacious: '--sidebar-width: 290px; --now-playing-height: 104px; --spice-content-x: 64px; --spice-content-y: 44px;',
     };
+    const playerBarRootCssByDensity: Record<PlayerBarDensity, string> = {
+      standard: '',
+      slim: '--now-playing-height: 66px;',
+    };
+    const playerBarCssByDensity: Record<PlayerBarDensity, string> = {
+      standard: '',
+      slim: `
+        .now-playing {
+          min-height: 66px !important;
+          padding-left: clamp(10px, 1.6vw, 22px) !important;
+          padding-right: clamp(10px, 1.6vw, 22px) !important;
+          gap: clamp(6px, 1vw, 14px) !important;
+        }
+        .now-playing__btn {
+          width: 28px !important;
+          height: 28px !important;
+        }
+        .now-playing__btn svg {
+          width: 16px !important;
+          height: 16px !important;
+        }
+        .now-playing__btn--play {
+          width: 36px !important;
+          height: 36px !important;
+        }
+        .now-playing__btn--play svg {
+          width: 18px !important;
+          height: 18px !important;
+        }
+        .now-playing__song {
+          gap: 10px !important;
+          flex-basis: clamp(150px, 22vw, 300px) !important;
+          max-width: clamp(150px, 22vw, 300px) !important;
+        }
+        .now-playing__art {
+          width: 40px !important;
+          height: 40px !important;
+        }
+        .now-playing__title {
+          font-size: 0.82rem !important;
+        }
+        .now-playing__artist {
+          font-size: 0.7rem !important;
+        }
+        .now-playing__seek {
+          font-size: 0.7rem !important;
+        }
+        .now-playing__seek-track {
+          height: 3px !important;
+        }
+        .now-playing__seek-track:hover {
+          height: 5px !important;
+        }
+        .now-playing__waveform {
+          height: 12px !important;
+        }
+        .now-playing__like,
+        .now-playing__volume-btn {
+          width: 26px !important;
+          height: 26px !important;
+        }
+        @media (max-width: 600px) {
+          .now-playing {
+            height: 58px !important;
+            min-height: 58px !important;
+            border-radius: 18px !important;
+            grid-template-columns: minmax(0, 1fr) 38px !important;
+          }
+          .now-playing__art {
+            width: 40px !important;
+            height: 40px !important;
+          }
+          .now-playing__mobile-play {
+            width: 38px !important;
+            height: 38px !important;
+          }
+        }
+      `,
+    };
     const motionCssByLevel: Record<MotionLevel, string> = {
       full: '',
       calm: `
@@ -3946,6 +4136,7 @@ export default function SpiceApp() {
       :root {
         ${surfaceCssByMode[visualSurface]}
         ${scaleCssByMode[interfaceScale]}
+        ${playerBarRootCssByDensity[playerBarDensity]}
         --spice-art-radius: ${artRadiusByShape[artworkShape]};
       }
       .app {
@@ -3973,6 +4164,7 @@ export default function SpiceApp() {
         border-radius: var(--spice-art-radius) !important;
       }
       ${motionCssByLevel[motionLevel]}
+      ${playerBarCssByDensity[playerBarDensity]}
     `;
 
     if (playerPlacement === 'top') {
@@ -5692,7 +5884,7 @@ export default function SpiceApp() {
                       Customize the now-playing bar placement, open the immersive full-screen player, or collapse it into a floating picture-in-picture widget.
                     </p>
 
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '20px' }}>
                       <div>
                         <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>Player Placement</label>
                         <select 
@@ -5723,6 +5915,23 @@ export default function SpiceApp() {
                           <option value="mini">Floating Mini Player Widget</option>
                         </select>
                       </div>
+
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>Player Bar Density</label>
+                        <select
+                          value={playerBarDensity}
+                          onChange={(e) => {
+                            if (!isPlayerBarDensity(e.target.value)) return;
+                            setPlayerBarDensity(e.target.value);
+                            localStorage.setItem('spice_player_bar_density', e.target.value);
+                          }}
+                          style={{ width: '100%', padding: '10px 14px', background: '#0a0a0a', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', outline: 'none', cursor: 'pointer' }}
+                        >
+                          {(Object.entries(PLAYER_BAR_DENSITY_LABELS) as [PlayerBarDensity, string][]).map(([id, label]) => (
+                            <option key={id} value={id}>{label}</option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
                   </div>
 
@@ -5730,7 +5939,7 @@ export default function SpiceApp() {
                   <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
                     <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.monitor} Spice Connect</h3>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0 0 20px 0', lineHeight: 1.4 }}>
-                      Control playback across signed-in SPICE devices from the same account. Keep SPICE open on both devices and Spice Connect will sync commands every few seconds.
+                      Control playback across signed-in SPICE devices from the same account. Keep SPICE open on both devices and Spice Connect will check for commands about once a second.
                     </p>
 
                     <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 0.85fr) minmax(0, 1.15fr)', gap: '20px', alignItems: 'start' }}>
@@ -5900,7 +6109,7 @@ export default function SpiceApp() {
                         {Icons.tool} System Diagnostics & Live Terminal
                       </h3>
                       <span style={{ fontSize: '0.75rem', background: 'rgba(255,255,255,0.04)', color: 'var(--text-secondary)', padding: '4px 10px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.06)' }}>
-                        Spice Media Core v1.0.29 (Phase 25 Backend Sync Tests)
+                        Spice Media Core v1.0.30 (Phase 26 Playback Controls)
                       </span>
                     </div>
 
@@ -7186,7 +7395,7 @@ export default function SpiceApp() {
           <div style={{ opacity: 0.3, fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
             <span>Spice Premium Audio Resolution Engine</span>
             <span>•</span>
-            <span>PWA v1.0.29</span>
+            <span>PWA v1.0.30</span>
           </div>
 
         </div>
