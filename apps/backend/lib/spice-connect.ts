@@ -1,5 +1,7 @@
 export type SpiceConnectCommandType = 'play' | 'pause' | 'toggle' | 'next' | 'previous' | 'seek' | 'volume' | 'play_track';
 
+export const SPICE_CONNECT_COMMAND_TTL_MS = 15000;
+
 export interface SpiceConnectDeviceInput {
   deviceId: string;
   displayName: string;
@@ -116,4 +118,16 @@ export function parseRemotePayload(value: string) {
   } catch {
     return {};
   }
+}
+
+export function isSpiceConnectCommandFresh(
+  createdAt: Date | string | number,
+  now: Date | number = Date.now(),
+  maxAgeMs = SPICE_CONNECT_COMMAND_TTL_MS,
+) {
+  const createdTime = createdAt instanceof Date ? createdAt.getTime() : new Date(createdAt).getTime();
+  const nowTime = now instanceof Date ? now.getTime() : now;
+
+  if (!Number.isFinite(createdTime) || !Number.isFinite(nowTime)) return false;
+  return nowTime - createdTime <= maxAgeMs;
 }

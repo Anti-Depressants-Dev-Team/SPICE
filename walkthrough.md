@@ -1,5 +1,17 @@
 # SPICE Walkthrough
 
+## v1.0.33
+
+- Add a public `/changelog` page for `spice-app.xyz/changelog`.
+- Generate changelog entries from `walkthrough.md` so the public release history updates with the existing version notes.
+- Link the changelog from the SPICE home navigation.
+
+## v1.0.32
+
+- Reduce Spice Connect command polling latency while preventing overlapping receiver polls.
+- Expire stale pending Spice Connect commands so reconnecting devices do not replay old play or skip actions.
+- Add receiver freshness guards and post-command sync refreshes to avoid controlling stale devices with outdated track state.
+
 ## v1.0.31
 
 - Promote Spice Connect into the player with a receiver selector for this device or another signed-in account device.

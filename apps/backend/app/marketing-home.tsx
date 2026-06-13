@@ -55,6 +55,7 @@ export default function MarketingHome() {
           <div className={styles.navLinks}>
             <a href="#services">Services</a>
             <a href="#route-map">Domains</a>
+            <a href="/changelog">Changelog</a>
             <a className={styles.navCta} href="https://music.spice-app.xyz">
               Launch Music
             </a>

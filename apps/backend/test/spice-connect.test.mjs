@@ -2,10 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  isSpiceConnectCommandFresh,
   normalizeSpiceConnectCommandInput,
   normalizeSpiceConnectDeviceInput,
   parseRemotePayload,
   safeRemotePayload,
+  SPICE_CONNECT_COMMAND_TTL_MS,
 } from '../lib/spice-connect.ts';
 
 test('Spice Connect device normalization bounds client-reported playback state', () => {
@@ -100,4 +102,14 @@ test('Spice Connect payload helpers tolerate invalid or circular payloads', () =
   assert.equal(safeRemotePayload(circular), '{}');
   assert.deepEqual(parseRemotePayload('not json'), {});
   assert.deepEqual(parseRemotePayload('{"volume":44}'), { volume: 44 });
+});
+
+test('Spice Connect command freshness rejects stale or invalid timestamps', () => {
+  const now = new Date('2026-06-13T12:00:00.000Z');
+  const fresh = new Date(now.getTime() - SPICE_CONNECT_COMMAND_TTL_MS + 250);
+  const stale = new Date(now.getTime() - SPICE_CONNECT_COMMAND_TTL_MS - 1);
+
+  assert.equal(isSpiceConnectCommandFresh(fresh, now), true);
+  assert.equal(isSpiceConnectCommandFresh(stale, now), false);
+  assert.equal(isSpiceConnectCommandFresh('not-a-date', now), false);
 });

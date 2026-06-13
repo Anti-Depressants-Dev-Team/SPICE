@@ -2,8 +2,12 @@ import { jsonResponse, optionsResponse } from '@/lib/cors';
 import { verifySession } from '@/lib/auth';
 import { db } from '@/db';
 import { remoteCommands } from '@/db/schema';
-import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
-import { normalizeSpiceConnectCommandInput, parseRemotePayload } from '@/lib/spice-connect';
+import { and, asc, eq, inArray, isNull, lt } from 'drizzle-orm';
+import {
+  normalizeSpiceConnectCommandInput,
+  parseRemotePayload,
+  SPICE_CONNECT_COMMAND_TTL_MS,
+} from '@/lib/spice-connect';
 
 export const runtime = 'nodejs';
 
@@ -31,6 +35,19 @@ export async function GET(request: Request) {
     if (!deviceId) {
       return jsonResponse({ error: 'invalid_device', message: 'A deviceId query parameter is required.' }, { status: 400 });
     }
+
+    const now = new Date();
+    const staleCutoff = new Date(now.getTime() - SPICE_CONNECT_COMMAND_TTL_MS);
+
+    await db
+      .update(remoteCommands)
+      .set({ consumedAt: now })
+      .where(and(
+        eq(remoteCommands.userId, session.userId),
+        eq(remoteCommands.targetDeviceId, deviceId),
+        isNull(remoteCommands.consumedAt),
+        lt(remoteCommands.createdAt, staleCutoff),
+      ));
 
     const commands = await db.query.remoteCommands.findMany({
       where: and(

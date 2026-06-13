@@ -23,6 +23,12 @@ import {
   type RecommendationSeed,
   type SeededRecommendationResult,
 } from './recommendations';
+import { isSpiceConnectCommandFresh, SPICE_CONNECT_COMMAND_TTL_MS } from '@/lib/spice-connect';
+
+const SPICE_CONNECT_COMMAND_POLL_INTERVAL_MS = 400;
+const SPICE_CONNECT_DEVICE_SYNC_INTERVAL_MS = 1500;
+const SPICE_CONNECT_POST_COMMAND_SYNC_DELAY_MS = 450;
+const SPICE_CONNECT_STALE_DEVICE_SECONDS = 20;
 
 // ── Icons ──────────────────────────────────────────────────────────
 const Icons = {
@@ -1209,6 +1215,11 @@ export default function SpiceApp() {
   const shouldAutoPlayRef = useRef(false);
   const syncLockRef = useRef<boolean>(false);
   const scrobbleStateRef = useRef<ScrobbleState | null>(null);
+  const remoteDeviceReportInFlightRef = useRef(false);
+  const remoteDeviceLoadInFlightRef = useRef(false);
+  const remoteCommandPollInFlightRef = useRef(false);
+  const appliedRemoteCommandIdsRef = useRef<Set<string>>(new Set());
+  const remoteStateSyncTimeoutRef = useRef<number | null>(null);
 
   const handleAudioEndedRef = useRef<() => void>(() => {});
   const handleAudioErrorRef = useRef<() => void>(() => {});
@@ -2243,6 +2254,12 @@ export default function SpiceApp() {
   useEffect(() => { isLoadingStreamRef.current = isLoadingStream; }, [isLoadingStream]);
   useEffect(() => { durationRef.current = duration; }, [duration]);
   useEffect(() => { volumeRef.current = volume; }, [volume]);
+  useEffect(() => () => {
+    if (remoteStateSyncTimeoutRef.current) {
+      clearTimeout(remoteStateSyncTimeoutRef.current);
+      remoteStateSyncTimeoutRef.current = null;
+    }
+  }, []);
 
   async function submitProfileListen(type: ProfileListenType, listenedAt: number) {
     if (!profileSyncEnabled || currentTrack.id === 'placeholder') return;
@@ -2949,10 +2966,11 @@ export default function SpiceApp() {
   };
 
   const reportRemoteDeviceState = async () => {
-    if (!cloudToken || !remoteControlEnabled) return;
+    if (!cloudToken || !remoteControlEnabled || remoteDeviceReportInFlightRef.current) return;
 
     const targetTrack = currentTrackRef.current;
     const currentQueue = queueRef.current || [];
+    remoteDeviceReportInFlightRef.current = true;
     try {
       const response = await fetch('/api/remote/devices', {
         method: 'POST',
@@ -2980,15 +2998,19 @@ export default function SpiceApp() {
       const message = error instanceof Error ? error.message : 'Spice Connect state update failed.';
       setRemoteStatus(message);
       logDebug('error', `Spice Connect device state failed: ${message}`);
+    } finally {
+      remoteDeviceReportInFlightRef.current = false;
     }
   };
 
   const loadRemoteDevices = async (showStatus = false) => {
-    if (!cloudToken || !remoteControlEnabled) return;
+    if (!cloudToken || !remoteControlEnabled || remoteDeviceLoadInFlightRef.current) return;
 
+    remoteDeviceLoadInFlightRef.current = true;
     try {
       const response = await fetch('/api/remote/devices', {
         headers: { Authorization: `Bearer ${cloudToken}` },
+        cache: 'no-store',
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
@@ -3018,7 +3040,35 @@ export default function SpiceApp() {
       const message = error instanceof Error ? error.message : 'Spice Connect device load failed.';
       setRemoteStatus(message);
       logDebug('error', `Spice Connect device load failed: ${message}`);
+    } finally {
+      remoteDeviceLoadInFlightRef.current = false;
     }
+  };
+
+  const scheduleRemoteDeviceSync = (delayMs = SPICE_CONNECT_POST_COMMAND_SYNC_DELAY_MS) => {
+    if (typeof window === 'undefined') return;
+    if (remoteStateSyncTimeoutRef.current) {
+      clearTimeout(remoteStateSyncTimeoutRef.current);
+    }
+
+    remoteStateSyncTimeoutRef.current = window.setTimeout(() => {
+      remoteStateSyncTimeoutRef.current = null;
+      void reportRemoteDeviceState();
+      void loadRemoteDevices();
+    }, delayMs);
+  };
+
+  const rememberRemoteCommandId = (commandId: string) => {
+    const appliedIds = appliedRemoteCommandIdsRef.current;
+    if (appliedIds.has(commandId)) return false;
+
+    appliedIds.add(commandId);
+    if (appliedIds.size > 160) {
+      const oldestId = appliedIds.values().next().value;
+      if (oldestId) appliedIds.delete(oldestId);
+    }
+
+    return true;
   };
 
   const applyRemoteCommand = (command: RemoteCommand) => {
@@ -3066,14 +3116,17 @@ export default function SpiceApp() {
     }
 
     setRemoteStatus(`Spice Connect command received: ${command.command}.`);
+    scheduleRemoteDeviceSync(command.command === 'play_track' ? 900 : 300);
   };
 
   const pollRemoteCommands = async () => {
-    if (!cloudToken || !remoteControlEnabled) return;
+    if (!cloudToken || !remoteControlEnabled || remoteCommandPollInFlightRef.current) return;
 
+    remoteCommandPollInFlightRef.current = true;
     try {
       const response = await fetch(`/api/remote/commands?deviceId=${encodeURIComponent(remoteDeviceId)}`, {
         headers: { Authorization: `Bearer ${cloudToken}` },
+        cache: 'no-store',
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
@@ -3081,11 +3134,22 @@ export default function SpiceApp() {
       }
 
       const commands = Array.isArray(data.commands) ? data.commands as RemoteCommand[] : [];
-      commands.forEach(applyRemoteCommand);
+      const freshCommands = commands.filter((command) => {
+        if (!command.id || !rememberRemoteCommandId(command.id)) return false;
+        if (!isSpiceConnectCommandFresh(command.createdAt, Date.now(), SPICE_CONNECT_COMMAND_TTL_MS)) {
+          logDebug('remote', `Ignored stale Spice Connect command ${command.command}.`);
+          return false;
+        }
+        return true;
+      });
+
+      freshCommands.forEach(applyRemoteCommand);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Spice Connect command poll failed.';
       setRemoteStatus(message);
       logDebug('error', `Spice Connect command poll failed: ${message}`);
+    } finally {
+      remoteCommandPollInFlightRef.current = false;
     }
   };
 
@@ -3096,6 +3160,19 @@ export default function SpiceApp() {
     }
     if (!selectedRemoteDeviceId) {
       setRemoteStatus('Choose another Spice Connect device first.');
+      return;
+    }
+    const targetRemoteDevice = remoteDevices.find((device) => device.deviceId === selectedRemoteDeviceId);
+    if (
+      targetRemoteDevice?.lastSeenSeconds !== undefined
+      && targetRemoteDevice.lastSeenSeconds > SPICE_CONNECT_STALE_DEVICE_SECONDS
+    ) {
+      setRemoteStatus(`${targetRemoteDevice.displayName} has not checked in recently. Refresh Spice Connect before controlling it.`);
+      void loadRemoteDevices(true);
+      return;
+    }
+    if (command === 'play' && targetRemoteDevice && !targetRemoteDevice.currentTrack) {
+      setRemoteStatus(`Choose a track for ${targetRemoteDevice.displayName} before pressing play.`);
       return;
     }
 
@@ -3119,7 +3196,7 @@ export default function SpiceApp() {
       }
 
       setRemoteStatus(`Sent ${command} through Spice Connect.`);
-      void loadRemoteDevices();
+      scheduleRemoteDeviceSync(command === 'play_track' ? 900 : SPICE_CONNECT_POST_COMMAND_SYNC_DELAY_MS);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Spice Connect command failed.';
       setRemoteStatus(message);
@@ -3136,7 +3213,7 @@ export default function SpiceApp() {
     const interval = setInterval(() => {
       void reportRemoteDeviceState();
       void loadRemoteDevices();
-    }, 2500);
+    }, SPICE_CONNECT_DEVICE_SYNC_INTERVAL_MS);
 
     return () => clearInterval(interval);
   }, [isMounted, cloudToken, remoteControlEnabled, remoteDeviceId, remoteDeviceName]);
@@ -3147,7 +3224,7 @@ export default function SpiceApp() {
     void pollRemoteCommands();
     const interval = setInterval(() => {
       void pollRemoteCommands();
-    }, 1000);
+    }, SPICE_CONNECT_COMMAND_POLL_INTERVAL_MS);
 
     return () => clearInterval(interval);
   }, [isMounted, cloudToken, remoteControlEnabled, remoteDeviceId]);
@@ -3572,6 +3649,24 @@ export default function SpiceApp() {
   const receiverLabel = selectedRemoteDevice?.displayName || 'This device';
   const receiverSelectDisabled = !cloudToken || !remoteControlEnabled;
 
+  const canControlSelectedRemoteReceiver = (command: RemoteCommandType) => {
+    if (!selectedRemoteDevice) return false;
+    if (
+      selectedRemoteDevice.lastSeenSeconds !== undefined
+      && selectedRemoteDevice.lastSeenSeconds > SPICE_CONNECT_STALE_DEVICE_SECONDS
+    ) {
+      setRemoteStatus(`${selectedRemoteDevice.displayName} has not checked in recently. Refresh Spice Connect before controlling it.`);
+      void loadRemoteDevices(true);
+      return false;
+    }
+    if (command === 'play' && !selectedRemoteDevice.currentTrack) {
+      setRemoteStatus(`Choose a track for ${selectedRemoteDevice.displayName} before pressing play.`);
+      return false;
+    }
+
+    return true;
+  };
+
   const selectSpiceConnectReceiver = (deviceId: string) => {
     const safeDeviceId = deviceId === remoteDeviceId ? '' : deviceId;
     setSelectedRemoteDeviceId(safeDeviceId);
@@ -3601,6 +3696,7 @@ export default function SpiceApp() {
 
   const startTrackOnActiveReceiver = (track: Track, newQueue?: Track[]) => {
     if (isControllingRemoteReceiver) {
+      if (!canControlSelectedRemoteReceiver('play_track')) return;
       const queuePayload = newQueue && newQueue.length > 0 ? newQueue : [track];
       const queueIndexPayload = Math.max(0, queuePayload.findIndex((entry) => entry.id === track.id));
       rememberTrackSnapshots([track, ...queuePayload]);
@@ -3626,6 +3722,7 @@ export default function SpiceApp() {
 
   const handleReceiverPrev = () => {
     if (isControllingRemoteReceiver) {
+      if (!canControlSelectedRemoteReceiver('previous')) return;
       patchSelectedRemoteDevice({ isPlaying: true });
       void sendRemoteCommand('previous');
       return;
@@ -3635,6 +3732,7 @@ export default function SpiceApp() {
 
   const handleReceiverNext = () => {
     if (isControllingRemoteReceiver) {
+      if (!canControlSelectedRemoteReceiver('next')) return;
       patchSelectedRemoteDevice({ isPlaying: true });
       void sendRemoteCommand('next');
       return;
@@ -3645,6 +3743,7 @@ export default function SpiceApp() {
   const toggleReceiverPlayPause = () => {
     if (isControllingRemoteReceiver) {
       const nextCommand: RemoteCommandType = playerIsPlaying ? 'pause' : 'play';
+      if (!canControlSelectedRemoteReceiver(nextCommand)) return;
       patchSelectedRemoteDevice({ isPlaying: !playerIsPlaying });
       void sendRemoteCommand(nextCommand);
       return;
@@ -3654,6 +3753,7 @@ export default function SpiceApp() {
 
   const seekActiveReceiverTo = (seekTime: number) => {
     if (isControllingRemoteReceiver) {
+      if (!canControlSelectedRemoteReceiver('seek')) return;
       const safeSeek = Math.max(0, Math.min(seekTime, playerDuration || seekTime));
       patchSelectedRemoteDevice({ progress: safeSeek });
       void sendRemoteCommand('seek', { progress: safeSeek });
@@ -3673,6 +3773,7 @@ export default function SpiceApp() {
   const setReceiverVolume = (nextVolume: number) => {
     const safeVolume = Math.max(0, Math.min(100, Math.round(nextVolume)));
     if (isControllingRemoteReceiver) {
+      if (!canControlSelectedRemoteReceiver('volume')) return;
       patchSelectedRemoteDevice({ volume: safeVolume });
       void sendRemoteCommand('volume', { volume: safeVolume });
       return;
@@ -6252,7 +6353,7 @@ export default function SpiceApp() {
                         {Icons.tool} System Diagnostics & Live Terminal
                       </h3>
                       <span style={{ fontSize: '0.75rem', background: 'rgba(255,255,255,0.04)', color: 'var(--text-secondary)', padding: '4px 10px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.06)' }}>
-                        Spice Media Core v1.0.31 (Phase 27 Spice Connect Receiver)
+                        Spice Media Core v1.0.33 (Phase 29 Public Changelog)
                       </span>
                     </div>
 
@@ -7559,7 +7660,7 @@ export default function SpiceApp() {
           <div style={{ opacity: 0.3, fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
             <span>Spice Premium Audio Resolution Engine</span>
             <span>•</span>
-            <span>PWA v1.0.31</span>
+            <span>PWA v1.0.33</span>
           </div>
 
         </div>
