@@ -1,5 +1,11 @@
 # SPICE Walkthrough
 
+## v1.0.34
+
+- Restore document scrolling on the public `spice-app.xyz` home and `/changelog` pages by removing the global body scroll lock.
+- Recover stuck YouTube playback by migrating persisted `embed` transport back to the direct proxy path on load.
+- Retry blocked YouTube embeds through the direct proxy and retry direct audio failures through the embed before self-healing skip logic runs.
+
 ## v1.0.33
 
 - Add a public `/changelog` page for `spice-app.xyz/changelog`.

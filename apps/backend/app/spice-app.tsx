@@ -395,6 +395,7 @@ interface Track {
 }
 
 type SearchProvider = 'hybrid' | 'youtube_music' | 'youtube_videos' | 'soundcloud';
+type StreamProtocol = 'proxy' | 'web' | 'embed';
 type ProfileListenType = 'playing_now' | 'scrobble';
 type ProfileSyncStatus = 'idle' | 'playing' | 'scrobbled' | 'error';
 type AccentTheme = 'pink' | 'blue' | 'orange' | 'green' | 'gold';
@@ -589,6 +590,9 @@ const isSearchProvider = (value: string | null): value is SearchProvider =>
     || value === 'youtube_music'
     || value === 'youtube_videos'
     || value === 'soundcloud';
+
+const isStreamProtocol = (value: string | null): value is StreamProtocol =>
+  value === 'proxy' || value === 'web' || value === 'embed';
 
 const isAccentTheme = (value: string | null): value is AccentTheme =>
   value === 'pink' || value === 'blue' || value === 'orange' || value === 'green' || value === 'gold';
@@ -845,7 +849,7 @@ export default function SpiceApp() {
   const [motionLevel, setMotionLevel] = useState<MotionLevel>('full');
   const [interfaceScale, setInterfaceScale] = useState<InterfaceScale>('comfortable');
   const [audioQuality, setAudioQuality] = useState<'standard' | 'high' | 'low'>('standard');
-  const [streamProtocol, setStreamProtocol] = useState<'proxy' | 'web' | 'embed'>('proxy');
+  const [streamProtocol, setStreamProtocol] = useState<StreamProtocol>('proxy');
   const [profileSyncEnabled, setProfileSyncEnabled] = useState(false);
   const [lastFmSessionKey, setLastFmSessionKey] = useState('');
   const [lastFmAccountLinked, setLastFmAccountLinked] = useState(false);
@@ -1213,6 +1217,8 @@ export default function SpiceApp() {
   const errorSkipTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const playbackRequestRef = useRef(0);
   const shouldAutoPlayRef = useRef(false);
+  const directEmbedRetryRef = useRef<Set<string>>(new Set());
+  const embedProxyRetryRef = useRef<Set<string>>(new Set());
   const syncLockRef = useRef<boolean>(false);
   const scrobbleStateRef = useRef<ScrobbleState | null>(null);
   const remoteDeviceReportInFlightRef = useRef(false);
@@ -1223,6 +1229,7 @@ export default function SpiceApp() {
 
   const handleAudioEndedRef = useRef<() => void>(() => {});
   const handleAudioErrorRef = useRef<() => void>(() => {});
+  const playTrackRef = useRef<(track: Track, newQueue?: Track[], startSearchIndex?: number) => Promise<void>>(async () => {});
   const handleNextRef = useRef<(overrideIndex?: any, startSearchIndex?: number) => void>(() => {});
 
   const autoSyncProfiles = (updatedProfiles: UserProfile[]) => {
@@ -1377,7 +1384,16 @@ export default function SpiceApp() {
       if (savedQuality) setAudioQuality(savedQuality as any);
 
       const savedProtocol = localStorage.getItem('spice_stream_protocol');
-      if (savedProtocol) setStreamProtocol(savedProtocol as any);
+      const embedTransportMigrationComplete = localStorage.getItem('spice_stream_embed_migration_v1034') === 'true';
+      if (savedProtocol === 'embed' && !embedTransportMigrationComplete) {
+        localStorage.setItem('spice_stream_protocol', 'proxy');
+        localStorage.setItem('spice_stream_embed_migration_v1034', 'true');
+        setStreamProtocol('proxy');
+        streamProtocolRef.current = 'proxy';
+      } else if (isStreamProtocol(savedProtocol)) {
+        setStreamProtocol(savedProtocol);
+        streamProtocolRef.current = savedProtocol;
+      }
 
       setProfileSyncEnabled(localStorage.getItem('spice_profile_sync_enabled') === 'true');
       setLastFmSessionKey(localStorage.getItem('spice_lastfm_session_key') || '');
@@ -1596,6 +1612,8 @@ export default function SpiceApp() {
           },
           onError: (event: any) => {
             const code = event.data;
+            const activeTrack = currentTrackRef.current;
+            const activeTrackKey = playbackTrackKey(activeTrack);
             if (code === 2) {
               logDebug('error', 'YouTube Embed Error (2): The request contains an invalid parameter value.');
             } else if (code === 5) {
@@ -1606,6 +1624,21 @@ export default function SpiceApp() {
               logDebug('error', 'YouTube Embed Error (101/150): The video owner has disallowed embedded playbacks for this track. Switch stream endpoint to direct proxy.');
             } else {
               logDebug('error', `YouTube Embed Player error: code ${code}`);
+            }
+            if (
+              activeTrack.id !== 'placeholder'
+              && isYouTubeTrack(activeTrack)
+              && streamProtocolRef.current === 'embed'
+              && !embedProxyRetryRef.current.has(activeTrackKey)
+            ) {
+              embedProxyRetryRef.current.add(activeTrackKey);
+              logDebug('diagnostics', 'YouTube embed was blocked. Retrying this track with the direct proxy transport before skipping.');
+              setShowVideoPlayer(false);
+              setStreamProtocol('proxy');
+              streamProtocolRef.current = 'proxy';
+              localStorage.setItem('spice_stream_protocol', 'proxy');
+              void playTrackRef.current(activeTrack, queueRef.current, queueIndexRef.current);
+              return;
             }
             // Trigger self-healing error skip logic upon iframe playback error
             handleAudioErrorRef.current?.();
@@ -2221,6 +2254,26 @@ export default function SpiceApp() {
   };
 
   const handleAudioError = () => {
+    const activeTrack = currentTrackRef.current;
+    const activeTrackKey = playbackTrackKey(activeTrack);
+
+    if (
+      activeTrack.id !== 'placeholder'
+      && isYouTubeTrack(activeTrack)
+      && streamProtocolRef.current !== 'embed'
+      && !directEmbedRetryRef.current.has(activeTrackKey)
+    ) {
+      directEmbedRetryRef.current.add(activeTrackKey);
+      setError('Direct audio failed. Falling back to the YouTube embedded player...');
+      logDebug('diagnostics', 'Direct audio playback failed after stream resolution. Retrying this track in the YouTube embed transport before skipping.');
+      setStreamProtocol('embed');
+      streamProtocolRef.current = 'embed';
+      setStreamUrl('youtube-embed-active');
+      streamUrlRef.current = 'youtube-embed-active';
+      void playTrackRef.current(activeTrack, queueRef.current, queueIndexRef.current);
+      return;
+    }
+
     setIsPlaying(false);
     setIsLoadingStream(false);
     setError('Playback failed. Attempting self-healing skip to next queue item...');
@@ -2529,6 +2582,7 @@ export default function SpiceApp() {
     setShowBarLyrics(false);
     setShowQueueDrawer(false);
     setStreamProtocol('embed');
+    streamProtocolRef.current = 'embed';
     setStreamUrl('youtube-embed-active');
     setIsLoadingStream(false);
 
@@ -2607,12 +2661,14 @@ export default function SpiceApp() {
     try {
       const isSoundCloud = isSoundCloudTrack(track);
       const isYouTube = isYouTubeTrack(track);
+      const activeStreamProtocol = streamProtocolRef.current;
       logDebug('player', `Initiating ${trackSourceLabel(track)} format resolution for track "${track.title}" (ID: ${track.id})`);
       
-      if ((streamProtocol === 'embed' || showVideoPlayer) && isYouTube) {
+      if ((activeStreamProtocol === 'embed' || showVideoPlayer) && isYouTube) {
         logDebug('stream', `YouTube Embedded Player active. Loading iframe player for track ID: ${track.id}`);
         const shouldStartNow = requestId === playbackRequestRef.current && shouldAutoPlayRef.current;
         setStreamProtocol('embed');
+        streamProtocolRef.current = 'embed';
         setStreamUrl('youtube-embed-active');
         streamUrlRef.current = 'youtube-embed-active';
         setIsLoadingStream(false);
@@ -2683,11 +2739,11 @@ export default function SpiceApp() {
       console.error(err);
       logDebug('error', `Track streaming failed: ${err.message || err}`);
       
-      if (isYouTubeTrack(track) && streamProtocol !== 'embed') {
+      if (isYouTubeTrack(track) && streamProtocolRef.current !== 'embed') {
         logDebug('diagnostics', `Direct stream resolution failed. Initiating self-healing fallback to YouTube Embedded Player...`);
         const shouldStartNow = shouldAutoPlayRef.current;
         setStreamProtocol('embed');
-        localStorage.setItem('spice_stream_protocol', 'embed');
+        streamProtocolRef.current = 'embed';
         
         logDebug('stream', `YouTube Embedded Player active. Loading iframe player for track ID: ${track.id}`);
         setStreamUrl('youtube-embed-active');
@@ -2734,6 +2790,10 @@ export default function SpiceApp() {
       }
     }
   };
+
+  useEffect(() => {
+    playTrackRef.current = playTrack;
+  });
 
   const pauseCurrentPlayback = () => {
     shouldAutoPlayRef.current = false;
@@ -6007,8 +6067,13 @@ export default function SpiceApp() {
                         <select 
                           value={streamProtocol} 
                           onChange={(e) => {
-                            setStreamProtocol(e.target.value as any);
-                            localStorage.setItem('spice_stream_protocol', e.target.value);
+                            const nextProtocol = isStreamProtocol(e.target.value) ? e.target.value : 'proxy';
+                            setStreamProtocol(nextProtocol);
+                            streamProtocolRef.current = nextProtocol;
+                            localStorage.setItem('spice_stream_protocol', nextProtocol);
+                            if (nextProtocol === 'embed') {
+                              localStorage.setItem('spice_stream_embed_migration_v1034', 'true');
+                            }
                           }}
                           style={{ width: '100%', padding: '10px 14px', background: '#0a0a0a', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', outline: 'none', cursor: 'pointer' }}
                         >
@@ -6353,7 +6418,7 @@ export default function SpiceApp() {
                         {Icons.tool} System Diagnostics & Live Terminal
                       </h3>
                       <span style={{ fontSize: '0.75rem', background: 'rgba(255,255,255,0.04)', color: 'var(--text-secondary)', padding: '4px 10px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.06)' }}>
-                        Spice Media Core v1.0.33 (Phase 29 Public Changelog)
+                        Spice Media Core v1.0.34 (Phase 30 Playback Recovery)
                       </span>
                     </div>
 
@@ -6489,6 +6554,7 @@ export default function SpiceApp() {
                             className="btn btn--ghost"
                             onClick={() => {
                               setStreamProtocol('proxy');
+                              streamProtocolRef.current = 'proxy';
                               localStorage.setItem('spice_stream_protocol', 'proxy');
                               logDebug('system', 'Switched stream endpoint back to direct proxy from diagnostics panel.');
                             }}
@@ -7660,7 +7726,7 @@ export default function SpiceApp() {
           <div style={{ opacity: 0.3, fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
             <span>Spice Premium Audio Resolution Engine</span>
             <span>•</span>
-            <span>PWA v1.0.33</span>
+            <span>PWA v1.0.34</span>
           </div>
 
         </div>
