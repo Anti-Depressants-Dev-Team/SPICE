@@ -4,6 +4,7 @@ import { users } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { hashPassword } from '@/lib/hash';
 import { signSession } from '@/lib/auth';
+import { getInitialAccountRoleForEmail, serializeAccount } from '@/lib/account';
 
 export const runtime = 'nodejs';
 
@@ -64,19 +65,24 @@ export async function POST(request: Request) {
     }
 
     const passwordHash = hashPassword(password);
+    const accountRole = getInitialAccountRoleForEmail(normEmail);
     const [newUser] = await db.insert(users).values({
       email: normEmail,
       passwordHash,
+      accountRole,
     }).returning();
 
-    const token = await signSession({ userId: newUser.id, email: newUser.email });
+    const account = serializeAccount(newUser);
+    const token = await signSession({
+      userId: newUser.id,
+      email: newUser.email,
+      accountRole: account.accountRole,
+    });
 
     return jsonResponse({
       token,
-      user: {
-        id: newUser.id,
-        email: newUser.email,
-      },
+      user: account,
+      account,
     });
   } catch (error) {
     return jsonResponse(

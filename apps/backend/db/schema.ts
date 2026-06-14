@@ -1,11 +1,35 @@
-import { pgTable, text, timestamp, uuid, integer, bigint, boolean, primaryKey } from 'drizzle-orm/pg-core';
+import { pgTable, text, timestamp, uuid, integer, bigint, boolean, primaryKey, index } from 'drizzle-orm/pg-core';
 
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
   email: text('email').notNull().unique(),
   passwordHash: text('password_hash'),
+  accountRole: text('account_role').notNull().default('user'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+export const accountSubscriptions = pgTable(
+  'account_subscriptions',
+  {
+    userId: uuid('user_id')
+      .primaryKey()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    tier: text('tier').notNull().default('free'),
+    status: text('status').notNull().default('inactive'),
+    provider: text('provider'),
+    providerCustomerId: text('provider_customer_id'),
+    providerSubscriptionId: text('provider_subscription_id'),
+    currentPeriodStart: timestamp('current_period_start', { withTimezone: true }),
+    currentPeriodEnd: timestamp('current_period_end', { withTimezone: true }),
+    cancelAtPeriodEnd: boolean('cancel_at_period_end').notNull().default(false),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('account_subscriptions_status_idx').on(t.status),
+    index('account_subscriptions_provider_subscription_idx').on(t.provider, t.providerSubscriptionId),
+  ],
+);
 
 export const oauthLinks = pgTable(
   'oauth_links',

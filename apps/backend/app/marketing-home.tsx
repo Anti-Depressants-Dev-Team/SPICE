@@ -2,8 +2,22 @@ import styles from './marketing-home.module.css';
 
 const musicFeatures = [
   'Hybrid YouTube Music, video, and SoundCloud playback',
+  'Spice Anime starter hub for watch queues, releases, and featured shows',
   'Synced lyrics, mini player, shared playlists, and Spice Connect',
   'Last.fm and ListenBrainz profile sync from your SPICE account',
+];
+
+const accountAccess = [
+  {
+    role: 'Normal user',
+    summary: 'Built for listeners who need one profile across SPICE services.',
+    access: ['Profile and avatar settings', 'SPICE Music library sync', 'Provider connections', 'Future services as they launch'],
+  },
+  {
+    role: 'Admin account',
+    summary: 'Reserved for operators who need service health and account oversight.',
+    access: ['Everything normal users get', 'Admin dashboard access', 'Service status controls', 'User and invite moderation'],
+  },
 ];
 
 const services = [
@@ -13,6 +27,14 @@ const services = [
     href: 'https://music.spice-app.xyz',
     description: 'The full player service: search, stream, save libraries, sync profiles, and control other signed-in devices with Spice Connect.',
     cta: 'Open Music',
+    live: true,
+  },
+  {
+    status: 'Starter',
+    title: 'Spice Anime',
+    href: 'https://anime.spice-app.xyz',
+    description: 'A first-pass anime watching surface with featured playback, continue watching rows, trending shows, release schedule, and watchlist structure.',
+    cta: 'Open Anime',
     live: true,
   },
   {
@@ -67,18 +89,36 @@ export default function MarketingHome() {
             <div className={styles.kicker}>spice-app.xyz is the SPICE home screen</div>
             <h1>One front door for SPICE Music and everything coming next.</h1>
             <p className={styles.lede}>
-              The apex domain is now the service hub. Music lives on its own subdomain, and future
-              SPICE services can launch from here without turning the root site into a generic ad.
+              The apex domain is now the service hub. Music and Anime live on their own subdomains,
+              and future SPICE services can launch from here without turning the root site into a generic ad.
             </p>
 
             <div className={styles.actions}>
               <a className={styles.primaryAction} href="https://music.spice-app.xyz">
                 Enter SPICE Music
               </a>
+              <a className={styles.accountAction} href="https://music.spice-app.xyz">
+                Create Spice Account
+              </a>
               <a className={styles.secondaryAction} href="#services">
                 View services
               </a>
+              <a className={styles.secondaryAction} href="https://anime.spice-app.xyz">
+                Preview Anime
+              </a>
             </div>
+
+            <aside className={styles.accountPrompt} aria-label="Create a Spice Account">
+              <div>
+                <span>Spice Account</span>
+                <strong>One sign-in for profiles, sync, and future SPICE services.</strong>
+                <p>
+                  Start as a normal user for your profile and service access. Admin accounts can unlock
+                  the private dashboard later without changing the public home screen.
+                </p>
+              </div>
+              <a href="https://music.spice-app.xyz">Start setup</a>
+            </aside>
 
             <ul className={styles.featureList}>
               {musicFeatures.map((feature) => (
@@ -100,6 +140,16 @@ export default function MarketingHome() {
               <strong>Service launcher</strong>
             </div>
 
+            <div className={styles.profileBar} aria-label="SPICE account profile preview">
+              <div className={styles.profileAvatar}>S</div>
+              <div>
+                <span>Profile bar</span>
+                <strong>Spice Account</strong>
+                <p>Normal access active</p>
+              </div>
+              <small>Admin-ready</small>
+            </div>
+
             <div className={styles.musicTile}>
               <div>
                 <span>Active service</span>
@@ -107,6 +157,15 @@ export default function MarketingHome() {
                 <p>Search, stream, sync, share, and control playback from any signed-in device.</p>
               </div>
               <a href="https://music.spice-app.xyz">Open</a>
+            </div>
+
+            <div className={styles.animeTile}>
+              <div>
+                <span>Starter service</span>
+                <h2>Spice Anime</h2>
+                <p>Featured shows, watch progress, season heat, and a player-first anime shell.</p>
+              </div>
+              <a href="https://anime.spice-app.xyz">Open</a>
             </div>
 
             <div className={styles.signalGrid} aria-hidden="true">
@@ -126,6 +185,30 @@ export default function MarketingHome() {
               <span>Live</span>
             </div>
           </div>
+        </div>
+      </section>
+
+      <section className={styles.accountAccess} aria-label="SPICE account access types">
+        <div className={styles.sectionHeading}>
+          <span>Account access</span>
+          <h2>Regular listeners get their profile. Admins get the control room.</h2>
+        </div>
+
+        <div className={styles.accessGrid}>
+          {accountAccess.map((account) => (
+            <article key={account.role} className={styles.accessCard}>
+              <div className={styles.accessCardHeader}>
+                <span>{account.role}</span>
+                <strong>{account.role === 'Admin account' ? 'Dashboard tier' : 'Listener tier'}</strong>
+              </div>
+              <p>{account.summary}</p>
+              <ul>
+                {account.access.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </article>
+          ))}
         </div>
       </section>
 
@@ -175,6 +258,11 @@ export default function MarketingHome() {
           <span>Music service</span>
           <strong>music.spice-app.xyz</strong>
           <p>The full SPICE player, provider sync, shared playlists, and playback app.</p>
+        </div>
+        <div>
+          <span>Anime starter</span>
+          <strong>anime.spice-app.xyz</strong>
+          <p>A first-pass anime watching interface for featured episodes, watchlists, and schedule structure.</p>
         </div>
         <div>
           <span>Future services</span>
