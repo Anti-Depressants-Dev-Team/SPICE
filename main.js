@@ -77,7 +77,7 @@ const SERVICES = {
   yt: "https://music.youtube.com",
   yt_vk: "https://music.youtube.com", // VK layout uses same URL, just injects VK player UI
   sc: "https://soundcloud.com",
-  spice_crazy: "https://spice-but-its-crazier-cuz-yes-backe.vercel.app/",
+  spice_crazy: "https://music.spice-app.xyz/",
 };
 
 const AD_CSS = `
@@ -1773,8 +1773,7 @@ app.whenReady().then(async () => {
         host === "soundcloud.com" ||
         host === "www.soundcloud.com" ||
         host === "m.soundcloud.com";
-      const isSpiceCrazy =
-        host === "spice-but-its-crazier-cuz-yes-backe.vercel.app";
+      const isSpiceCrazy = host === "music.spice-app.xyz";
 
       if (!isYtMusic && !isSoundCloud && !isSpiceCrazy) {
         console.log("Invalid URL rejected:", url);
