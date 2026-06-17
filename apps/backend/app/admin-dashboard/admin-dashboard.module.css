@@ -1,0 +1,418 @@
+.shell {
+  position: relative;
+  min-height: 100vh;
+  overflow-x: hidden;
+  background:
+    radial-gradient(circle at 18% 0%, rgba(124, 58, 237, 0.2), transparent 26rem),
+    linear-gradient(135deg, #000 0%, #060509 62%, #100714 100%);
+  color: #f8fafc;
+  padding: 26px 0 42px;
+}
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.032) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.032) 1px, transparent 1px);
+  background-size: 46px 46px;
+  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.74), transparent 78%);
+}
+
+.header,
+.hero,
+.metricGrid,
+.dashboardGrid,
+.accessTable {
+  position: relative;
+  z-index: 1;
+  width: min(1180px, calc(100% - 40px));
+  margin: 0 auto;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 48px;
+}
+
+.brandLockup,
+.profilePill {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.logoMark {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 15px;
+  background: linear-gradient(135deg, #7c3aed, #c084fc);
+  box-shadow: 0 0 32px rgba(168, 85, 247, 0.38);
+}
+
+.logoMark svg {
+  width: 31px;
+  height: 31px;
+  fill: #fff;
+}
+
+.brandLockup span,
+.kicker,
+.accessPanel span,
+.metricCard span,
+.panelHeading span {
+  color: #d8b4fe;
+  font-size: 0.74rem;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.brandLockup strong {
+  display: block;
+  margin-top: 3px;
+  color: #fff;
+  font-family: "Outfit", "Inter", sans-serif;
+  font-size: 1.05rem;
+}
+
+.profilePill {
+  padding: 8px 10px 8px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.profilePill > span {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #7c3aed, #c084fc);
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 900;
+}
+
+.profilePill strong,
+.profilePill small {
+  display: block;
+}
+
+.profilePill strong {
+  color: #fff;
+  font-size: 0.86rem;
+}
+
+.profilePill small {
+  color: #a1a1aa;
+  font-size: 0.72rem;
+}
+
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.38fr);
+  align-items: stretch;
+  gap: 18px;
+  margin-bottom: 18px;
+}
+
+.kicker {
+  display: inline-flex;
+  margin-bottom: 18px;
+  padding: 8px 13px;
+  border: 1px solid rgba(192, 132, 252, 0.26);
+  border-radius: 999px;
+  background: rgba(168, 85, 247, 0.1);
+}
+
+.hero h1 {
+  max-width: 860px;
+  margin: 0;
+  color: #fff;
+  font-family: "Outfit", "Inter", sans-serif;
+  font-size: clamp(2.5rem, 7vw, 5.7rem);
+  line-height: 0.95;
+}
+
+.hero p {
+  max-width: 690px;
+  margin: 22px 0 0;
+  color: #c4c4cf;
+  font-size: clamp(1rem, 2vw, 1.12rem);
+  line-height: 1.62;
+}
+
+.accessPanel,
+.metricCard,
+.servicePanel,
+.queuePanel,
+.accessTable {
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.085), rgba(255, 255, 255, 0.025)),
+    rgba(5, 5, 7, 0.84);
+  box-shadow: 0 22px 72px rgba(0, 0, 0, 0.34);
+}
+
+.accessPanel {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  min-height: 280px;
+  padding: 22px;
+  border-radius: 24px;
+}
+
+.accessPanel strong {
+  display: block;
+  margin-top: 10px;
+  color: #fff;
+  font-family: "Outfit", "Inter", sans-serif;
+  font-size: 1.55rem;
+}
+
+.accessPanel p {
+  margin-top: 10px;
+  color: #a1a1aa;
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.metricGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.metricCard {
+  min-height: 150px;
+  padding: 18px;
+  border-radius: 20px;
+}
+
+.metricCard strong {
+  display: block;
+  margin-top: 16px;
+  color: #fff;
+  font-family: "Outfit", "Inter", sans-serif;
+  font-size: clamp(2rem, 4vw, 3.1rem);
+  line-height: 1;
+}
+
+.metricCard p {
+  margin: 12px 0 0;
+  color: #a1a1aa;
+}
+
+.dashboardGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(300px, 0.72fr);
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.servicePanel,
+.queuePanel,
+.accessTable {
+  border-radius: 24px;
+  padding: 20px;
+}
+
+.panelHeading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.panelHeading h2 {
+  margin: 0;
+  color: #fff;
+  font-family: "Outfit", "Inter", sans-serif;
+  font-size: 1.55rem;
+}
+
+.serviceList,
+.queuePanel ul,
+.table {
+  display: grid;
+  gap: 10px;
+}
+
+.serviceRow,
+.tableRow {
+  display: grid;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.serviceRow {
+  grid-template-columns: minmax(150px, 1fr) minmax(160px, 1fr) auto auto;
+  padding: 14px;
+  border-radius: 18px;
+}
+
+.serviceRow strong,
+.serviceRow span,
+.serviceRow p,
+.serviceRow small,
+.tableRow strong,
+.tableRow p,
+.tableRow span {
+  min-width: 0;
+}
+
+.serviceRow strong,
+.tableRow strong {
+  display: block;
+  color: #fff;
+}
+
+.serviceRow span,
+.serviceRow p,
+.tableRow p {
+  color: #a1a1aa;
+  font-size: 0.88rem;
+}
+
+.serviceRow p,
+.tableRow p {
+  margin: 0;
+}
+
+.serviceRow small,
+.tableRow span {
+  justify-self: end;
+  color: #c4c4cf;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.liveBadge,
+.plannedBadge {
+  min-width: 76px;
+  padding: 7px 10px;
+  border-radius: 999px;
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.liveBadge {
+  color: #fff !important;
+  background: linear-gradient(135deg, #7c3aed, #c084fc);
+}
+
+.plannedBadge {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.queuePanel li {
+  position: relative;
+  padding: 12px 12px 12px 34px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #d4d4dc;
+  line-height: 1.45;
+}
+
+.queuePanel li::before {
+  content: "";
+  position: absolute;
+  left: 14px;
+  top: 18px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #c084fc;
+  box-shadow: 0 0 16px rgba(192, 132, 252, 0.46);
+}
+
+.queuePanel button {
+  width: 100%;
+  min-height: 46px;
+  margin-top: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #a1a1aa;
+  cursor: not-allowed;
+  font-weight: 900;
+}
+
+.tableRow {
+  grid-template-columns: minmax(150px, 0.45fr) minmax(0, 1fr) auto;
+  padding: 14px;
+  border-radius: 18px;
+}
+
+.tableRow span {
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: rgba(192, 132, 252, 0.1);
+  color: #e9d5ff;
+}
+
+@media (max-width: 980px) {
+  .hero,
+  .dashboardGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .metricGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 680px) {
+  .header,
+  .hero,
+  .metricGrid,
+  .dashboardGrid,
+  .accessTable {
+    width: min(100% - 28px, 1180px);
+  }
+
+  .header {
+    align-items: flex-start;
+    flex-direction: column;
+    margin-bottom: 36px;
+  }
+
+  .profilePill {
+    width: 100%;
+  }
+
+  .hero h1 {
+    font-size: clamp(2.45rem, 14vw, 4.1rem);
+  }
+
+  .metricGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .serviceRow,
+  .tableRow {
+    grid-template-columns: 1fr;
+  }
+
+  .serviceRow small,
+  .tableRow span {
+    justify-self: start;
+  }
+}

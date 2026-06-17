@@ -404,6 +404,7 @@ type ArtworkShape = 'rounded' | 'soft' | 'circle';
 type MotionLevel = 'full' | 'calm' | 'off';
 type InterfaceScale = 'compact' | 'comfortable' | 'spacious';
 type PlayerBarDensity = 'standard' | 'slim';
+type AccountRole = 'user' | 'admin' | string;
 
 const SEARCH_PROVIDER_LABELS: Record<SearchProvider, string> = {
   hybrid: 'Hybrid',
@@ -465,6 +466,21 @@ interface PlaylistInvitePreview {
   token: string;
   playlist: Playlist;
   expiresAt?: string | null;
+}
+
+interface CloudAccount {
+  id: string;
+  email: string;
+  accountRole?: AccountRole;
+  isAdmin?: boolean;
+  subscription?: {
+    tier: string;
+    status: string;
+    provider?: string | null;
+    currentPeriodEnd?: string | null;
+    cancelAtPeriodEnd?: boolean;
+    isActive?: boolean;
+  };
 }
 
 type RemoteCommandType = 'play' | 'pause' | 'toggle' | 'next' | 'previous' | 'seek' | 'volume' | 'play_track';
@@ -954,7 +970,7 @@ export default function SpiceApp() {
     }
     return null;
   });
-  const [cloudUser, setCloudUser] = useState<{ id: string; email: string } | null>(() => {
+  const [cloudUser, setCloudUser] = useState<CloudAccount | null>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('spice_cloud_user');
       if (saved) {
@@ -3380,6 +3396,18 @@ export default function SpiceApp() {
     queueSearch(searchQuery, provider);
   };
 
+  const handleTopbarSearchSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    setSelectedPlaylist(null);
+    setCurrentPage('search');
+    queueSearch(searchQuery, searchProvider);
+  };
+
+  const openAccountFromTopbar = () => {
+    setSelectedPlaylist(null);
+    setCurrentPage('account');
+  };
+
   useEffect(() => {
     const profile = buildPrivateTasteProfile({
       history,
@@ -4738,7 +4766,52 @@ export default function SpiceApp() {
       {/* ═══ Main Content Area ═══ */}
       <main className="main" id="main">
         <div className="main__content">
-          
+          <header className="app-topbar" aria-label="SPICE topbar">
+            <div className="app-topbar__context">
+              <span>{currentPage === 'search' ? 'Search mode' : 'SPICE Music'}</span>
+              <strong>{currentPage.charAt(0).toUpperCase() + currentPage.slice(1)}</strong>
+            </div>
+
+            <form className="app-topbar__search" onSubmit={handleTopbarSearchSubmit} role="search">
+              {Icons.search}
+              <input
+                type="search"
+                placeholder={`Search ${SEARCH_PROVIDER_LABELS[searchProvider]}...`}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                autoComplete="off"
+                aria-label="Search SPICE"
+              />
+              <button type="submit" disabled={!searchQuery.trim()}>
+                Search
+              </button>
+            </form>
+
+            <div className="app-topbar__actions">
+              <span className="app-topbar__provider">
+                {SEARCH_PROVIDER_LABELS[searchProvider]}
+              </span>
+              <button
+                className="app-topbar__profile"
+                type="button"
+                onClick={openAccountFromTopbar}
+                aria-label={`Open profile for ${activeProfile.displayName}`}
+              >
+                <span className="app-topbar__avatar" style={{ background: activeProfile.avatarUrl ? 'transparent' : activeProfile.gradient }}>
+                  {activeProfile.avatarUrl ? (
+                    <img src={activeProfile.avatarUrl} alt="" />
+                  ) : (
+                    activeProfile.displayName.charAt(0).toUpperCase()
+                  )}
+                </span>
+                <span className="app-topbar__profile-copy">
+                  <strong>{activeProfile.displayName}</strong>
+                  <small>{cloudUser?.accountRole ? `${cloudUser.accountRole} account` : 'Local profile'}</small>
+                </span>
+              </button>
+            </div>
+          </header>
+
           {error && (
             <div style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', padding: '12px 20px', borderRadius: '8px', marginBottom: '24px', color: '#f87171', display: 'flex', alignItems: 'center' }}>
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>{Icons.alertTriangle} {error}</span>
@@ -5534,6 +5607,14 @@ export default function SpiceApp() {
                           <div>
                             <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Logged in as</div>
                             <div style={{ fontSize: '1.1rem', fontWeight: 700, color: '#fff' }}>{cloudUser.email}</div>
+                            <div style={{ display: 'flex', gap: '8px', marginTop: '8px', flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: '0.72rem', background: cloudUser.isAdmin ? 'rgba(250, 204, 21, 0.12)' : 'rgba(255,255,255,0.06)', color: cloudUser.isAdmin ? '#facc15' : 'var(--text-secondary)', padding: '3px 8px', borderRadius: '999px', border: cloudUser.isAdmin ? '1px solid rgba(250, 204, 21, 0.25)' : '1px solid rgba(255,255,255,0.08)', textTransform: 'capitalize' }}>
+                                {cloudUser.accountRole || 'user'} account
+                              </span>
+                              <span style={{ fontSize: '0.72rem', background: cloudUser.subscription?.isActive ? 'rgba(52, 211, 153, 0.1)' : 'rgba(255,255,255,0.06)', color: cloudUser.subscription?.isActive ? '#34d399' : 'var(--text-secondary)', padding: '3px 8px', borderRadius: '999px', border: cloudUser.subscription?.isActive ? '1px solid rgba(52, 211, 153, 0.2)' : '1px solid rgba(255,255,255,0.08)', textTransform: 'capitalize' }}>
+                                {cloudUser.subscription?.tier || 'free'} subscription
+                              </span>
+                            </div>
                           </div>
                           <button className="btn btn--ghost" onClick={handleLogout} style={{ padding: '6px 12px', fontSize: '0.8rem' }}>
                             Sign Out
@@ -6418,7 +6499,7 @@ export default function SpiceApp() {
                         {Icons.tool} System Diagnostics & Live Terminal
                       </h3>
                       <span style={{ fontSize: '0.75rem', background: 'rgba(255,255,255,0.04)', color: 'var(--text-secondary)', padding: '4px 10px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.06)' }}>
-                        Spice Media Core v1.0.34 (Phase 30 Playback Recovery)
+                        Spice Media Core v1.0.36 (Phase 32 Account Roles)
                       </span>
                     </div>
 
@@ -7726,7 +7807,7 @@ export default function SpiceApp() {
           <div style={{ opacity: 0.3, fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
             <span>Spice Premium Audio Resolution Engine</span>
             <span>•</span>
-            <span>PWA v1.0.34</span>
+            <span>PWA v1.0.36</span>
           </div>
 
         </div>

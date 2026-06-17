@@ -1,5 +1,24 @@
 # SPICE Walkthrough
 
+## v1.0.37
+
+- Split `/changelog` into service-specific release histories for SPICE Home, Music, Anime, Connect, and Accounts.
+- Add account-dependent changelog loading so normal users keep the public service history while admin accounts unlock Admin Ops entries.
+- Add `/api/changelog` and focused tests for user/admin changelog payload filtering.
+- Add a sticky SPICE Music topbar with global search beside the provider chip and profile/account button.
+
+## v1.0.36
+
+- Add account-level roles with `user` and `admin` support, admin bootstrap via `SPICE_ADMIN_EMAILS`, and role-aware auth/session responses.
+- Add a future-ready `account_subscriptions` table and account snapshot helpers that expose free/inactive defaults until billing is connected.
+- Add `/api/account/me`, backend account-system documentation, and helper tests for role and subscription normalization.
+
+## v1.0.35
+
+- Add a host-specific Spice Anime starter frontend for `anime.spice-app.xyz` plus a local `/anime` preview route with featured playback, continue-watching cards, trending rows, release schedule, and original generated hero artwork.
+- Add Spice Anime to the public `spice-app.xyz` service hub with a direct launch card and route-map entry.
+- Return host-aware page metadata so the Anime, Music, and root service surfaces describe themselves correctly.
+
 ## v1.0.34
 
 - Restore document scrolling on the public `spice-app.xyz` home and `/changelog` pages by removing the global body scroll lock.

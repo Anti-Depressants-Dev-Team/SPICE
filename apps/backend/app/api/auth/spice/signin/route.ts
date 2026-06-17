@@ -4,6 +4,7 @@ import { users } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { verifyPassword } from '@/lib/hash';
 import { signSession } from '@/lib/auth';
+import { getAccountSnapshotForUserId } from '@/lib/accounts';
 
 export const runtime = 'nodejs';
 
@@ -50,14 +51,27 @@ export async function POST(request: Request) {
       );
     }
 
-    const token = await signSession({ userId: user.id, email: user.email });
+    const account = await getAccountSnapshotForUserId(user.id);
+    if (!account) {
+      return jsonResponse(
+        {
+          error: 'account_not_found',
+          message: 'The account for these credentials no longer exists.',
+        },
+        { status: 401 }
+      );
+    }
+
+    const token = await signSession({
+      userId: user.id,
+      email: user.email,
+      accountRole: account.accountRole,
+    });
 
     return jsonResponse({
       token,
-      user: {
-        id: user.id,
-        email: user.email,
-      },
+      user: account,
+      account,
     });
   } catch (error) {
     return jsonResponse(

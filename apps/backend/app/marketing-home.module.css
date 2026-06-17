@@ -21,6 +21,7 @@
 }
 
 .hero,
+.accountAccess,
 .services,
 .bottomBand {
   position: relative;
@@ -85,6 +86,7 @@
 
 .navCta,
 .primaryAction,
+.accountAction,
 .secondaryAction {
   display: inline-flex;
   align-items: center;
@@ -104,6 +106,7 @@
 
 .navCta:hover,
 .primaryAction:hover,
+.accountAction:hover,
 .secondaryAction:hover,
 .serviceCardLive:hover {
   transform: translateY(-2px);
@@ -122,8 +125,11 @@
 
 .kicker,
 .sectionHeading span,
+.accountPrompt span,
 .panelTop span,
+.profileBar span,
 .musicTile span,
+.accessCardHeader span,
 .bottomBand span {
   color: #d8b4fe;
   font-size: 0.74rem;
@@ -166,6 +172,7 @@
 }
 
 .primaryAction,
+.accountAction,
 .secondaryAction {
   min-height: 54px;
   padding: 0 24px;
@@ -181,6 +188,55 @@
   border: 1px solid rgba(255, 255, 255, 0.14);
   background: rgba(255, 255, 255, 0.055);
   color: #e5e7eb;
+}
+
+.accountAction {
+  border: 1px solid rgba(216, 180, 254, 0.32);
+  background: rgba(192, 132, 252, 0.12);
+  color: #f5e8ff;
+  box-shadow: 0 16px 38px rgba(168, 85, 247, 0.18);
+}
+
+.accountPrompt {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+  max-width: 680px;
+  margin-top: 24px;
+  padding: 18px;
+  border: 1px solid rgba(216, 180, 254, 0.2);
+  border-radius: 24px;
+  background:
+    linear-gradient(135deg, rgba(192, 132, 252, 0.1), rgba(255, 255, 255, 0.035)),
+    rgba(255, 255, 255, 0.04);
+}
+
+.accountPrompt strong {
+  display: block;
+  margin-top: 8px;
+  color: #fff;
+  font-family: "Outfit", "Inter", sans-serif;
+  font-size: 1.12rem;
+}
+
+.accountPrompt p {
+  margin: 8px 0 0;
+  color: #b9b9c6;
+  line-height: 1.5;
+}
+
+.accountPrompt a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 18px;
+  border-radius: 999px;
+  background: #fff;
+  color: #111016;
+  font-size: 0.84rem;
+  font-weight: 900;
 }
 
 .featureList {
@@ -238,6 +294,7 @@
 }
 
 .panelTop,
+.profileBar,
 .musicTile,
 .signalGrid,
 .panelFooter {
@@ -259,7 +316,59 @@
   font-size: 1.05rem;
 }
 
-.musicTile {
+.profileBar {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.profileAvatar {
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #7c3aed, #c084fc);
+  color: #fff;
+  font-weight: 900;
+  box-shadow: 0 0 24px rgba(168, 85, 247, 0.32);
+}
+
+.profileBar strong,
+.profileBar p {
+  display: block;
+  min-width: 0;
+}
+
+.profileBar strong {
+  margin-top: 4px;
+  color: #fff;
+  font-family: "Outfit", "Inter", sans-serif;
+}
+
+.profileBar p {
+  margin: 2px 0 0;
+  color: #a1a1aa;
+  font-size: 0.82rem;
+}
+
+.profileBar small {
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: rgba(192, 132, 252, 0.12);
+  color: #e9d5ff;
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.musicTile,
+.animeTile {
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 18px;
@@ -272,21 +381,32 @@
     rgba(255, 255, 255, 0.055);
 }
 
-.musicTile h2 {
+.animeTile {
+  margin-top: 14px;
+  border-color: rgba(34, 211, 238, 0.22);
+  background:
+    radial-gradient(circle at 20% 0%, rgba(34, 211, 238, 0.14), transparent 54%),
+    rgba(255, 255, 255, 0.045);
+}
+
+.musicTile h2,
+.animeTile h2 {
   margin: 8px 0 8px;
   color: #fff;
   font-family: "Outfit", "Inter", sans-serif;
-  font-size: clamp(2rem, 5vw, 3rem);
+  font-size: clamp(1.7rem, 4vw, 3rem);
   letter-spacing: -0.05em;
 }
 
-.musicTile p {
+.musicTile p,
+.animeTile p {
   margin: 0;
   color: #c4c4cf;
   line-height: 1.5;
 }
 
-.musicTile a {
+.musicTile a,
+.animeTile a {
   display: inline-flex;
   min-height: 44px;
   align-items: center;
@@ -351,6 +471,10 @@
   padding: 20px 0 18px;
 }
 
+.accountAccess {
+  padding: 4px 0 24px;
+}
+
 .sectionHeading {
   max-width: 720px;
   margin-bottom: 24px;
@@ -365,9 +489,73 @@
   letter-spacing: -0.06em;
 }
 
+.accessGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.accessCard {
+  min-height: 280px;
+  display: flex;
+  flex-direction: column;
+  padding: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 22px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.025)),
+    rgba(255, 255, 255, 0.045);
+}
+
+.accessCardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.accessCardHeader strong {
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: rgba(192, 132, 252, 0.1);
+  color: #e9d5ff;
+  font-size: 0.78rem;
+}
+
+.accessCard p {
+  margin: 24px 0 20px;
+  color: #c4c4cf;
+  line-height: 1.55;
+}
+
+.accessCard ul {
+  display: grid;
+  gap: 10px;
+  margin-top: auto;
+}
+
+.accessCard li {
+  position: relative;
+  padding-left: 18px;
+  color: #e5e7eb;
+  font-size: 0.94rem;
+}
+
+.accessCard li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.6em;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #c084fc;
+  box-shadow: 0 0 14px rgba(192, 132, 252, 0.44);
+}
+
 .serviceGrid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
   gap: 14px;
 }
 
@@ -463,7 +651,7 @@
   margin-bottom: 36px;
   padding-top: 18px;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 14px;
 }
 
@@ -489,6 +677,7 @@
 
 @media (max-width: 1020px) {
   .heroGrid,
+  .accessGrid,
   .serviceGrid,
   .bottomBand {
     grid-template-columns: 1fr 1fr;
@@ -501,6 +690,7 @@
 
 @media (max-width: 720px) {
   .hero,
+  .accountAccess,
   .services,
   .bottomBand {
     width: min(100% - 28px, 1180px);
@@ -526,6 +716,7 @@
   }
 
   .heroGrid,
+  .accessGrid,
   .serviceGrid,
   .bottomBand {
     grid-template-columns: 1fr;
@@ -540,8 +731,22 @@
   }
 
   .primaryAction,
+  .accountAction,
   .secondaryAction {
     width: 100%;
+  }
+
+  .accountPrompt,
+  .profileBar {
+    grid-template-columns: 1fr;
+  }
+
+  .accountPrompt a {
+    width: 100%;
+  }
+
+  .profileBar small {
+    justify-self: start;
   }
 
   .commandPanel {
@@ -550,11 +755,13 @@
     border-radius: 26px;
   }
 
-  .musicTile {
+  .musicTile,
+  .animeTile {
     grid-template-columns: 1fr;
   }
 
-  .musicTile a {
+  .musicTile a,
+  .animeTile a {
     width: 100%;
   }
 
