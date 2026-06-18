@@ -17,6 +17,7 @@
   "dependencies": {
     "@neondatabase/serverless": "^0.10.0",
     "@node-rs/argon2": "^2.0.0",
+    "@vercel/analytics": "^2.0.1",
     "@vercel/config": "^0.3.0",
     "@vercel/speed-insights": "^2.0.0",
     "drizzle-orm": "^0.36.0",
