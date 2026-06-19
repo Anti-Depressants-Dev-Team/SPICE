@@ -347,6 +347,8 @@
 .panelTop span,
 .profileBar span,
 .musicTile span,
+.animeTile span,
+.movieTile span,
 .accessCardHeader span,
 .bottomBand span {
   color: #d8b4fe;
@@ -586,7 +588,8 @@
 }
 
 .musicTile,
-.animeTile {
+.animeTile,
+.movieTile {
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 18px;
@@ -607,8 +610,17 @@
     rgba(255, 255, 255, 0.045);
 }
 
+.movieTile {
+  margin-top: 14px;
+  border-color: rgba(248, 199, 125, 0.24);
+  background:
+    radial-gradient(circle at 20% 0%, rgba(248, 199, 125, 0.14), transparent 54%),
+    rgba(255, 255, 255, 0.045);
+}
+
 .musicTile h2,
-.animeTile h2 {
+.animeTile h2,
+.movieTile h2 {
   margin: 8px 0 8px;
   color: #fff;
   font-family: "Outfit", "Inter", sans-serif;
@@ -617,14 +629,16 @@
 }
 
 .musicTile p,
-.animeTile p {
+.animeTile p,
+.movieTile p {
   margin: 0;
   color: #c4c4cf;
   line-height: 1.5;
 }
 
 .musicTile a,
-.animeTile a {
+.animeTile a,
+.movieTile a {
   display: inline-flex;
   min-height: 44px;
   align-items: center;
@@ -869,7 +883,7 @@
   margin-bottom: 36px;
   padding-top: 18px;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
   gap: 14px;
 }
 
@@ -1032,12 +1046,14 @@
   }
 
   .musicTile,
-  .animeTile {
+  .animeTile,
+  .movieTile {
     grid-template-columns: 1fr;
   }
 
   .musicTile a,
-  .animeTile a {
+  .animeTile a,
+  .movieTile a {
     width: 100%;
   }
 

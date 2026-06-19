@@ -14,6 +14,7 @@ test('service changelog hides admin operations notes for normal accounts', () =>
         notes: [
           'Add account-level roles with `user` and `admin` support.',
           'Add a host-specific Spice Anime starter frontend.',
+          'Add a host-specific Spice Movie starter frontend.',
           'Improve player playback recovery for SPICE Music.',
         ],
       },
@@ -26,6 +27,7 @@ test('service changelog hides admin operations notes for normal accounts', () =>
   assert.equal(payload.lockedServices.some((service) => service.id === 'admin'), true);
   assert.equal(JSON.stringify(payload).includes('account-level roles'), false);
   assert.ok(payload.services.find((service) => service.id === 'anime'));
+  assert.ok(payload.services.find((service) => service.id === 'movie'));
   assert.ok(payload.services.find((service) => service.id === 'music'));
 });
 

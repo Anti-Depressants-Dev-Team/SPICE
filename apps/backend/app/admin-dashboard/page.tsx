@@ -5,13 +5,14 @@ import styles from './admin-dashboard.module.css';
 const metrics = [
   { label: 'Accounts', value: '1,284', detail: '92 created this week' },
   { label: 'Active devices', value: '346', detail: 'Spice Connect online' },
-  { label: 'Live services', value: '2 / 5', detail: 'Music and Anime are public' },
+  { label: 'Live services', value: '3 / 6', detail: 'Music, Anime, and Movie are public' },
   { label: 'Review queue', value: '18', detail: 'Invites and reports' },
 ];
 
 const services = [
   { name: 'SPICE Music', status: 'Live', owner: 'Music platform', health: '99.98%', access: 'All signed-in users' },
   { name: 'Spice Anime', status: 'Starter', owner: 'Anime starter', health: 'Preview', access: 'All signed-in users' },
+  { name: 'Spice Movie', status: 'Starter', owner: 'Movie starter', health: 'Preview', access: 'All signed-in users' },
   { name: 'SPICE Rooms', status: 'Planned', owner: 'Social listening', health: 'Design', access: 'Admins only preview' },
   { name: 'SPICE Recap', status: 'Planned', owner: 'Profile intelligence', health: 'Prototype', access: 'Admins only preview' },
   { name: 'SPICE Cloud', status: 'Planned', owner: 'Account services', health: 'Queued', access: 'Admins only preview' },
@@ -26,6 +27,7 @@ const accessRows = [
 const activity = [
   'SPICE Music marked healthy after playback check',
   'Spice Anime starter surface is ready for account entry',
+  'Spice Movie starter surface is ready for account entry',
   'New account creation prompt added to home screen',
   'Rooms invite limits waiting for admin policy',
   'Cloud account tools queued for service rollout',
@@ -77,7 +79,7 @@ export default function AdminDashboardPage() {
         <aside className={styles.accessPanel}>
           <span>Access level</span>
           <strong>Admin account required</strong>
-          <p>Normal users should stay limited to profile, music, anime, sync, and public services.</p>
+          <p>Normal users should stay limited to profile, music, anime, movie, sync, and public services.</p>
         </aside>
       </section>
 

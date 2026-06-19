@@ -6,6 +6,7 @@ const musicAccountSetupUrl = 'https://music.spice-app.xyz/?page=account&auth=reg
 const musicFeatures = [
   'Hybrid YouTube Music, video, and SoundCloud playback',
   'Spice Anime starter hub for watch queues, releases, and featured shows',
+  'Spice Movie starter hub for cinematic queues, premieres, and watch rooms',
   'Synced lyrics, mini player, shared playlists, and Spice Connect',
   'Last.fm and ListenBrainz profile sync from your SPICE account',
 ];
@@ -41,6 +42,14 @@ const services = [
     live: true,
   },
   {
+    status: 'Starter',
+    title: 'Spice Movie',
+    href: 'https://movie.spice-app.xyz',
+    description: 'A first-pass movie surface with cinematic hero playback, private queues, premiere rows, showtimes, and watchlist structure.',
+    cta: 'Open Movie',
+    live: true,
+  },
+  {
     status: 'Planned',
     title: 'SPICE Rooms',
     description: 'Shared listening rooms, friend invites, and collaborative queue control built on top of the playlist system.',
@@ -73,7 +82,7 @@ export default function MarketingHome() {
             <div className={styles.kicker}>spice-app.xyz is the SPICE home screen</div>
             <h1>One front door for SPICE Music and everything coming next.</h1>
             <p className={styles.lede}>
-              The apex domain is now the service hub. Music and Anime live on their own subdomains,
+              The apex domain is now the service hub. Music, Anime, and Movie live on their own subdomains,
               and future SPICE services can launch from here without turning the root site into a generic ad.
             </p>
 
@@ -89,6 +98,9 @@ export default function MarketingHome() {
               </a>
               <a className={styles.secondaryAction} href="https://anime.spice-app.xyz">
                 Preview Anime
+              </a>
+              <a className={styles.secondaryAction} href="https://movie.spice-app.xyz">
+                Preview Movie
               </a>
             </div>
 
@@ -150,6 +162,15 @@ export default function MarketingHome() {
                 <p>Featured shows, watch progress, season heat, and a player-first anime shell.</p>
               </div>
               <a href="https://anime.spice-app.xyz">Open</a>
+            </div>
+
+            <div className={styles.movieTile}>
+              <div>
+                <span>Starter service</span>
+                <h2>Spice Movie</h2>
+                <p>Cinematic queues, premiere rows, room-ready playback, and a theater-first movie shell.</p>
+              </div>
+              <a href="https://movie.spice-app.xyz">Open</a>
             </div>
 
             <div className={styles.signalGrid} aria-hidden="true">
@@ -247,6 +268,11 @@ export default function MarketingHome() {
           <span>Anime starter</span>
           <strong>anime.spice-app.xyz</strong>
           <p>A first-pass anime watching interface for featured episodes, watchlists, and schedule structure.</p>
+        </div>
+        <div>
+          <span>Movie starter</span>
+          <strong>movie.spice-app.xyz</strong>
+          <p>A first-pass movie watching interface for cinematic queues, premieres, showtimes, and watch rooms.</p>
         </div>
         <div>
           <span>Future services</span>
