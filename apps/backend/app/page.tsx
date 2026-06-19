@@ -2,11 +2,13 @@ import type { Metadata } from 'next';
 import { headers } from 'next/headers';
 
 import SpiceAnime from './spice-anime';
+import SpiceMovie from './spice-movie';
 import MarketingHome from './marketing-home';
 import SpiceApp from './spice-app';
 
 const LANDING_HOSTS = new Set(['spice-app.xyz', 'www.spice-app.xyz']);
 const ANIME_HOSTS = new Set(['anime.spice-app.xyz']);
+const MOVIE_HOSTS = new Set(['movie.spice-app.xyz']);
 
 export const dynamic = 'force-dynamic';
 
@@ -20,10 +22,17 @@ export async function generateMetadata(): Promise<Metadata> {
     };
   }
 
+  if (MOVIE_HOSTS.has(host)) {
+    return {
+      title: 'Spice Movie - Premium Movie Streaming',
+      description: 'A starter front-end concept for the Spice Movie watching experience.',
+    };
+  }
+
   if (LANDING_HOSTS.has(host)) {
     return {
       title: 'SPICE - Service Home',
-      description: 'The public home for SPICE Music, Spice Anime, and the wider SPICE service stack.',
+      description: 'The public home for SPICE Music, Spice Anime, Spice Movie, and the wider SPICE service stack.',
     };
   }
 
@@ -42,6 +51,10 @@ export default async function Home() {
 
   if (ANIME_HOSTS.has(host)) {
     return <SpiceAnime />;
+  }
+
+  if (MOVIE_HOSTS.has(host)) {
+    return <SpiceMovie watchBasePath="/watch" />;
   }
 
   return <SpiceApp />;

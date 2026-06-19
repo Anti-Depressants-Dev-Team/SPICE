@@ -34,6 +34,7 @@ This file applies to the whole repository. More specific `AGENTS.md` files in ch
   - `Spice.Music Algorithm` -> `codex/spice-music-algorithm`
   - `Spice.Admin main` -> `codex/spice-admin-main`
   - `Spice.Anime main` -> `codex/spice-anime-main`
+  - `Spice.Movie main` -> `codex/spice-movie-main`
 - Before editing, check the current branch, worktree, and dirty state. Do not mix unrelated service lanes in one dirty worktree.
 - If a task requires multiple lanes, either ask for confirmation or use a dedicated shared/integration lane and record the cross-lane impact in `walkthrough.md`.
 
@@ -76,6 +77,12 @@ This file applies to the whole repository. More specific `AGENTS.md` files in ch
 - Owns Spice Anime at `anime.spice-app.xyz` and the local `/anime` preview.
 - Primary files are currently `apps/backend/app/spice-anime.tsx`, `apps/backend/app/spice-anime.module.css`, `apps/backend/app/anime`, Anime host routing/metadata, and Anime assets under `apps/backend/public/anime`.
 - Do not change Music playback, Home landing, or Admin surfaces unless the request explicitly calls for a shared integration.
+
+### Spice.Movie main
+
+- Owns Spice Movie at `movie.spice-app.xyz` and the local `/movie` preview.
+- Primary files are currently `apps/backend/app/spice-movie.tsx`, `apps/backend/app/spice-movie.module.css`, `apps/backend/app/movie`, Movie host routing/metadata, and Movie assets under `apps/backend/public/movie`.
+- Do not change Music playback, Anime pages, Home landing, or Admin surfaces unless the request explicitly calls for a shared integration.
 
 ## Future Services And Sections
 

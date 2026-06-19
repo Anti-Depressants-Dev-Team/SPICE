@@ -1,5 +1,16 @@
 # SPICE Walkthrough
 
+## v1.0.44
+
+- Link the Spice Movie screening panel to VIDSrc through validated TMDB movie IDs, host-compatible watch routes, and a sandboxed full-screen player shell.
+- Add a configurable `SPICE_MOVIE_PROVIDER_BASE_URL`, focused provider URL tests, and Movie-lane release documentation so provider domain changes stay isolated from the UI.
+
+## v1.0.43
+
+- Add a host-specific Spice Movie starter frontend for `movie.spice-app.xyz` plus a local `/movie` preview route with cinematic hero playback, continue-watching cards, premiere rows, showtimes, and original project hero artwork.
+- Add Spice Movie to the public `spice-app.xyz` service hub with a direct launch card, hero action, route-map entry, and host-aware page metadata.
+- Register Movie in the service changelog, admin launch-status prototype, focused changelog test, and repo service-lane guidance so future Movie work stays scoped.
+
 ## v1.0.42
 
 - Add the SPICE Music topbar pattern to the public Home screen at `spice-app.xyz` with integrated search, provider selection, and profile/account controls.

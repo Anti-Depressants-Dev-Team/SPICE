@@ -35,6 +35,12 @@ const SERVICES: ServiceChangelogSummary[] = [
     audience: 'user',
   },
   {
+    id: 'movie',
+    label: 'Spice Movie',
+    description: 'Movie starter surface, cinematic queues, premiere rows, showtimes, and watch room work.',
+    audience: 'user',
+  },
+  {
     id: 'connect',
     label: 'Spice Connect',
     description: 'Signed-in device discovery, receiver control, and cross-device playback commands.',
@@ -181,6 +187,10 @@ function classifyNoteServices(note: string, audience: ChangelogAudience) {
 
   if (normalized.includes('anime')) {
     serviceIds.add('anime');
+  }
+
+  if (matchesAny(normalized, ['movie', 'film', 'premiere', 'showtime', 'watch room', 'watch rooms', 'screening'])) {
+    serviceIds.add('movie');
   }
 
   if (matchesAny(normalized, ['spice connect', 'remote', 'receiver', 'device', 'command', 'cross-device'])) {
