@@ -3,8 +3,8 @@ import type { NextRequest } from 'next/server';
 import { verifySession } from '@/lib/auth';
 import { jsonResponse, optionsResponse } from '@/lib/cors';
 import { db } from '@/db';
-import { playlistMembers } from '@/db/schema';
-import { and, eq } from 'drizzle-orm';
+import { playlistMembers, playlists } from '@/db/schema';
+import { and, eq, isNull } from 'drizzle-orm';
 
 export const runtime = 'nodejs';
 
@@ -37,12 +37,22 @@ export async function DELETE(
       return jsonResponse({ error: 'invalid_playlist_id', message: 'Playlist id must be a UUID.' }, { status: 400 });
     }
 
-    await db.delete(playlistMembers).where(
-      and(
-        eq(playlistMembers.playlistId, playlistId),
-        eq(playlistMembers.userId, session.userId),
-      ),
-    );
+    const playlist = await db.query.playlists.findFirst({
+      where: and(eq(playlists.id, playlistId), isNull(playlists.deletedAt)),
+    });
+
+    if (playlist && playlist.userId === session.userId) {
+      // Owner deletes the playlist
+      await db.update(playlists).set({ deletedAt: new Date() }).where(eq(playlists.id, playlistId));
+    } else {
+      // Collaborator leaves the playlist
+      await db.delete(playlistMembers).where(
+        and(
+          eq(playlistMembers.playlistId, playlistId),
+          eq(playlistMembers.userId, session.userId),
+        ),
+      );
+    }
 
     return jsonResponse({ success: true });
   } catch (error) {

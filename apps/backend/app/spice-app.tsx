@@ -394,6 +394,7 @@ interface Track {
   sourceId?: string;
   permalinkUrl?: string;
   previewOnly?: boolean;
+  addedBy?: { userId: string; username: string | null; displayName: string };
 }
 
 type AppPage = 'home' | 'search' | 'library' | 'account' | 'settings';
@@ -454,6 +455,14 @@ const PROFILE_SYNC_STATUS_LABELS: Record<ProfileSyncStatus, string> = {
   error: 'Needs attention',
 };
 
+interface PlaylistMember {
+  userId: string;
+  username: string | null;
+  displayName: string;
+  avatarUrl: string | null;
+  role: string;
+}
+
 interface Playlist {
   id: string;
   title: string;
@@ -463,7 +472,10 @@ interface Playlist {
   createdAt: string;
   shared?: boolean;
   ownerId?: string;
+  ownerUsername?: string | null;
+  ownerDisplayName?: string;
   shareRole?: 'listener' | 'editor' | string;
+  members?: PlaylistMember[];
 }
 
 interface PlaylistInvitePreview {
@@ -693,7 +705,12 @@ const createPlaylistId = () => {
     return crypto.randomUUID();
   }
 
-  return `${Date.now()}-${randomSuffix()}`;
+  // Fallback RFC4122 version 4 UUID generator
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
 };
 
 const ownedPlaylistsOnly = (playlists: Playlist[]) =>
@@ -710,7 +727,10 @@ const normalizePlaylistSnapshot = (playlist: any): Playlist => ({
     : new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }),
   ...(playlist?.shared ? { shared: true } : {}),
   ...(typeof playlist?.ownerId === 'string' ? { ownerId: playlist.ownerId } : {}),
+  ...(typeof playlist?.ownerUsername === 'string' ? { ownerUsername: playlist.ownerUsername } : {}),
+  ...(typeof playlist?.ownerDisplayName === 'string' ? { ownerDisplayName: playlist.ownerDisplayName } : {}),
   ...(typeof playlist?.shareRole === 'string' ? { shareRole: playlist.shareRole } : {}),
+  ...(Array.isArray(playlist?.members) ? { members: playlist.members } : {}),
 });
 
 const createRemoteDeviceId = () => {
@@ -938,7 +958,7 @@ export default function SpiceApp() {
   const [queueIndex, setQueueIndex] = useState(0);
 
   const [libraryView, setLibraryView] = useState<'list' | 'grid'>('list');
-  const [libraryFilter, setLibraryFilter] = useState<'playlists' | 'liked' | 'history'>('playlists');
+  const [libraryFilter, setLibraryFilter] = useState<'playlists' | 'shared' | 'liked' | 'history'>('playlists');
 
   // Sync profile details when changing profile
   const [editName, setEditName] = useState(activeProfile.displayName);
@@ -966,6 +986,22 @@ export default function SpiceApp() {
   const [invitePreview, setInvitePreview] = useState<PlaylistInvitePreview | null>(null);
   const [inviteStatus, setInviteStatus] = useState<string | null>(null);
   const [acceptingInvite, setAcceptingInvite] = useState(false);
+
+  // Username & Shared Playlist Collaboration state
+  const [cloudUsername, setCloudUsername] = useState<string | null>(null);
+  const [usernameInput, setUsernameInput] = useState('');
+  const [usernameSaving, setUsernameSaving] = useState(false);
+  const [usernameError, setUsernameError] = useState<string | null>(null);
+  const [usernameSuccess, setUsernameSuccess] = useState(false);
+  const [showMembersPanel, setShowMembersPanel] = useState(false);
+  const [membersLoading, setMembersLoading] = useState(false);
+  const [membersList, setMembersList] = useState<{ owner: PlaylistMember; members: PlaylistMember[]; maxMembers: number } | null>(null);
+  const [inviteUsername, setInviteUsername] = useState('');
+  const [invitingMember, setInvitingMember] = useState(false);
+  const [memberActionStatus, setMemberActionStatus] = useState<string | null>(null);
+  const [showCreateSharedDialog, setShowCreateSharedDialog] = useState(false);
+  const [newSharedPlTitle, setNewSharedPlTitle] = useState('');
+  const [newSharedPlDesc, setNewSharedPlDesc] = useState('');
 
   // Cloud Sync & Accounts state
   const [cloudToken, setCloudToken] = useState<string | null>(() => {
@@ -2170,6 +2206,7 @@ export default function SpiceApp() {
       // Auto sync after login
       await syncWithCloud(data.token);
       await restoreLastFmAccountLink(data.token);
+      fetchUsername(data.token);
     } catch (err: any) {
       console.error(err);
       logDebug('error', `Authentication attempt failed: ${err.message || err}`);
@@ -2184,6 +2221,8 @@ export default function SpiceApp() {
     localStorage.removeItem('spice_cloud_user');
     setCloudToken(null);
     setCloudUser(null);
+    setCloudUsername(null);
+    setUsernameInput('');
     setLastFmAccountLinked(false);
     localStorage.setItem('spice_lastfm_account_linked', 'false');
     setDbError(null);
@@ -3633,10 +3672,40 @@ export default function SpiceApp() {
     setSelectedPlaylist(null);
   };
 
-  const addTrackToPlaylist = (track: Track, playlistId: string) => {
+  const addTrackToPlaylist = async (track: Track, playlistId: string) => {
     const target = customPlaylists.find(pl => pl.id === playlistId);
+
+    // For shared playlists, add via API
+    if (target?.shared && cloudToken && isPlaylistUuid(playlistId)) {
+      try {
+        const response = await fetch(`/api/playlists/shared/${encodeURIComponent(playlistId)}/tracks`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cloudToken}` },
+          body: JSON.stringify({ track: { id: track.id, title: track.title, artists: track.artists, artworkUrl: track.artworkUrl, durationMs: track.durationMs, sourceId: track.sourceId || 'youtube_music' } }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.message || 'Failed to add track.');
+
+        // Optimistically update the local playlist
+        const updated = customPlaylists.map(pl => {
+          if (pl.id === playlistId) {
+            if (pl.tracks.some(t => t.id === track.id)) return pl;
+            return { ...pl, tracks: [...pl.tracks, { ...track, addedBy: cloudUsername ? { userId: '', username: cloudUsername, displayName: cloudUsername } : undefined }] };
+          }
+          return pl;
+        });
+        persistCustomPlaylists(updated, false);
+        if (selectedPlaylist && selectedPlaylist.id === playlistId) {
+          setSelectedPlaylist(updated.find(p => p.id === playlistId) || null);
+        }
+      } catch (error) {
+        setShareStatus(error instanceof Error ? error.message : 'Failed to add track to shared playlist.');
+      }
+      return;
+    }
+
     if (target?.shared) {
-      setShareStatus('Shared playlists are read-only in this version.');
+      setShareStatus('Sign in to add tracks to shared playlists.');
       return;
     }
 
@@ -3655,10 +3724,38 @@ export default function SpiceApp() {
     }
   };
 
-  const removeTrackFromPlaylist = (trackId: string, playlistId: string) => {
+  const removeTrackFromPlaylist = async (trackId: string, playlistId: string, position?: number) => {
     const target = customPlaylists.find(pl => pl.id === playlistId);
+
+    // For shared playlists, remove via API
+    if (target?.shared && cloudToken && isPlaylistUuid(playlistId) && typeof position === 'number') {
+      try {
+        const response = await fetch(`/api/playlists/shared/${encodeURIComponent(playlistId)}/tracks`, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cloudToken}` },
+          body: JSON.stringify({ position }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.message || 'Failed to remove track.');
+
+        const updated = customPlaylists.map(pl => {
+          if (pl.id === playlistId) {
+            return { ...pl, tracks: pl.tracks.filter(t => t.id !== trackId) };
+          }
+          return pl;
+        });
+        persistCustomPlaylists(updated, false);
+        if (selectedPlaylist && selectedPlaylist.id === playlistId) {
+          setSelectedPlaylist(updated.find(p => p.id === playlistId) || null);
+        }
+      } catch (error) {
+        setShareStatus(error instanceof Error ? error.message : 'Failed to remove track.');
+      }
+      return;
+    }
+
     if (target?.shared) {
-      setShareStatus('Shared playlists are read-only in this version.');
+      setShareStatus('Sign in to manage shared playlist tracks.');
       return;
     }
 
@@ -3676,8 +3773,9 @@ export default function SpiceApp() {
   };
 
   const sharePlaylist = async (playlist: Playlist) => {
-    if (playlist.shared) {
-      setShareStatus('Shared playlists can only be shared by their owner.');
+    // Members of a shared playlist they don't own cannot generate invite links
+    if (playlist.shared && !isPlaylistOwner) {
+      setShareStatus('Only the playlist owner can create invite links.');
       return;
     }
 
@@ -3687,36 +3785,39 @@ export default function SpiceApp() {
     }
 
     setSharingPlaylistId(playlist.id);
-    setShareStatus('Saving playlist before creating a share link...');
+    setShareStatus(playlist.shared ? 'Generating a new invite link...' : 'Saving playlist before creating a share link...');
 
     try {
       let shareablePlaylist = playlist;
       let updatedPlaylists = customPlaylists;
 
-      if (!isPlaylistUuid(playlist.id)) {
-        shareablePlaylist = { ...playlist, id: createPlaylistId() };
-        updatedPlaylists = customPlaylists.map(pl => pl.id === playlist.id ? shareablePlaylist : pl);
-        setSharingPlaylistId(shareablePlaylist.id);
-        persistCustomPlaylists(updatedPlaylists);
-        if (selectedPlaylist?.id === playlist.id) {
-          setSelectedPlaylist(shareablePlaylist);
+      // For regular (unshared) playlists: ensure a UUID and sync to backend first
+      if (!playlist.shared) {
+        if (!isPlaylistUuid(playlist.id)) {
+          shareablePlaylist = { ...playlist, id: createPlaylistId() };
+          updatedPlaylists = customPlaylists.map(pl => pl.id === playlist.id ? shareablePlaylist : pl);
+          setSharingPlaylistId(shareablePlaylist.id);
+          persistCustomPlaylists(updatedPlaylists);
+          if (selectedPlaylist?.id === playlist.id) {
+            setSelectedPlaylist(shareablePlaylist);
+          }
         }
-      }
 
-      const syncResponse = await fetch('/api/sync/playlists', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${cloudToken}`,
-        },
-        body: JSON.stringify({
-          playlists: ownedPlaylistsOnly(updatedPlaylists),
-          profileId: activeProfileId,
-        }),
-      });
-      const syncData = await syncResponse.json().catch(() => ({}));
-      if (!syncResponse.ok) {
-        throw new Error(syncData.message || 'Could not save playlist before sharing.');
+        const syncResponse = await fetch('/api/sync/playlists', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${cloudToken}`,
+          },
+          body: JSON.stringify({
+            playlists: ownedPlaylistsOnly(updatedPlaylists),
+            profileId: activeProfileId,
+          }),
+        });
+        const syncData = await syncResponse.json().catch(() => ({}));
+        if (!syncResponse.ok) {
+          throw new Error(syncData.message || 'Could not save playlist before sharing.');
+        }
       }
 
       const inviteResponse = await fetch('/api/playlists/invites', {
@@ -3741,7 +3842,16 @@ export default function SpiceApp() {
         } catch {}
       }
 
-      setShareStatus(copied ? 'Share link copied to clipboard.' : `Share link ready: ${inviteUrl}`);
+      setShareStatus(copied ? 'Invite link copied to clipboard.' : `Invite link ready: ${inviteUrl}`);
+
+      // Mark playlist as shared locally
+      const finalPlaylist: Playlist = { ...shareablePlaylist, shared: true, shareRole: 'owner' };
+      const finalPlaylists = customPlaylists.map(pl => pl.id === playlist.id ? finalPlaylist : pl);
+      persistCustomPlaylists(finalPlaylists, false);
+      if (selectedPlaylist?.id === playlist.id) {
+        setSelectedPlaylist(finalPlaylist);
+      }
+
       logDebug('database', `Created shared playlist invite for "${shareablePlaylist.title}".`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to share playlist.';
@@ -3798,6 +3908,221 @@ export default function SpiceApp() {
 
   const likedTracksList = Object.values(likedTrackDetails);
   const editablePlaylists = customPlaylists.filter((playlist) => !playlist.shared);
+  const sharedPlaylists = customPlaylists.filter((playlist) => playlist.shared);
+  const allEditablePlaylists = customPlaylists.filter((playlist) => !playlist.shared || playlist.shareRole === 'editor' || playlist.shareRole === 'owner');
+
+  // ── Username Management ──────────────────────────────────────────
+  const fetchUsername = useCallback(async (token: string | null = cloudToken) => {
+    if (!token) return;
+    try {
+      const response = await fetch('/api/account/username', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await response.json().catch(() => ({}));
+      if (response.ok && data.username) {
+        setCloudUsername(data.username);
+        setUsernameInput(data.username);
+      }
+    } catch { /* silent */ }
+  }, [cloudToken]);
+
+  useEffect(() => {
+    if (cloudToken) {
+      void fetchUsername(cloudToken);
+    }
+  }, [cloudToken, fetchUsername]);
+
+  const saveUsername = async () => {
+    if (!cloudToken || !usernameInput.trim()) return;
+    setUsernameSaving(true);
+    setUsernameError(null);
+    setUsernameSuccess(false);
+    try {
+      const response = await fetch('/api/account/username', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cloudToken}` },
+        body: JSON.stringify({ username: usernameInput.trim() }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || 'Failed to save username.');
+      setCloudUsername(data.username);
+      setUsernameInput(data.username);
+      setUsernameSuccess(true);
+      setTimeout(() => setUsernameSuccess(false), 3000);
+    } catch (error) {
+      setUsernameError(error instanceof Error ? error.message : 'Failed to save username.');
+    } finally {
+      setUsernameSaving(false);
+    }
+  };
+
+  // ── Shared Playlist Member Management ───────────────────────────
+  const fetchPlaylistMembers = async (playlistId: string) => {
+    if (!cloudToken) return;
+    setMembersLoading(true);
+    setMemberActionStatus(null);
+    try {
+      const response = await fetch(`/api/playlists/shared/members?playlistId=${encodeURIComponent(playlistId)}`, {
+        headers: { Authorization: `Bearer ${cloudToken}` },
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || 'Failed to load members.');
+      setMembersList({ owner: data.owner, members: data.members || [], maxMembers: data.maxMembers || 4 });
+    } catch (error) {
+      setMemberActionStatus(error instanceof Error ? error.message : 'Failed to load members.');
+    } finally {
+      setMembersLoading(false);
+    }
+  };
+
+  const inviteMember = async (playlistId: string) => {
+    if (!cloudToken || !inviteUsername.trim()) return;
+    setInvitingMember(true);
+    setMemberActionStatus(null);
+    try {
+      const response = await fetch('/api/playlists/shared/members', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cloudToken}` },
+        body: JSON.stringify({ playlistId, username: inviteUsername.trim() }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || 'Failed to invite member.');
+      setMemberActionStatus(`Invited ${data.member?.displayName || inviteUsername}!`);
+      setInviteUsername('');
+      await fetchPlaylistMembers(playlistId);
+    } catch (error) {
+      setMemberActionStatus(error instanceof Error ? error.message : 'Failed to invite member.');
+    } finally {
+      setInvitingMember(false);
+    }
+  };
+
+  const removeMember = async (playlistId: string, userId: string) => {
+    if (!cloudToken) return;
+    setMemberActionStatus(null);
+    try {
+      const response = await fetch('/api/playlists/shared/members', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cloudToken}` },
+        body: JSON.stringify({ playlistId, userId }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || 'Failed to remove member.');
+      setMemberActionStatus('Member removed.');
+      await fetchPlaylistMembers(playlistId);
+    } catch (error) {
+      setMemberActionStatus(error instanceof Error ? error.message : 'Failed to remove member.');
+    }
+  };
+
+  // ── Shared Playlist Live Refresh ─────────────────────────────────
+  // When the user opens a shared UUID-backed playlist, fetch fresh tracks
+  // from the backend so collaborator additions appear immediately.
+  const refreshSharedPlaylist = useCallback(async (playlist: Playlist) => {
+    if (!cloudToken || !isPlaylistUuid(playlist.id)) return;
+    try {
+      const response = await fetch(`/api/playlists/shared/${encodeURIComponent(playlist.id)}/tracks`, {
+        headers: { Authorization: `Bearer ${cloudToken}` },
+      });
+      if (!response.ok) return; // silently ignore — the cached view still works
+      const data = await response.json().catch(() => ({}));
+      if (!Array.isArray(data.tracks)) return;
+      const freshTracks = (data.tracks as any[]).map(enrichTrackSnapshot);
+      setCustomPlaylists((prev) => {
+        const updated = prev.map((pl) =>
+          pl.id === playlist.id ? { ...pl, tracks: freshTracks } : pl,
+        );
+        setSelectedPlaylist((sel) => (sel?.id === playlist.id ? { ...sel, tracks: freshTracks } : sel));
+        return updated;
+      });
+    } catch {
+      // silently fail — cached data is still shown
+    }
+  }, [cloudToken]);
+
+  useEffect(() => {
+    if (!selectedPlaylist?.shared || !isPlaylistUuid(selectedPlaylist.id)) return;
+    void refreshSharedPlaylist(selectedPlaylist);
+  // Only re-run when we switch to a different shared playlist
+  }, [selectedPlaylist?.id]);
+
+  useEffect(() => {
+    setShowMembersPanel(false);
+  }, [selectedPlaylist?.id]);
+
+  const createSharedPlaylist = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!newSharedPlTitle.trim() || !cloudToken) return;
+
+    const localId = createPlaylistId();
+    const gradient = PRESET_GRADIENTS[randomIndex(PRESET_GRADIENTS.length)];
+    const newPlaylist: Playlist = {
+      id: localId,
+      title: newSharedPlTitle,
+      description: newSharedPlDesc || 'Collaborative Spice playlist.',
+      tracks: [],
+      gradient,
+      createdAt: new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }),
+      shared: true,
+      shareRole: 'owner',
+    };
+
+    setNewSharedPlTitle('');
+    setNewSharedPlDesc('');
+    setShowCreateSharedDialog(false);
+
+    // Sync to backend first so we have a real UUID, then auto-generate a share link
+    try {
+      const syncResponse = await fetch('/api/sync/playlists', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cloudToken}` },
+        body: JSON.stringify({
+          playlists: [...ownedPlaylistsOnly(customPlaylists), { ...newPlaylist, shared: false }],
+          profileId: activeProfileId,
+        }),
+      });
+      const syncData = await syncResponse.json().catch(() => ({}));
+      if (!syncResponse.ok) throw new Error(syncData.message || 'Failed to sync new shared playlist.');
+
+      // Reload playlists from sync to get the server-assigned UUID
+      const serverPlaylist = Array.isArray(syncData.playlists)
+        ? syncData.playlists.find((p: any) => p.title === newPlaylist.title && p.tracks?.length === 0)
+        : null;
+      const resolvedId = (serverPlaylist?.id && isPlaylistUuid(serverPlaylist.id)) ? serverPlaylist.id : localId;
+      const resolvedPlaylist: Playlist = { ...newPlaylist, id: resolvedId, shared: true, shareRole: 'owner' };
+
+      const updated = [...customPlaylists, resolvedPlaylist];
+      persistCustomPlaylists(updated, false);
+      setSelectedPlaylist(resolvedPlaylist);
+      setCurrentPage('library');
+
+      // Auto-generate invite link
+      if (isPlaylistUuid(resolvedId)) {
+        const inviteResponse = await fetch('/api/playlists/invites', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cloudToken}` },
+          body: JSON.stringify({ playlistId: resolvedId }),
+        });
+        const inviteData = await inviteResponse.json().catch(() => ({}));
+        if (inviteResponse.ok && inviteData.inviteUrl) {
+          let copied = false;
+          if (navigator.clipboard?.writeText) {
+            try { await navigator.clipboard.writeText(inviteData.inviteUrl); copied = true; } catch {}
+          }
+          setShareStatus(copied
+            ? `"${resolvedPlaylist.title}" created! Invite link copied to clipboard.`
+            : `"${resolvedPlaylist.title}" created! Invite link: ${inviteData.inviteUrl}`);
+        }
+      }
+    } catch (error) {
+      // Fallback: add locally without backend sync
+      const updated = [...customPlaylists, newPlaylist];
+      persistCustomPlaylists(updated, false);
+      setCurrentPage('library');
+      setShareStatus(error instanceof Error ? error.message : 'Created locally. Sign in to sync.');
+    }
+  };
+
   const remoteTargetDevices = remoteDevices.filter((device) => device.deviceId !== remoteDeviceId);
   const selectedRemoteDevice = remoteTargetDevices.find((device) => device.deviceId === selectedRemoteDeviceId) || null;
   const isControllingRemoteReceiver = Boolean(selectedRemoteDevice);
@@ -4728,6 +5053,10 @@ export default function SpiceApp() {
     topbarSearchTrayOpen
     && (Boolean(searchQuery.trim()) || topbarRecentSuggestions.length > 0 || topbarTrayResults.length > 0 || isSearching);
 
+  const isPlaylistOwner = selectedPlaylist
+    ? (!selectedPlaylist.shared || selectedPlaylist.shareRole === 'owner' || selectedPlaylist.ownerId === cloudUser?.id)
+    : false;
+
   return (
     <div className={`app ${sidebarHidden ? 'app--sidebar-hidden' : ''}`}>
       <style dangerouslySetInnerHTML={{ __html: getAccentStyles() }} />
@@ -5123,79 +5452,191 @@ export default function SpiceApp() {
           {/* ── Playlist Details View (Intercepts regular screens) ── */}
           {selectedPlaylist ? (
             <div className="animate-in">
-              <button 
-                onClick={() => setSelectedPlaylist(null)} 
-                className="btn btn--ghost" 
-                style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', marginBottom: '24px', padding: '6px 12px', fontSize: '0.85rem' }}
+              <button
+                onClick={() => setSelectedPlaylist(null)}
+                className="playlist-back-btn"
               >
                 {Icons.back} Back to Library
               </button>
 
-              <div className="playlist-detail-banner" style={{ background: selectedPlaylist.gradient }}>
-                <div className="playlist-detail-banner__overlay"></div>
-                <div className="playlist-detail-banner__content">
-                  <div className="playlist-detail-banner__cover" style={{ background: selectedPlaylist.gradient }}>
+              {/* Hero banner */}
+              <div className="playlist-hero" style={{ '--pl-gradient': selectedPlaylist.gradient } as React.CSSProperties}>
+                <div className="playlist-hero__bg" />
+                <div className="playlist-hero__body">
+                  {/* Cover art */}
+                  <div className="playlist-hero__cover">
                     {selectedPlaylist.tracks.length > 0 ? (
                       <img src={selectedPlaylist.tracks[0].artworkUrl} alt={selectedPlaylist.title} />
                     ) : (
-                      <span style={{ display: 'inline-flex', transform: 'scale(2.5)' }}>{Icons.musicNote}</span>
+                      <span className="playlist-hero__cover-icon">{Icons.musicNote}</span>
                     )}
                   </div>
-                  <div className="playlist-detail-banner__info">
-                    <span className="playlist-detail-banner__tag">
-                      {selectedPlaylist.shared ? 'Shared playlist' : 'Playlist'}
+
+                  {/* Info */}
+                  <div className="playlist-hero__info">
+                    <span className="playlist-hero__tag">
+                      {selectedPlaylist.shared
+                        ? (isPlaylistOwner ? '✦ Collaborative playlist' : '✦ Shared with you')
+                        : 'Playlist'}
                     </span>
-                    <h1 className="playlist-detail-banner__title">{selectedPlaylist.title}</h1>
-                    <p className="playlist-detail-banner__desc">{selectedPlaylist.description}</p>
-                    <p className="playlist-detail-banner__meta">
-                      {selectedPlaylist.shared ? 'Shared with you' : `Created on ${selectedPlaylist.createdAt}`} · {selectedPlaylist.tracks.length} tracks
-                    </p>
-                    <div className="playlist-detail-banner__actions">
-                      {selectedPlaylist.tracks.length > 0 && (
-                        <button 
-                          className="btn btn--primary" 
-                          onClick={() => startTrackOnActiveReceiver(selectedPlaylist.tracks[0], selectedPlaylist.tracks)}
-                        >
-                          {Icons.play} Play
-                        </button>
-                      )}
-                      {!selectedPlaylist.shared && (
-                        <button
-                          className="btn btn--ghost"
-                          onClick={() => sharePlaylist(selectedPlaylist)}
-                          disabled={sharingPlaylistId === selectedPlaylist.id}
-                          style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
-                        >
-                          {Icons.clipboard} {sharingPlaylistId === selectedPlaylist.id ? 'Preparing Link' : 'Share Playlist'}
-                        </button>
-                      )}
-                      <button 
-                        className="btn btn--danger" 
-                        onClick={() => deletePlaylist(selectedPlaylist.id)}
-                        style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: 'rgba(239, 68, 68, 0.2)', border: '1px solid rgba(239, 68, 68, 0.4)', color: '#f87171' }}
-                      >
-                        {Icons.trash} {selectedPlaylist.shared ? 'Leave Playlist' : 'Delete Playlist'}
-                      </button>
-                    </div>
-                    {shareStatus && (
-                      <p className="playlist-share-status">{shareStatus}</p>
+                    <h1 className="playlist-hero__title">{selectedPlaylist.title}</h1>
+                    {selectedPlaylist.description && (
+                      <p className="playlist-hero__desc">{selectedPlaylist.description}</p>
                     )}
+                    <p className="playlist-hero__meta">
+                      {selectedPlaylist.shared
+                        ? (selectedPlaylist.ownerDisplayName ? `by ${selectedPlaylist.ownerDisplayName}` : 'Shared')
+                        : `Created ${selectedPlaylist.createdAt}`}
+                      {' · '}{selectedPlaylist.tracks.length} {selectedPlaylist.tracks.length === 1 ? 'track' : 'tracks'}
+                    </p>
                   </div>
                 </div>
+
+                {/* Action bar sits at the bottom of the hero */}
+                <div className="playlist-hero__actions">
+                  {selectedPlaylist.tracks.length > 0 && (
+                    <button
+                      className="btn btn--primary"
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                      onClick={() => startTrackOnActiveReceiver(selectedPlaylist.tracks[0], selectedPlaylist.tracks)}
+                    >
+                      {Icons.play} Play all
+                    </button>
+                  )}
+                  {(!selectedPlaylist.shared || isPlaylistOwner) && (
+                    <button
+                      className="btn btn--ghost playlist-hero__action-btn"
+                      onClick={() => sharePlaylist(selectedPlaylist)}
+                      disabled={sharingPlaylistId === selectedPlaylist.id}
+                    >
+                      {Icons.clipboard}
+                      {sharingPlaylistId === selectedPlaylist.id
+                        ? 'Preparing…'
+                        : selectedPlaylist.shared ? 'New Invite Link' : 'Share Playlist'}
+                    </button>
+                  )}
+                  {cloudToken && selectedPlaylist.shared && isPlaylistUuid(selectedPlaylist.id) && (
+                    <button
+                      className="btn btn--ghost playlist-hero__action-btn"
+                      onClick={() => {
+                        setShowMembersPanel(!showMembersPanel);
+                        if (!showMembersPanel) fetchPlaylistMembers(selectedPlaylist.id);
+                      }}
+                    >
+                      {Icons.account} Collaborators
+                    </button>
+                  )}
+                  <button
+                    className="btn playlist-hero__action-btn playlist-hero__action-btn--danger"
+                    onClick={() => deletePlaylist(selectedPlaylist.id)}
+                  >
+                    {Icons.trash} {isPlaylistOwner ? 'Delete' : 'Leave'}
+                  </button>
+                </div>
               </div>
+
+              {/* Share / invite status toast */}
+              {shareStatus && (
+                <div className="playlist-status-toast">
+                  <span>{shareStatus}</span>
+                  <button onClick={() => setShareStatus(null)} aria-label="Dismiss" className="playlist-status-toast__close">{Icons.close}</button>
+                </div>
+              )}
+
+              {/* Collaborators Panel */}
+              {showMembersPanel && (
+                <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '20px', margin: '24px auto', maxWidth: '800px' }} className="animate-in">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                    <h3 style={{ margin: 0, fontSize: '1.1rem', fontFamily: 'Outfit, sans-serif' }}>Playlist Collaborators</h3>
+                    <button className="btn btn--ghost" style={{ padding: '4px 8px', fontSize: '0.8rem' }} onClick={() => setShowMembersPanel(false)}>
+                      Close
+                    </button>
+                  </div>
+
+                  {membersLoading ? (
+                    <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Loading collaborators...</div>
+                  ) : (
+                    <div>
+                      {membersList && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '20px' }}>
+                          {/* Owner */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: membersList.owner.avatarUrl ? 'none' : 'linear-gradient(135deg, #a855f7, #ec4899)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '0.9rem', color: '#fff', overflow: 'hidden', flexShrink: 0 }}>
+                              {membersList.owner.avatarUrl ? <img src={membersList.owner.avatarUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : membersList.owner.displayName.charAt(0).toUpperCase()}
+                            </div>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{membersList.owner.displayName}</div>
+                              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Owner</div>
+                            </div>
+                          </div>
+
+                          {/* Members */}
+                          {membersList.members.map((m) => (
+                            <div key={m.userId} style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                              <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: m.avatarUrl ? 'none' : 'linear-gradient(135deg, #3b82f6, #8b5cf6)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '0.9rem', color: '#fff', overflow: 'hidden', flexShrink: 0 }}>
+                                {m.avatarUrl ? <img src={m.avatarUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : m.displayName.charAt(0).toUpperCase()}
+                              </div>
+                              <div style={{ flex: 1 }}>
+                                <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{m.displayName}</div>
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Collaborator ({m.role})</div>
+                              </div>
+                              {/* Kick option if caller is owner */}
+                              {isPlaylistOwner && (
+                                <button
+                                  onClick={() => removeMember(selectedPlaylist.id, m.userId)}
+                                  style={{ color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.8rem' }}
+                                >
+                                  Remove
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Invite section if caller is owner */}
+                      {isPlaylistOwner && (
+                        <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '16px' }}>
+                          <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>Invite Collaborator (by Username)</label>
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <input
+                              type="text"
+                              placeholder="e.g. music_buddy"
+                              value={inviteUsername}
+                              onChange={(e) => setInviteUsername(e.target.value)}
+                              style={{ flex: 1, background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border-color)', borderRadius: '6px', padding: '6px 12px', fontSize: '0.85rem', color: '#fff' }}
+                            />
+                            <button
+                              className="btn btn--primary"
+                              style={{ padding: '6px 12px', fontSize: '0.85rem' }}
+                              onClick={() => inviteMember(selectedPlaylist.id)}
+                              disabled={invitingMember || !inviteUsername.trim()}
+                            >
+                              {invitingMember ? 'Inviting...' : 'Invite'}
+                            </button>
+                          </div>
+                          {memberActionStatus && (
+                            <div style={{ fontSize: '0.8rem', color: 'var(--accent-pink)', marginTop: '6px' }}>
+                              {memberActionStatus}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
 
               <section className="section" style={{ marginTop: '32px' }}>
                 {selectedPlaylist.tracks.length === 0 ? (
                   <div style={{ textAlign: 'center', padding: '64px 0', color: 'var(--text-secondary)', background: 'var(--card-bg)', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
                     <p style={{ fontSize: '1.2rem', marginBottom: '8px', color: '#fff' }}>This playlist is empty</p>
                     <p style={{ fontSize: '0.9rem', marginBottom: '16px' }}>
-                      {selectedPlaylist.shared ? 'The owner has not added tracks yet.' : 'Search and add your favorite tracks'}
+                      Search and add your favorite tracks
                     </p>
-                    {!selectedPlaylist.shared && (
-                      <button className="btn btn--primary" onClick={() => { setSelectedPlaylist(null); setCurrentPage('search'); }}>
-                        Search Tracks
-                      </button>
-                    )}
+                    <button className="btn btn--primary" onClick={() => { setSelectedPlaylist(null); setCurrentPage('search'); }}>
+                      Search Tracks
+                    </button>
                   </div>
                 ) : (
                   <div className="library-list">
@@ -5212,14 +5653,19 @@ export default function SpiceApp() {
                             </span>
                             <span className="library-item__subtitle">
                               {song.artists.map(a => a.name).join(', ')}
+                              {selectedPlaylist.shared && song.addedBy && (
+                                <span style={{ marginLeft: '8px', fontSize: '0.72rem', background: 'rgba(255,255,255,0.06)', padding: '2px 6px', borderRadius: '4px', color: 'var(--accent-pink)', border: '1px solid rgba(255,255,255,0.04)' }}>
+                                  Added by {song.addedBy.displayName}
+                                </span>
+                              )}
                             </span>
                           </div>
 
-                          {!selectedPlaylist.shared && (
+                          {(isPlaylistOwner || (selectedPlaylist.shared && song.addedBy?.userId === cloudUser?.id)) && (
                             <button
                               className="library-item__action"
                               style={{ opacity: 1, color: '#ef4444', marginRight: '8px' }}
-                              onClick={() => removeTrackFromPlaylist(song.id, selectedPlaylist.id)}
+                              onClick={() => removeTrackFromPlaylist(song.id, selectedPlaylist.id, i)}
                               title="Remove from playlist"
                             >
                               {Icons.trash}
@@ -5523,7 +5969,7 @@ export default function SpiceApp() {
                               </div>
                               
                               {/* Custom Playlist Selector */}
-                              {editablePlaylists.length > 0 && (
+                              {allEditablePlaylists.length > 0 && (
                                 <select 
                                   onChange={(e) => {
                                     if (e.target.value) {
@@ -5535,7 +5981,7 @@ export default function SpiceApp() {
                                   style={{ background: 'var(--card-bg)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)', borderRadius: '6px', fontSize: '0.8rem', padding: '6px 10px', cursor: 'pointer', outline: 'none', marginRight: '8px' }}
                                 >
                                   <option value="">+ Add Playlist</option>
-                                  {editablePlaylists.map(pl => (
+                                  {allEditablePlaylists.map(pl => (
                                     <option key={pl.id} value={pl.id}>{pl.title}</option>
                                   ))}
                                 </select>
@@ -5636,6 +6082,20 @@ export default function SpiceApp() {
                   <div className="library-header animate-in">
                     <h1 style={{ fontFamily: 'Outfit, sans-serif', fontSize: '2rem', fontWeight: 800 }}>Your Library</h1>
                     <div className="library-header__actions">
+                      <button
+                        className="btn btn--secondary"
+                        style={{ padding: '8px 16px', fontSize: '0.8rem', marginRight: '8px', background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border-color)', color: '#fff', cursor: 'pointer', borderRadius: '6px' }}
+                        onClick={() => {
+                          if (!cloudToken) {
+                            setCurrentPage('account');
+                            setShareStatus('Sign in to your SPICE account to create shared playlists.');
+                          } else {
+                            setShowCreateSharedDialog(true);
+                          }
+                        }}
+                      >
+                        + Create Shared Playlist
+                      </button>
                       <button className="btn btn--primary" style={{ padding: '8px 16px', fontSize: '0.8rem' }} onClick={() => setShowCreateDialog(true)}>
                         + Create Playlist
                       </button>
@@ -5652,6 +6112,11 @@ export default function SpiceApp() {
                     <button className={`chip ${libraryFilter === 'playlists' ? 'active' : ''}`} onClick={() => setLibraryFilter('playlists')}>
                       Playlists
                     </button>
+                    {cloudToken && (
+                      <button className={`chip ${libraryFilter === 'shared' ? 'active' : ''}`} onClick={() => setLibraryFilter('shared')}>
+                        Shared
+                      </button>
+                    )}
                     <button className={`chip ${libraryFilter === 'liked' ? 'active' : ''}`} onClick={() => setLibraryFilter('liked')}>
                       Liked Songs
                     </button>
@@ -5663,7 +6128,7 @@ export default function SpiceApp() {
                   {/* Playlists view */}
                   {libraryFilter === 'playlists' && (
                     <div className="playlist-grid animate-in">
-                      {customPlaylists.length === 0 ? (
+                      {editablePlaylists.length === 0 ? (
                         <div style={{ gridColumn: '1/-1', textAlign: 'center', padding: '64px 0', color: 'var(--text-secondary)' }}>
                           <div style={{ marginBottom: '16px', display: 'flex', justifyContent: 'center', transform: 'scale(1.8)' }}>{Icons.folder}</div>
                           <p style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '8px', color: 'var(--text-primary)' }}>Create your first custom playlist</p>
@@ -5671,14 +6136,44 @@ export default function SpiceApp() {
                           <button className="btn btn--primary" onClick={() => setShowCreateDialog(true)}>Create Playlist</button>
                         </div>
                       ) : (
-                        customPlaylists.map((pl) => (
+                        editablePlaylists.map((pl) => (
                           <div key={pl.id} className="playlist-card animate-in" onClick={() => setSelectedPlaylist(pl)}>
                             <div className="playlist-card__bg" style={{ background: pl.gradient }}></div>
                             <div className="playlist-card__overlay"></div>
                             <div className="playlist-card__info">
                               <h3 className="playlist-card__title truncate">{pl.title}</h3>
+                              <p className="playlist-card__desc">{pl.tracks.length} songs</p>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
+
+                  {/* Shared Playlists view */}
+                  {libraryFilter === 'shared' && (
+                    <div className="playlist-grid animate-in">
+                      {sharedPlaylists.length === 0 ? (
+                        <div style={{ gridColumn: '1/-1', textAlign: 'center', padding: '64px 0', color: 'var(--text-secondary)' }}>
+                          <div style={{ marginBottom: '16px', display: 'flex', justifyContent: 'center', transform: 'scale(1.8)' }}>{Icons.folder}</div>
+                          <p style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '8px', color: 'var(--text-primary)' }}>No shared playlists yet</p>
+                          <p style={{ marginBottom: '16px' }}>Collaborate with other SPICE users on shared compilations</p>
+                          <button className="btn btn--primary" onClick={() => setShowCreateSharedDialog(true)}>+ Create Shared Playlist</button>
+                        </div>
+                      ) : (
+                        sharedPlaylists.map((pl) => (
+                          <div key={pl.id} className="playlist-card animate-in" style={{ position: 'relative' }} onClick={() => setSelectedPlaylist(pl)}>
+                            <div className="playlist-card__bg" style={{ background: pl.gradient }}></div>
+                            <div className="playlist-card__overlay"></div>
+                            {/* Shared badge chip */}
+                            <span className="playlist-card__shared-badge">
+                              {pl.shareRole === 'owner' ? '✦ Yours' : '✦ Shared'}
+                            </span>
+                            <div className="playlist-card__info">
+                              <h3 className="playlist-card__title truncate">{pl.title}</h3>
                               <p className="playlist-card__desc">
-                                {pl.tracks.length} songs{pl.shared ? ' | Shared' : ''}
+                                {pl.tracks.length} {pl.tracks.length === 1 ? 'song' : 'songs'}
+                                {pl.ownerDisplayName && pl.shareRole !== 'owner' ? ` · by ${pl.ownerDisplayName}` : ''}
                               </p>
                             </div>
                           </div>
@@ -5763,7 +6258,7 @@ export default function SpiceApp() {
                                   {song.artists.map(a => a.name).join(', ')}
                                 </span>
                               </div>
-                              {editablePlaylists.length > 0 && (
+                              {allEditablePlaylists.length > 0 && (
                                 <select 
                                   onChange={(e) => {
                                     if (e.target.value) {
@@ -5776,7 +6271,7 @@ export default function SpiceApp() {
                                   style={{ background: 'var(--card-bg)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)', borderRadius: '6px', fontSize: '0.8rem', padding: '6px 10px', cursor: 'pointer', outline: 'none', marginRight: '8px' }}
                                 >
                                   <option value="">+ Add Playlist</option>
-                                  {editablePlaylists.map(pl => (
+                                  {allEditablePlaylists.map(pl => (
                                     <option key={pl.id} value={pl.id}>{pl.title}</option>
                                   ))}
                                 </select>
@@ -5953,6 +6448,57 @@ export default function SpiceApp() {
                             <span style={{ color: '#f87171', fontSize: '0.85rem', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
                               {Icons.alertTriangle} Sync failed. Please check server logs.
                             </span>
+                          )}
+                        </div>
+
+                        {/* Collaborative Username Section */}
+                        <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '20px', marginTop: '20px' }}>
+                          <h4 style={{ fontSize: '0.95rem', fontWeight: 600, margin: '0 0 8px 0', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            {Icons.account} Collaborative Username
+                          </h4>
+                          <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0 0 12px 0', lineHeight: 1.4 }}>
+                            Claim a unique username to allow other SPICE users to invite you to collaborative playlists. Only lowercase letters, numbers, and underscores are allowed (3-20 chars).
+                          </p>
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <input
+                              type="text"
+                              placeholder="e.g. sound_lover"
+                              value={usernameInput}
+                              onChange={(e) => setUsernameInput(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))}
+                              disabled={usernameSaving}
+                              style={{
+                                flex: 1,
+                                background: 'rgba(0,0,0,0.2)',
+                                border: '1px solid var(--border-color)',
+                                borderRadius: '8px',
+                                padding: '8px 12px',
+                                color: '#fff',
+                                fontSize: '0.9rem',
+                              }}
+                            />
+                            <button
+                              className="btn btn--primary"
+                              onClick={saveUsername}
+                              disabled={usernameSaving || !usernameInput.trim() || usernameInput === cloudUsername}
+                              style={{ padding: '8px 16px', fontSize: '0.85rem' }}
+                            >
+                              {usernameSaving ? 'Saving...' : 'Save Username'}
+                            </button>
+                          </div>
+                          {usernameError && (
+                            <div style={{ color: '#f87171', fontSize: '0.8rem', marginTop: '8px' }}>
+                              {usernameError}
+                            </div>
+                          )}
+                          {usernameSuccess && (
+                            <div style={{ color: '#34d399', fontSize: '0.8rem', marginTop: '8px' }}>
+                              Username successfully updated!
+                            </div>
+                          )}
+                          {cloudUsername && (
+                            <div style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', marginTop: '8px' }}>
+                              Your active username: <strong style={{ color: 'var(--accent-pink)' }}>@{cloudUsername}</strong>
+                            </div>
                           )}
                         </div>
                       </div>
@@ -6855,7 +7401,7 @@ export default function SpiceApp() {
                         {Icons.tool} System Diagnostics & Live Terminal
                       </h3>
                       <span style={{ fontSize: '0.75rem', background: 'rgba(255,255,255,0.04)', color: 'var(--text-secondary)', padding: '4px 10px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.06)' }}>
-                        Spice Media Core v1.0.44 (Phase 40 Movie VIDSrc)
+                        Spice Media Core v1.0.49 (Phase 41 Collaborative Playlists)
                       </span>
                     </div>
 
@@ -7225,6 +7771,41 @@ export default function SpiceApp() {
               />
               <div className="dialog-box__actions">
                 <button type="button" className="btn btn--ghost" style={{ padding: '8px 16px' }} onClick={() => setShowCreateDialog(false)}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn btn--primary" style={{ padding: '8px 16px' }}>
+                  Create
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ Create Shared Playlist Dialog ═══ */}
+      {showCreateSharedDialog && (
+        <div className="dialog-overlay" onClick={() => setShowCreateSharedDialog(false)}>
+          <div className="dialog-box" onClick={(e) => e.stopPropagation()}>
+            <h2>Create Shared Playlist</h2>
+            <form onSubmit={createSharedPlaylist}>
+              <label style={{ fontSize: '0.8rem', color: '#a1a1aa' }}>Playlist Name</label>
+              <input
+                type="text"
+                value={newSharedPlTitle}
+                onChange={(e) => setNewSharedPlTitle(e.target.value)}
+                placeholder="Collaborative selection..."
+                required
+                autoFocus
+              />
+              <label style={{ fontSize: '0.8rem', color: '#a1a1aa' }}>Description (optional)</label>
+              <input
+                type="text"
+                value={newSharedPlDesc}
+                onChange={(e) => setNewSharedPlDesc(e.target.value)}
+                placeholder="Let's build a vibe together..."
+              />
+              <div className="dialog-box__actions">
+                <button type="button" className="btn btn--ghost" style={{ padding: '8px 16px' }} onClick={() => setShowCreateSharedDialog(false)}>
                   Cancel
                 </button>
                 <button type="submit" className="btn btn--primary" style={{ padding: '8px 16px' }}>

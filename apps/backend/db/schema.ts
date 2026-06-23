@@ -3,6 +3,7 @@ import { pgTable, text, timestamp, uuid, integer, bigint, boolean, primaryKey, i
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
   email: text('email').notNull().unique(),
+  username: text('username').unique(),
   passwordHash: text('password_hash'),
   accountRole: text('account_role').notNull().default('user'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -74,6 +75,7 @@ export const playlistItems = pgTable(
     artworkUrl: text('artwork_url'),
     durationMs: integer('duration_ms'),
     addedAt: timestamp('added_at', { withTimezone: true }).notNull().defaultNow(),
+    addedByUserId: uuid('added_by_user_id').references(() => users.id, { onDelete: 'set null' }),
   },
   (t) => [primaryKey({ columns: [t.playlistId, t.position] })],
 );
