@@ -367,6 +367,12 @@ const Icons = {
       <path d="M7 10V7M10 10V7M13 10V7M4 14v3M8 14v3" />
     </svg>
   ),
+  edit: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="16" height="16">
+      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+      <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+    </svg>
+  ),
 };
 
 // ── Types ──────────────────────────────────────────────────────────
@@ -402,7 +408,7 @@ type SearchProvider = 'hybrid' | 'youtube_music' | 'youtube_videos' | 'soundclou
 type StreamProtocol = 'proxy' | 'web' | 'embed';
 type ProfileListenType = 'playing_now' | 'scrobble';
 type ProfileSyncStatus = 'idle' | 'playing' | 'scrobbled' | 'error';
-type AccentTheme = 'pink' | 'blue' | 'orange' | 'green' | 'gold';
+type AccentTheme = 'pink' | 'blue' | 'orange' | 'green' | 'gold' | 'crimson';
 type VisualSurface = 'midnight' | 'glass' | 'solid' | 'aurora';
 type ArtworkShape = 'rounded' | 'soft' | 'circle';
 type MotionLevel = 'full' | 'calm' | 'off';
@@ -469,6 +475,7 @@ interface Playlist {
   description?: string;
   tracks: Track[];
   gradient: string;
+  coverUrl?: string;
   createdAt: string;
   shared?: boolean;
   ownerId?: string;
@@ -575,6 +582,7 @@ const PRESET_GRADIENTS = [
   'linear-gradient(135deg, #10b981, #059669)',
   'linear-gradient(135deg, #f59e0b, #d97706)',
   'linear-gradient(135deg, #6366f1, #4f46e5)',
+  'linear-gradient(135deg, #ff003c, #990011)',
 ];
 
 const PRESET_AVATARS = [
@@ -630,7 +638,7 @@ const isStreamProtocol = (value: string | null): value is StreamProtocol =>
   value === 'proxy' || value === 'web' || value === 'embed';
 
 const isAccentTheme = (value: string | null): value is AccentTheme =>
-  value === 'pink' || value === 'blue' || value === 'orange' || value === 'green' || value === 'gold';
+  value === 'pink' || value === 'blue' || value === 'orange' || value === 'green' || value === 'gold' || value === 'crimson';
 
 const isVisualSurface = (value: string | null): value is VisualSurface =>
   value === 'midnight' || value === 'glass' || value === 'solid' || value === 'aurora';
@@ -725,6 +733,7 @@ const normalizePlaylistSnapshot = (playlist: any): Playlist => ({
   description: typeof playlist?.description === 'string' ? playlist.description : '',
   tracks: Array.isArray(playlist?.tracks) ? playlist.tracks.map(enrichTrackSnapshot) : [],
   gradient: typeof playlist?.gradient === 'string' && playlist.gradient ? playlist.gradient : PRESET_GRADIENTS[0],
+  coverUrl: typeof playlist?.coverUrl === 'string' ? playlist.coverUrl : undefined,
   createdAt: typeof playlist?.createdAt === 'string' && playlist.createdAt
     ? playlist.createdAt
     : new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }),
@@ -984,6 +993,12 @@ export default function SpiceApp() {
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [newPlTitle, setNewPlTitle] = useState('');
   const [newPlDesc, setNewPlDesc] = useState('');
+  const [showEditPlaylistDialog, setShowEditPlaylistDialog] = useState(false);
+  const [editPlTitle, setEditPlTitle] = useState('');
+  const [editPlDesc, setEditPlDesc] = useState('');
+  const [editPlGradient, setEditPlGradient] = useState('');
+  const [editPlCoverUrl, setEditPlCoverUrl] = useState('');
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [sharingPlaylistId, setSharingPlaylistId] = useState<string | null>(null);
   const [shareStatus, setShareStatus] = useState<string | null>(null);
   const [invitePreview, setInvitePreview] = useState<PlaylistInvitePreview | null>(null);
@@ -3706,7 +3721,6 @@ export default function SpiceApp() {
     if (!target) return;
 
     if (target.shared) {
-      if (!confirm('Leave this shared playlist? It will be removed from your library.')) return;
       if (cloudToken && isPlaylistUuid(target.id)) {
         try {
           const response = await fetch(`/api/playlists/shared/${encodeURIComponent(target.id)}`, {
@@ -3733,10 +3747,87 @@ export default function SpiceApp() {
       return;
     }
 
-    if (!confirm('Are you sure you want to delete this playlist?')) return;
     const updated = customPlaylists.filter(pl => pl.id !== playlistId);
     persistCustomPlaylists(updated);
     setSelectedPlaylist(null);
+  };
+
+  const handleCoverUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 2 * 1024 * 1024) {
+      alert("Image is too large! Please choose an image smaller than 2MB.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      if (typeof reader.result === 'string') {
+        setEditPlCoverUrl(reader.result);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const savePlaylistEdits = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!selectedPlaylist) return;
+
+    const updatedPl = {
+      ...selectedPlaylist,
+      title: editPlTitle.trim() || 'Untitled Playlist',
+      description: editPlDesc.trim(),
+      gradient: editPlGradient,
+      coverUrl: editPlCoverUrl.trim() || undefined,
+    };
+
+    // Update in customPlaylists state
+    const updatedPlaylists = customPlaylists.map(pl => pl.id === selectedPlaylist.id ? updatedPl : pl);
+
+    if (selectedPlaylist.shared) {
+      if (cloudToken && isPlaylistUuid(selectedPlaylist.id)) {
+        try {
+          const response = await fetch(`/api/playlists/shared/${encodeURIComponent(selectedPlaylist.id)}`, {
+            method: 'PATCH',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${cloudToken}`
+            },
+            body: JSON.stringify({
+              title: updatedPl.title,
+              description: updatedPl.description,
+              gradient: updatedPl.gradient,
+              coverUrl: updatedPl.coverUrl || null,
+            })
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            throw new Error(data.message || 'Failed to update shared playlist.');
+          }
+          if (data.playlist) {
+            const normalized = normalizePlaylistSnapshot(data.playlist);
+            setCustomPlaylists(customPlaylists.map(pl => pl.id === selectedPlaylist.id ? normalized : pl));
+            setSelectedPlaylist(normalized);
+          } else {
+            setCustomPlaylists(updatedPlaylists);
+            setSelectedPlaylist(updatedPl);
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Failed to update shared playlist.';
+          setError(message);
+          return;
+        }
+      } else {
+        persistCustomPlaylists(updatedPlaylists, false);
+        setSelectedPlaylist(updatedPl);
+      }
+    } else {
+      persistCustomPlaylists(updatedPlaylists);
+      setSelectedPlaylist(updatedPl);
+    }
+
+    setShowEditPlaylistDialog(false);
   };
 
   const addTrackToPlaylist = async (track: Track, playlistId: string) => {
@@ -4877,6 +4968,19 @@ export default function SpiceApp() {
           }
         `;
         break;
+      case 'crimson':
+        base = `
+          :root {
+            --accent-pink: #ff003c !important;
+            --accent-pink-rgb: 255, 0, 60 !important;
+            --accent-purple: #990011 !important;
+            --accent-violet: #ff003c !important;
+            --accent-cyan: #ff3366 !important;
+            --accent-gradient: linear-gradient(135deg, #ff003c, #990011) !important;
+            --text-accent: #ffa3b1 !important;
+          }
+        `;
+        break;
       default: // pink
         base = `
           :root {
@@ -5304,7 +5408,6 @@ export default function SpiceApp() {
           >
             <div
               className="sidebar__logo-icon"
-              style={{ background: activeProfile.gradient }}
             >
               <span style={{ fontSize: '1rem', fontWeight: 900, color: '#fff' }}>S</span>
             </div>
@@ -5558,10 +5661,29 @@ export default function SpiceApp() {
               {/* Hero banner */}
               <div className="playlist-hero" style={{ '--pl-gradient': selectedPlaylist.gradient } as React.CSSProperties}>
                 <div className="playlist-hero__bg" />
+                
+                {isPlaylistOwner && (
+                  <button
+                    className="playlist-hero__edit-btn"
+                    onClick={() => {
+                      setEditPlTitle(selectedPlaylist.title);
+                      setEditPlDesc(selectedPlaylist.description || '');
+                      setEditPlGradient(selectedPlaylist.gradient);
+                      setEditPlCoverUrl(selectedPlaylist.coverUrl || '');
+                      setShowEditPlaylistDialog(true);
+                    }}
+                    title="Edit Playlist"
+                  >
+                    {Icons.edit} Edit Playlist
+                  </button>
+                )}
+
                 <div className="playlist-hero__body">
                   {/* Cover art */}
                   <div className="playlist-hero__cover">
-                    {selectedPlaylist.tracks.length > 0 ? (
+                    {selectedPlaylist.coverUrl ? (
+                      <img src={selectedPlaylist.coverUrl} alt={selectedPlaylist.title} />
+                    ) : selectedPlaylist.tracks.length > 0 ? (
                       <img src={selectedPlaylist.tracks[0].artworkUrl} alt={selectedPlaylist.title} />
                     ) : (
                       <span className="playlist-hero__cover-icon">{Icons.musicNote}</span>
@@ -5631,12 +5753,18 @@ export default function SpiceApp() {
                       {Icons.account} Collaborators
                     </button>
                   )}
-                  <button
-                    className="btn playlist-hero__action-btn playlist-hero__action-btn--danger"
-                    onClick={() => deletePlaylist(selectedPlaylist.id)}
-                  >
-                    {Icons.trash} {isPlaylistOwner ? 'Delete' : 'Leave'}
-                  </button>
+                  {!isPlaylistOwner && (
+                    <button
+                      className="btn playlist-hero__action-btn playlist-hero__action-btn--danger"
+                      onClick={() => {
+                        if (confirm('Leave this shared playlist? It will be removed from your library.')) {
+                          deletePlaylist(selectedPlaylist.id);
+                        }
+                      }}
+                    >
+                      {Icons.trash} Leave
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -5826,8 +5954,14 @@ export default function SpiceApp() {
                         <div className="carousel">
                           {customPlaylists.map((pl) => (
                             <div key={pl.id} className="card animate-in" onClick={() => setSelectedPlaylist(pl)}>
-                              <div className="card__art-wrapper" style={{ background: pl.gradient || PRESET_GRADIENTS[0], display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '180px' }}>
-                                <div style={{ fontSize: '3rem', textShadow: '0 4px 12px rgba(0,0,0,0.3)', color: '#fff' }}>{Icons.musicFolder}</div>
+                              <div className="card__art-wrapper" style={{ background: pl.gradient || PRESET_GRADIENTS[0], display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '180px', position: 'relative', overflow: 'hidden' }}>
+                                {pl.coverUrl ? (
+                                  <img src={pl.coverUrl} alt={pl.title} style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'absolute', inset: 0 }} />
+                                ) : pl.tracks.length > 0 ? (
+                                  <img src={pl.tracks[0].artworkUrl} alt={pl.title} style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'absolute', inset: 0 }} />
+                                ) : (
+                                  <div style={{ fontSize: '3rem', textShadow: '0 4px 12px rgba(0,0,0,0.3)', color: '#fff', position: 'relative', zIndex: 1 }}>{Icons.musicFolder}</div>
+                                )}
                                 <div className="card__play-overlay">{Icons.play}</div>
                               </div>
                               <div className="card__title truncate" style={{ marginTop: '8px', fontWeight: 600 }}>{pl.title}</div>
@@ -6244,7 +6378,13 @@ export default function SpiceApp() {
                       ) : (
                         editablePlaylists.map((pl) => (
                           <div key={pl.id} className="playlist-card animate-in" onClick={() => setSelectedPlaylist(pl)}>
-                            <div className="playlist-card__bg" style={{ background: pl.gradient }}></div>
+                            {pl.coverUrl ? (
+                              <img src={pl.coverUrl} alt={pl.title} className="playlist-card__img" />
+                            ) : pl.tracks.length > 0 ? (
+                              <img src={pl.tracks[0].artworkUrl} alt={pl.title} className="playlist-card__img" />
+                            ) : (
+                              <div className="playlist-card__bg" style={{ background: pl.gradient }}></div>
+                            )}
                             <div className="playlist-card__overlay"></div>
                             <div className="playlist-card__info">
                               <h3 className="playlist-card__title truncate">{pl.title}</h3>
@@ -6269,7 +6409,13 @@ export default function SpiceApp() {
                       ) : (
                         sharedPlaylists.map((pl) => (
                           <div key={pl.id} className="playlist-card animate-in" style={{ position: 'relative' }} onClick={() => setSelectedPlaylist(pl)}>
-                            <div className="playlist-card__bg" style={{ background: pl.gradient }}></div>
+                            {pl.coverUrl ? (
+                              <img src={pl.coverUrl} alt={pl.title} className="playlist-card__img" />
+                            ) : pl.tracks.length > 0 ? (
+                              <img src={pl.tracks[0].artworkUrl} alt={pl.title} className="playlist-card__img" />
+                            ) : (
+                              <div className="playlist-card__bg" style={{ background: pl.gradient }}></div>
+                            )}
                             <div className="playlist-card__overlay"></div>
                             {/* Shared badge chip */}
                             <span className="playlist-card__shared-badge">
@@ -6954,7 +7100,8 @@ export default function SpiceApp() {
                         { id: 'blue', name: 'Ocean Breeze (Blue)', color: '#3b82f6', gradient: 'linear-gradient(135deg, #06b6d4, #3b82f6)' },
                         { id: 'orange', name: 'Solar Fire (Orange)', color: '#f97316', gradient: 'linear-gradient(135deg, #f97316, #ef4444)' },
                         { id: 'green', name: 'Jade Emerald (Green)', color: '#10b981', gradient: 'linear-gradient(135deg, #10b981, #059669)' },
-                        { id: 'gold', name: 'Imperial Gold (Gold)', color: '#f59e0b', gradient: 'linear-gradient(135deg, #f59e0b, #d97706)' }
+                        { id: 'gold', name: 'Imperial Gold (Gold)', color: '#f59e0b', gradient: 'linear-gradient(135deg, #f59e0b, #d97706)' },
+                        { id: 'crimson', name: 'Crimson Moon (Red)', color: '#ff003c', gradient: 'linear-gradient(135deg, #ff003c, #990011)' }
                       ].map((t) => {
                         const isCurrent = accentTheme === t.id;
                         return (
@@ -7507,7 +7654,7 @@ export default function SpiceApp() {
                         {Icons.tool} System Diagnostics & Live Terminal
                       </h3>
                       <span style={{ fontSize: '0.75rem', background: 'rgba(255,255,255,0.04)', color: 'var(--text-secondary)', padding: '4px 10px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.06)' }}>
-                        Spice Media Core v1.0.50 (Phase 41 Collaborative Playlists)
+                        Spice Media Core v1.0.51 (Phase 42 Playlist Customization & Themes)
                       </span>
                     </div>
 
@@ -7847,6 +7994,141 @@ export default function SpiceApp() {
                 disabled={acceptingInvite}
               >
                 {acceptingInvite ? 'Accepting' : cloudToken ? 'Accept Playlist' : 'Sign In First'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ Edit Custom Playlist Dialog ═══ */}
+      {showEditPlaylistDialog && selectedPlaylist && (
+        <div className="dialog-overlay" onClick={() => setShowEditPlaylistDialog(false)}>
+          <div className="dialog-box" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '480px' }}>
+            <h2>Edit Playlist Details</h2>
+            <form onSubmit={savePlaylistEdits}>
+              <label style={{ fontSize: '0.8rem', color: '#a1a1aa' }}>Playlist Name</label>
+              <input
+                type="text"
+                value={editPlTitle}
+                onChange={(e) => setEditPlTitle(e.target.value)}
+                placeholder="Spicy compile title..."
+                required
+                autoFocus
+              />
+              
+              <label style={{ fontSize: '0.8rem', color: '#a1a1aa', marginTop: '12px', display: 'block' }}>Description (optional)</label>
+              <input
+                type="text"
+                value={editPlDesc}
+                onChange={(e) => setEditPlDesc(e.target.value)}
+                placeholder="Description details..."
+              />
+
+              <label style={{ fontSize: '0.8rem', color: '#a1a1aa', marginTop: '12px', display: 'block' }}>Select Accent Color Banner</label>
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', marginTop: '6px' }}>
+                {PRESET_GRADIENTS.map((g, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => setEditPlGradient(g)}
+                    style={{ width: '28px', height: '28px', borderRadius: '50%', background: g, border: editPlGradient === g ? '2px solid #fff' : '2px solid transparent', cursor: 'pointer', outline: 'none', transition: 'all 0.15s ease' }}
+                  />
+                ))}
+              </div>
+
+              <label style={{ fontSize: '0.8rem', color: '#a1a1aa', display: 'block', marginBottom: '6px' }}>Playlist Cover Image URL</label>
+              <input
+                type="text"
+                value={editPlCoverUrl}
+                onChange={(e) => setEditPlCoverUrl(e.target.value)}
+                placeholder="Paste custom image URL..."
+              />
+
+              <div style={{ marginTop: '12px', marginBottom: '16px' }}>
+                <label style={{ fontSize: '0.8rem', color: '#a1a1aa', display: 'block', marginBottom: '6px' }}>Or Upload Local Image</label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleCoverUpload}
+                  style={{ display: 'none' }}
+                  id="playlist-cover-upload"
+                />
+                <label
+                  htmlFor="playlist-cover-upload"
+                  className="btn btn--ghost"
+                  style={{ display: 'inline-flex', padding: '8px 16px', fontSize: '0.8rem', cursor: 'pointer', gap: '6px', alignItems: 'center' }}
+                >
+                  {Icons.camera} Choose Image
+                </label>
+                
+                {editPlCoverUrl && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '12px', background: 'rgba(255,255,255,0.04)', padding: '8px', borderRadius: '8px' }}>
+                    <img src={editPlCoverUrl} alt="Cover Preview" style={{ width: '48px', height: '48px', objectFit: 'cover', borderRadius: '6px' }} />
+                    <span style={{ fontSize: '0.75rem', color: '#a1a1aa' }}>Cover image set</span>
+                    <button
+                      type="button"
+                      className="btn btn--ghost"
+                      style={{ marginLeft: 'auto', padding: '4px 8px', fontSize: '0.75rem', color: '#f87171' }}
+                      onClick={() => setEditPlCoverUrl('')}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div className="dialog-box__actions" style={{ justifyContent: 'space-between', marginTop: '24px' }}>
+                <button
+                  type="button"
+                  className="btn btn--ghost"
+                  style={{ padding: '8px 16px', color: '#f87171', border: '1px solid rgba(239, 68, 68, 0.2)' }}
+                  onClick={() => setShowDeleteConfirm(true)}
+                >
+                  {Icons.trash} Delete
+                </button>
+                <div style={{ display: 'flex', gap: '12px' }}>
+                  <button type="button" className="btn btn--ghost" style={{ padding: '8px 16px' }} onClick={() => setShowEditPlaylistDialog(false)}>
+                    Cancel
+                  </button>
+                  <button type="submit" className="btn btn--primary" style={{ padding: '8px 16px' }}>
+                    Save Changes
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ Delete Confirmation Dialog ═══ */}
+      {showDeleteConfirm && selectedPlaylist && (
+        <div className="dialog-overlay" onClick={() => setShowDeleteConfirm(false)} style={{ zIndex: 1100 }}>
+          <div className="dialog-box" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '380px', textAlign: 'center' }}>
+            <div style={{ color: '#f87171', marginBottom: '16px', transform: 'scale(1.5)', display: 'inline-block' }}>{Icons.alertTriangle}</div>
+            <h2>Delete Playlist?</h2>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '24px', lineHeight: 1.4 }}>
+              Are you sure you want to delete this playlist? This action cannot be undone.
+            </p>
+            <div className="dialog-box__actions" style={{ justifyContent: 'center', gap: '12px' }}>
+              <button
+                type="button"
+                className="btn btn--ghost"
+                style={{ padding: '8px 16px' }}
+                onClick={() => setShowDeleteConfirm(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn--primary"
+                style={{ padding: '8px 16px', backgroundColor: '#ef4444' }}
+                onClick={() => {
+                  deletePlaylist(selectedPlaylist.id);
+                  setShowDeleteConfirm(false);
+                  setShowEditPlaylistDialog(false);
+                }}
+              >
+                Yes, Delete
               </button>
             </div>
           </div>
