@@ -1,7 +1,7 @@
 import { jsonResponse, optionsResponse } from '@/lib/cors';
 import { verifySession } from '@/lib/auth';
 import { db } from '@/db';
-import { playlists, playlistItems, playlistMembers } from '@/db/schema';
+import { playlists, playlistItems, playlistMembers, playlistInvites } from '@/db/schema';
 import { eq, and, isNull } from 'drizzle-orm';
 import { trackSnapshotColumns } from '@/lib/track-snapshot';
 import type { TrackSnapshotInput } from '@/lib/track-snapshot';
@@ -50,7 +50,14 @@ export async function GET(request: Request) {
 
     const results = [];
     for (const pl of userPlaylists) {
-      const snapshot = await getPlaylistSnapshot(pl.id);
+      const memberRows = await db.select().from(playlistMembers).where(eq(playlistMembers.playlistId, pl.id));
+      const inviteRows = await db.select().from(playlistInvites).where(eq(playlistInvites.playlistId, pl.id));
+      const isShared = memberRows.length > 0 || inviteRows.length > 0;
+      const snapshot = await getPlaylistSnapshot(pl.id, {
+        shared: isShared,
+        includeMembers: isShared,
+        shareRole: isShared ? 'owner' : undefined,
+      });
       if (snapshot) results.push(snapshot);
     }
 
@@ -109,15 +116,21 @@ export async function POST(request: Request) {
       )
     );
     
+    // Only delete private (non-shared) playlists to preserve collaborative memberships/invites
+    const privatePlaylists = [];
     for (const pl of existing) {
-      await db.delete(playlistItems).where(eq(playlistItems.playlistId, pl.id));
+      const members = await db.select().from(playlistMembers).where(eq(playlistMembers.playlistId, pl.id));
+      const invites = await db.select().from(playlistInvites).where(eq(playlistInvites.playlistId, pl.id));
+      const isShared = members.length > 0 || invites.length > 0;
+      if (!isShared) {
+        privatePlaylists.push(pl);
+      }
     }
-    await db.delete(playlists).where(
-      and(
-        eq(playlists.userId, session.userId),
-        eq(playlists.profileId, profileId)
-      )
-    );
+
+    for (const pl of privatePlaylists) {
+      await db.delete(playlistItems).where(eq(playlistItems.playlistId, pl.id));
+      await db.delete(playlists).where(eq(playlists.id, pl.id));
+    }
 
     for (let i = 0; i < ownedClientPlaylists.length; i++) {
       const clientPl = ownedClientPlaylists[i];
@@ -149,7 +162,30 @@ export async function POST(request: Request) {
       }
     }
 
-    return jsonResponse({ success: true, count: ownedClientPlaylists.length });
+    // After synchronization, fetch and return the current active profile playlists to client (including their database-assigned UUIDs)
+    const userPlaylists = await db.query.playlists.findMany({
+      where: and(
+        eq(playlists.userId, session.userId),
+        eq(playlists.profileId, profileId),
+        isNull(playlists.deletedAt)
+      ),
+      orderBy: playlists.sortIndex,
+    });
+
+    const results = [];
+    for (const pl of userPlaylists) {
+      const memberRows = await db.select().from(playlistMembers).where(eq(playlistMembers.playlistId, pl.id));
+      const inviteRows = await db.select().from(playlistInvites).where(eq(playlistInvites.playlistId, pl.id));
+      const isShared = memberRows.length > 0 || inviteRows.length > 0;
+      const snapshot = await getPlaylistSnapshot(pl.id, {
+        shared: isShared,
+        includeMembers: isShared,
+        shareRole: isShared ? 'owner' : undefined,
+      });
+      if (snapshot) results.push(snapshot);
+    }
+
+    return jsonResponse({ success: true, count: ownedClientPlaylists.length, playlists: results });
   } catch (error) {
     return jsonResponse(
       {

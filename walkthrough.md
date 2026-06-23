@@ -1,5 +1,41 @@
 # SPICE Walkthrough
 
+## v1.0.49
+
+- [Spice.Music main] Fix collaborators panel remaining open when selecting a different playlist in SPICE Music by resetting `showMembersPanel` to false whenever `selectedPlaylist` changes.
+- [Spice.Music main] Fix empty shared playlist UI to display "Search and add your favorite tracks" and the "Search Tracks" button so collaborators/owners can search and add tracks directly, matching the behavior of normal playlists.
+
+## v1.0.48
+
+- Fix shared playlists disappearing on page refresh by returning the updated playlists list (with server-assigned UUIDs) from the `POST /api/sync/playlists` handler. This allows the client to successfully retrieve and resolve the server-assigned UUIDs when inserting new shared playlists (previously, the POST response did not return playlists, leading the client to keep non-UUID local IDs which skipped the `/api/playlists/invites` call).
+- Fix `createPlaylistId` fallback in `spice-app.tsx` to generate a valid RFC 4122 version 4 UUID when `crypto.randomUUID` is unavailable (e.g., in non-secure HTTP contexts). This ensures that generated playlist IDs are valid UUIDs from the start, preventing database insertion mismatches.
+- Fix collaborator list rendering by filtering out the playlist owner from the members list returned by `getPlaylistSnapshot` and `GET /api/playlists/shared/members` to prevent double-rendering in the UI.
+
+## v1.0.47
+
+- Fix `createSharedPlaylist` in `spice-app.tsx` to send the new playlist with `shared: false` temporarily during the initial bulk sync POST payload. This ensures that the playlist row gets created in the backend database, allowing subsequent invite link generation and collaborator invitations to locate the playlist on the server and succeed (previously, it was completely filtered out of sync and never reached the database).
+- Fix `GET /api/sync/playlists` backend route to inspect both `playlistMembers` and `playlistInvites` tables to determine if a playlist is shared, preventing new shared playlists from reverting to private when synced by the owner before anyone has joined.
+- Fix `sharePlaylist` in `spice-app.tsx` to mark the playlist as shared locally (`shared: true`, `shareRole: 'owner'`) once the invite link is successfully created.
+- Fix backend track editing permissions in `POST /api/playlists/shared/[playlistId]/tracks` and `DELETE /api/playlists/shared/[playlistId]/tracks` to strictly block members with the `listener` role from adding or deleting tracks, aligning the database security check with the error message and client UI.
+- Fix UI button visibility in `spice-app.tsx` so the "Collaborators" panel button is only displayed for shared playlists with a valid server-synced UUID, hiding it on private playlists.
+- Add a new integration test file `apps/backend/test/shared-playlists.test.mjs` to verify user signup, username configuration, database collaboration queries, invite links, and role checks.
+
+## v1.0.46
+
+- Fix `createSharedPlaylist` to sync the new playlist to the backend and auto-generate a shareable invite link so the owner can immediately invite collaborators.
+- Fix `sharePlaylist` to allow the owner of an existing shared playlist to regenerate a new invite link via a "New Invite Link" button (previously blocked for all shared playlists).
+- Add `GET /api/playlists/shared/[playlistId]/tracks` route so authenticated members and owners can fetch the latest track list with attribution data.
+- Add live playlist refresh on open: when a user opens a shared UUID-backed playlist the client silently fetches fresh tracks from the new GET endpoint so collaborator additions appear without a manual reload.
+- Fix `normalizePlaylistSnapshot` to carry through `ownerDisplayName`, `ownerUsername`, and `members` from the server response so the collaborators panel shows correct owner info after accepting an invite.
+
+## v1.0.45
+
+- Add support for collaborative editing on shared playlists in SPICE Music, including database migrations and API routes.
+- Add Username management in the Account panel, enabling users to claim unique usernames.
+- Add playlist member/collaborator management (invite by username, list members, remove members).
+- Allow collaborators with editor access to add or remove tracks in shared playlists via dedicated API routes.
+- Render attribution badges on tracks in collaborative playlists and allow the creator and the track uploader to delete tracks from the playlist.
+
 ## v1.0.44
 
 - Link the Spice Movie screening panel to VIDSrc through validated TMDB movie IDs, host-compatible watch routes, and a sandboxed full-screen player shell.
