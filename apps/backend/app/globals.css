@@ -1607,7 +1607,7 @@ h4 { font-size: 1rem; }
 }
 
 .now-playing__volume-btn:hover {
-  color: var(--text-primary);
+  color: var(--accent-pink);
 }
 
 .now-playing__volume-btn svg {
@@ -1630,7 +1630,7 @@ h4 { font-size: 1rem; }
   appearance: none;
   width: 12px;
   height: 12px;
-  background: var(--text-primary);
+  background: var(--accent-pink);
   border-radius: 50%;
   cursor: pointer;
   box-shadow: var(--shadow-sm);

@@ -1,5 +1,12 @@
 # SPICE Walkthrough
 
+## v1.0.50
+
+- [Spice.Music main] Update the volume slider styling with a thematic linear gradient that represents the filled volume level in purple (`var(--accent-pink)`), and make the volume icon and slider thumb use the purple accent theme on hover.
+- [Spice.Music main] Fix collaborator identity leakage across local profiles by storing and restoring the `cloudToken`, `cloudUser`, and `cloudUsername` fields dynamically on a per-profile basis when switching profiles.
+- [Spice.Music main] Decouple the topbar quick search input query state (`topbarSearchQuery`) from the search page input query state (`searchQuery`) so that typing in one search bar does not overwrite or sync text with the other.
+- [Spice.Music main] Add a "Shuffle Play" action button to the playlist actions bar, allowing users to start playing a playlist shuffled immediately.
+
 ## v1.0.49
 
 - [Spice.Music main] Fix collaborators panel remaining open when selecting a different playlist in SPICE Music by resetting `showMembersPanel` to false whenever `selectedPlaylist` changes.

@@ -543,6 +543,9 @@ interface UserProfile {
   customPlaylists: Playlist[];
   history: Track[];
   avatarUrl?: string; // profile picture URL or preset avatar
+  cloudToken?: string | null;
+  cloudUser?: CloudAccount | null;
+  cloudUsername?: string | null;
 }
 
 interface ProfileSyncProviderResult {
@@ -988,8 +991,34 @@ export default function SpiceApp() {
   const [acceptingInvite, setAcceptingInvite] = useState(false);
 
   // Username & Shared Playlist Collaboration state
-  const [cloudUsername, setCloudUsername] = useState<string | null>(null);
-  const [usernameInput, setUsernameInput] = useState('');
+  const [cloudUsername, setCloudUsername] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      const activeId = localStorage.getItem('spice_active_profile_id') || 'default';
+      const saved = localStorage.getItem('spice_profiles_list');
+      if (saved) {
+        try {
+          const list: UserProfile[] = JSON.parse(saved);
+          const found = list.find(p => p.id === activeId);
+          if (found && found.cloudUsername) return found.cloudUsername;
+        } catch {}
+      }
+    }
+    return null;
+  });
+  const [usernameInput, setUsernameInput] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const activeId = localStorage.getItem('spice_active_profile_id') || 'default';
+      const saved = localStorage.getItem('spice_profiles_list');
+      if (saved) {
+        try {
+          const list: UserProfile[] = JSON.parse(saved);
+          const found = list.find(p => p.id === activeId);
+          if (found && found.cloudUsername) return found.cloudUsername;
+        } catch {}
+      }
+    }
+    return '';
+  });
   const [usernameSaving, setUsernameSaving] = useState(false);
   const [usernameError, setUsernameError] = useState<string | null>(null);
   const [usernameSuccess, setUsernameSuccess] = useState(false);
@@ -1006,15 +1035,33 @@ export default function SpiceApp() {
   // Cloud Sync & Accounts state
   const [cloudToken, setCloudToken] = useState<string | null>(() => {
     if (typeof window !== 'undefined') {
+      const activeId = localStorage.getItem('spice_active_profile_id') || 'default';
+      const saved = localStorage.getItem('spice_profiles_list');
+      if (saved) {
+        try {
+          const list: UserProfile[] = JSON.parse(saved);
+          const found = list.find(p => p.id === activeId);
+          if (found && found.cloudToken) return found.cloudToken;
+        } catch {}
+      }
       return localStorage.getItem('spice_cloud_token');
     }
     return null;
   });
   const [cloudUser, setCloudUser] = useState<CloudAccount | null>(() => {
     if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('spice_cloud_user');
+      const activeId = localStorage.getItem('spice_active_profile_id') || 'default';
+      const saved = localStorage.getItem('spice_profiles_list');
       if (saved) {
-        try { return JSON.parse(saved); } catch { return null; }
+        try {
+          const list: UserProfile[] = JSON.parse(saved);
+          const found = list.find(p => p.id === activeId);
+          if (found && found.cloudUser) return found.cloudUser;
+        } catch {}
+      }
+      const savedUser = localStorage.getItem('spice_cloud_user');
+      if (savedUser) {
+        try { return JSON.parse(savedUser); } catch { return null; }
       }
     }
     return null;
@@ -1095,6 +1142,7 @@ export default function SpiceApp() {
 
   // Search state
   const [searchQuery, setSearchQuery] = useState('');
+  const [topbarSearchQuery, setTopbarSearchQuery] = useState('');
   const [searchProvider, setSearchProvider] = useState<SearchProvider>('hybrid');
   const [searchResults, setSearchResults] = useState<Track[]>([]);
   const [searchResultsSource, setSearchResultsSource] = useState<'network' | 'cache' | null>(null);
@@ -1545,6 +1593,15 @@ export default function SpiceApp() {
         setEditGradient(activeProf.gradient);
         setEditPasscode(activeProf.passcode || '');
         setEditAvatarUrl(activeProf.avatarUrl || '');
+
+        // Restore cloud token, user, and username from active profile on mount
+        const nextToken = activeProf.cloudToken || null;
+        const nextUser = activeProf.cloudUser || null;
+        const nextUsername = activeProf.cloudUsername || null;
+        setCloudToken(nextToken);
+        setCloudUser(nextUser);
+        setCloudUsername(nextUsername);
+        setUsernameInput(nextUsername || '');
 
         const savedPlayback = getPlaybackState(activeProf.id);
         if (savedPlayback) {
@@ -2199,6 +2256,10 @@ export default function SpiceApp() {
       localStorage.setItem('spice_cloud_user', JSON.stringify(data.user));
       setCloudToken(data.token);
       setCloudUser(data.user);
+      updateActiveProfileData({
+        cloudToken: data.token,
+        cloudUser: data.user,
+      });
       setAuthEmail('');
       setAuthPassword('');
       logDebug('auth', `User "${data.user.email}" authenticated successfully via ${authMode}. Token generated.`);
@@ -2223,6 +2284,11 @@ export default function SpiceApp() {
     setCloudUser(null);
     setCloudUsername(null);
     setUsernameInput('');
+    updateActiveProfileData({
+      cloudToken: null,
+      cloudUser: null,
+      cloudUsername: null,
+    });
     setLastFmAccountLinked(false);
     localStorage.setItem('spice_lastfm_account_linked', 'false');
     setDbError(null);
@@ -3368,7 +3434,6 @@ export default function SpiceApp() {
 
   // Search logic (debounced)
   const queueSearch = (query: string, provider = searchProvider) => {
-    setSearchQuery(query);
     const requestId = ++searchRequestRef.current;
 
     if (searchTimeoutRef.current) {
@@ -3413,6 +3478,7 @@ export default function SpiceApp() {
   };
 
   const handleSearchInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setSearchQuery(e.target.value);
     queueSearch(e.target.value);
   };
 
@@ -3430,6 +3496,7 @@ export default function SpiceApp() {
       return;
     }
 
+    setTopbarSearchQuery(trimmedQuery);
     setSelectedPlaylist(null);
     setTopbarSearchTrayOpen(true);
     setRecentSearchEntries(getRecentCachedSearches());
@@ -3444,12 +3511,12 @@ export default function SpiceApp() {
 
   const handleTopbarSearchSubmit = (e: FormEvent) => {
     e.preventDefault();
-    runTopbarSearch(searchQuery, searchProvider);
+    runTopbarSearch(topbarSearchQuery, searchProvider);
   };
 
   const handleTopbarSearchInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     const recent = getRecentCachedSearches();
-    setSearchQuery(e.target.value);
+    setTopbarSearchQuery(e.target.value);
     setRecentSearchEntries(recent);
     if (!topbarSearchTrayOpen && (e.target.value.trim() || recent.length > 0)) {
       setTopbarSearchTrayOpen(true);
@@ -3922,6 +3989,7 @@ export default function SpiceApp() {
       if (response.ok && data.username) {
         setCloudUsername(data.username);
         setUsernameInput(data.username);
+        updateActiveProfileData({ cloudUsername: data.username });
       }
     } catch { /* silent */ }
   }, [cloudToken]);
@@ -3948,6 +4016,7 @@ export default function SpiceApp() {
       setCloudUsername(data.username);
       setUsernameInput(data.username);
       setUsernameSuccess(true);
+      updateActiveProfileData({ cloudUsername: data.username });
       setTimeout(() => setUsernameSuccess(false), 3000);
     } catch (error) {
       setUsernameError(error instanceof Error ? error.message : 'Failed to save username.');
@@ -4398,6 +4467,14 @@ export default function SpiceApp() {
     autoSyncHistory([]);
   };
 
+  const shufflePlaylistPlay = (tracks: Track[]) => {
+    if (!tracks || tracks.length === 0) return;
+    setIsShuffle(true);
+    localStorage.setItem('spice_is_shuffle', 'true');
+    const shuffled = [...tracks].sort(() => Math.random() - 0.5);
+    startTrackOnActiveReceiver(shuffled[0], shuffled);
+  };
+
   // Profile switching, locking and passcode validations
   const switchProfile = (profileId: string, profileOverride?: UserProfile) => {
     const target = profileOverride || profiles.find(p => p.id === profileId);
@@ -4405,6 +4482,25 @@ export default function SpiceApp() {
 
     setActiveProfileId(profileId);
     localStorage.setItem('spice_active_profile_id', profileId);
+
+    const nextToken = target.cloudToken || null;
+    const nextUser = target.cloudUser || null;
+    const nextUsername = target.cloudUsername || null;
+    setCloudToken(nextToken);
+    setCloudUser(nextUser);
+    setCloudUsername(nextUsername);
+    setUsernameInput(nextUsername || '');
+
+    if (nextToken) {
+      localStorage.setItem('spice_cloud_token', nextToken);
+    } else {
+      localStorage.removeItem('spice_cloud_token');
+    }
+    if (nextUser) {
+      localStorage.setItem('spice_cloud_user', JSON.stringify(nextUser));
+    } else {
+      localStorage.removeItem('spice_cloud_user');
+    }
     logDebug('profile', `Switched active profile to "${target.displayName}" (Playlists: ${target.customPlaylists?.length || 0}, Likes: ${target.likedTracks?.length || 0})`);
 
     // Synchronize states immediately to prevent cascading renders
@@ -5044,14 +5140,14 @@ export default function SpiceApp() {
     return base;
   };
 
-  const normalizedTopbarQuery = searchQuery.trim().toLocaleLowerCase();
+  const normalizedTopbarQuery = topbarSearchQuery.trim().toLocaleLowerCase();
   const topbarRecentSuggestions = recentSearchEntries
     .filter((entry) => entry.query.trim().toLocaleLowerCase() !== normalizedTopbarQuery)
     .slice(0, 6);
   const topbarTrayResults = searchResults.slice(0, 6);
   const shouldShowTopbarSearchTray =
     topbarSearchTrayOpen
-    && (Boolean(searchQuery.trim()) || topbarRecentSuggestions.length > 0 || topbarTrayResults.length > 0 || isSearching);
+    && (Boolean(topbarSearchQuery.trim()) || topbarRecentSuggestions.length > 0 || topbarTrayResults.length > 0 || isSearching);
 
   const isPlaylistOwner = selectedPlaylist
     ? (!selectedPlaylist.shared || selectedPlaylist.shareRole === 'owner' || selectedPlaylist.ownerId === cloudUser?.id)
@@ -5317,12 +5413,12 @@ export default function SpiceApp() {
                 <input
                   type="search"
                   placeholder={`Search ${SEARCH_PROVIDER_LABELS[searchProvider]}...`}
-                  value={searchQuery}
+                  value={topbarSearchQuery}
                   onChange={handleTopbarSearchInput}
                   onFocus={() => {
                     const recent = getRecentCachedSearches();
                     setRecentSearchEntries(recent);
-                    if (searchQuery.trim() || recent.length > 0 || searchResults.length > 0) {
+                    if (topbarSearchQuery.trim() || recent.length > 0 || searchResults.length > 0) {
                       setTopbarSearchTrayOpen(true);
                     }
                   }}
@@ -5334,7 +5430,7 @@ export default function SpiceApp() {
                   autoComplete="off"
                   aria-label="Search SPICE"
                 />
-                <button type="submit" disabled={!searchQuery.trim()}>
+                <button type="submit" disabled={!topbarSearchQuery.trim()}>
                   Search
                 </button>
               </form>
@@ -5344,7 +5440,7 @@ export default function SpiceApp() {
                   <div className="app-topbar__search-tray-header">
                     <div>
                       <span>Quick Search</span>
-                      <strong>{searchQuery.trim() ? searchQuery.trim() : 'Recent searches'}</strong>
+                      <strong>{topbarSearchQuery.trim() ? topbarSearchQuery.trim() : 'Recent searches'}</strong>
                     </div>
                     <button
                       type="button"
@@ -5407,7 +5503,7 @@ export default function SpiceApp() {
                       </div>
                     ) : (
                       <p className="app-topbar__tray-empty">
-                        {searchQuery.trim()
+                        {topbarSearchQuery.trim()
                           ? 'Submit the search to fill this tray with playable songs.'
                           : 'Pick a previous query or type a new search.'}
                       </p>
@@ -5501,6 +5597,15 @@ export default function SpiceApp() {
                       onClick={() => startTrackOnActiveReceiver(selectedPlaylist.tracks[0], selectedPlaylist.tracks)}
                     >
                       {Icons.play} Play all
+                    </button>
+                  )}
+                  {selectedPlaylist.tracks.length > 0 && (
+                    <button
+                      className="btn btn--ghost playlist-hero__action-btn"
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                      onClick={() => shufflePlaylistPlay(selectedPlaylist.tracks)}
+                    >
+                      {Icons.shuffle} Shuffle Play
                     </button>
                   )}
                   {(!selectedPlaylist.shared || isPlaylistOwner) && (
@@ -5802,6 +5907,7 @@ export default function SpiceApp() {
                           <button
                             onClick={() => {
                               setCurrentPage('search');
+                              setSearchQuery(homeRecommendationSeed.query);
                               queueSearch(homeRecommendationSeed.query);
                             }}
                             style={{ background: 'none', border: 'none', color: 'var(--accent-pink)', fontSize: '0.85rem', cursor: 'pointer' }}
@@ -7401,7 +7507,7 @@ export default function SpiceApp() {
                         {Icons.tool} System Diagnostics & Live Terminal
                       </h3>
                       <span style={{ fontSize: '0.75rem', background: 'rgba(255,255,255,0.04)', color: 'var(--text-secondary)', padding: '4px 10px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.06)' }}>
-                        Spice Media Core v1.0.49 (Phase 41 Collaborative Playlists)
+                        Spice Media Core v1.0.50 (Phase 41 Collaborative Playlists)
                       </span>
                     </div>
 
@@ -8234,6 +8340,9 @@ export default function SpiceApp() {
               max="100"
               value={playerVolume}
               onChange={(e) => setReceiverVolume(Number(e.target.value))}
+              style={{
+                background: `linear-gradient(to right, var(--accent-pink) 0%, var(--accent-pink) ${playerVolume}%, hsla(270, 10%, 25%, 0.5) ${playerVolume}%, hsla(270, 10%, 25%, 0.5) 100%)`
+              }}
             />
           </div>
         </div>
