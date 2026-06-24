@@ -1,5 +1,31 @@
 # SPICE Walkthrough
 
+## v1.0.61
+
+- [Spice.Music main] Shortened generated song share links by encoding track data into a minimal array tuple instead of a verbose JSON object. Old share links remain fully supported via backward compatibility.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.61`.
+
+## v1.0.60
+
+- [Spice.Music main] Enabled downloading any provider stream as an MP3 file directly from the share dialog. The download button is no longer restricted to direct licensed audio.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.60`.
+
+## v1.0.59
+
+- [Spice.Music main] Added a "Pending Playlist Invites" section to Settings.
+- [Spice.Music main] When inviting a user via Collaborative Username, they are now sent a pending invite instead of being instantly added.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.59`.
+
+## v1.0.58
+
+- [Spice.Music main] Display an informative "Song already in playlist." notice instead of a success notice when adding a song that is already present in the target playlist.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.58`.
+
+## v1.0.57
+- [Spice.Music main] Dismiss the oldest active notice automatically when a 3rd notice occurs to prevent UI clutter.
+- [Spice.Music main] Add mobile-responsive support so notices pile up from the bottom above the playback controls on mobile devices.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.57`.
+
 ## v1.0.56
 
 - [Spice.Music main] Add song share buttons across search results, playlists, liked songs, history, the topbar search tray, and all now-playing player surfaces.

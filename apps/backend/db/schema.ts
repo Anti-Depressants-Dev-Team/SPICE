@@ -106,6 +106,7 @@ export const playlistMembers = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     role: text('role').notNull().default('listener'),
+    status: text('status').notNull().default('accepted'),
     acceptedAt: timestamp('accepted_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [primaryKey({ columns: [t.playlistId, t.userId] })],
