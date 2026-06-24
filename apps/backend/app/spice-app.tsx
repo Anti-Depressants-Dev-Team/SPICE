@@ -491,6 +491,14 @@ const PROFILE_SYNC_STATUS_LABELS: Record<ProfileSyncStatus, string> = {
   error: 'Needs attention',
 };
 
+interface PendingInvite {
+  playlistId: string;
+  playlistTitle: string;
+  ownerId: string;
+  ownerUsername: string;
+  ownerDisplayName: string;
+}
+
 interface PlaylistMember {
   userId: string;
   username: string | null;
@@ -778,12 +786,37 @@ const decodeBase64Url = (value: string) => {
   return new TextDecoder().decode(bytes);
 };
 
-const encodeSongShareToken = (track: Track) =>
-  encodeBase64Url(JSON.stringify(compactTrackForSongShare(track)));
+const encodeSongShareToken = (track: Track) => {
+  // Use a compact array tuple to minimize Base64Url size.
+  // Format: [id, title, artistName, sourceId, artworkUrl]
+  const tuple = [
+    track.id,
+    track.title,
+    track.artists.length > 0 ? track.artists[0].name : '',
+    track.sourceId || '',
+    track.artworkUrl || ''
+  ];
+  return encodeBase64Url(JSON.stringify(tuple));
+};
 
 const decodeSongShareToken = (token: string): Track | null => {
   try {
     const payload = JSON.parse(decodeBase64Url(token));
+    
+    // Support the new compact tuple format
+    if (Array.isArray(payload)) {
+      const [id, title, artistName, sourceId, artworkUrl] = payload;
+      if (!id) return null;
+      return {
+        id: safeSharedString(id),
+        title: safeSharedString(title, 'Shared song'),
+        artists: [{ id: 'shared-artist', name: safeSharedString(artistName, 'Unknown Artist') }],
+        sourceId: safeSharedString(sourceId, 'youtube_music'),
+        ...(artworkUrl ? { artworkUrl: safeSharedString(artworkUrl) } : {})
+      };
+    }
+
+    // Fallback to legacy object format
     const id = safeSharedString(payload?.id);
     if (!id) return null;
 
@@ -1183,25 +1216,61 @@ export default function SpiceApp() {
     showSpiceNotice('Could not copy the song link from this browser.', 'warning');
   }, [copyTextToClipboard, showSpiceNotice, songShareDialog]);
 
-  const downloadSharedSong = useCallback(() => {
+  const downloadSharedSong = useCallback(async () => {
     if (!songShareDialog) return;
-    const downloadUrl = directAudioDownloadUrl(songShareDialog.track);
+    const track = songShareDialog.track;
+    const downloadUrl = directAudioDownloadUrl(track);
 
-    if (!downloadUrl) {
-      showSpiceNotice('Download is only available for direct licensed audio files. This provider stream can be shared or opened at the source instead.', 'info');
+    if (downloadUrl) {
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = `${sanitizeDownloadName(track)}.${extensionFromAudioUrl(downloadUrl)}`;
+      link.rel = 'noopener noreferrer';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      showSpiceNotice(`Downloading "${track.title}".`, 'success');
+      setSongShareDialog(null);
       return;
     }
 
-    const link = document.createElement('a');
-    link.href = downloadUrl;
-    link.download = `${sanitizeDownloadName(songShareDialog.track)}.${extensionFromAudioUrl(downloadUrl)}`;
-    link.rel = 'noopener noreferrer';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    showSpiceNotice(`Downloading "${songShareDialog.track.title}".`, 'success');
-    setSongShareDialog(null);
-  }, [showSpiceNotice, songShareDialog]);
+    showSpiceNotice(`Preparing download for "${track.title}"...`, 'info');
+    try {
+      const isSoundCloud = isSoundCloudTrack(track);
+      const trackEndpoint = isSoundCloud
+        ? `/api/sc/track/${encodeURIComponent(soundCloudTrackId(track))}?quality=${audioQuality}`
+        : `/api/yt/track/${encodeURIComponent(track.id)}`;
+
+      const res = await fetch(trackEndpoint);
+      if (!res.ok) throw new Error('Failed to fetch track info');
+      const data = await res.json();
+
+      const streams = data.streams ?? [];
+      const streamObj = streams.find((s: any) => s.url);
+      const streamUrl = data.streamUrl || (streamObj ? streamObj.url : null);
+
+      if (streamUrl) {
+        const downloadTitle = sanitizeDownloadName(track);
+        
+        // Convert relative URL to absolute URL to parse/append params
+        const finalUrl = new URL(streamUrl, typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000');
+        finalUrl.searchParams.set('download', 'true');
+        finalUrl.searchParams.set('title', downloadTitle);
+        
+        // This will trigger the browser's download manager without unloading the page
+        // because the backend endpoint now returns Content-Disposition: attachment
+        window.location.href = finalUrl.toString();
+
+        showSpiceNotice(`Started downloading "${track.title}".`, 'success');
+        setSongShareDialog(null);
+      } else {
+        showSpiceNotice('Stream not available for download.', 'danger');
+      }
+    } catch (err) {
+      logDebug('error', `Download stream failed: ${err}`);
+      showSpiceNotice('Failed to download stream.', 'danger');
+    }
+  }, [showSpiceNotice, songShareDialog, audioQuality]);
 
   const openSongSource = useCallback(() => {
     if (!songShareDialog) return;
@@ -1367,6 +1436,8 @@ export default function SpiceApp() {
   const [usernameSaving, setUsernameSaving] = useState(false);
   const [usernameError, setUsernameError] = useState<string | null>(null);
   const [usernameSuccess, setUsernameSuccess] = useState(false);
+  const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([]);
+  const [pendingInvitesLoading, setPendingInvitesLoading] = useState(false);
   const [showMembersPanel, setShowMembersPanel] = useState(false);
   const [membersLoading, setMembersLoading] = useState(false);
   const [membersList, setMembersList] = useState<{ owner: PlaylistMember; members: PlaylistMember[]; maxMembers: number } | null>(null);
@@ -4542,7 +4613,75 @@ export default function SpiceApp() {
       }
     } catch { /* silent */ }
   }, [cloudToken, activeProfileId]);
+  const fetchPendingInvites = async () => {
+    if (!cloudToken) return;
+    setPendingInvitesLoading(true);
+    try {
+      const res = await fetch('/api/account/invites', {
+        headers: { Authorization: `Bearer ${cloudToken}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setPendingInvites(data.invites || []);
+      }
+    } catch (err) {
+      logDebug('error', `Failed to fetch pending invites: ${err}`);
+    } finally {
+      setPendingInvitesLoading(false);
+    }
+  };
 
+  useEffect(() => {
+    if (currentPage === 'settings' && cloudToken) {
+      fetchPendingInvites();
+    }
+  }, [currentPage, cloudToken]);
+
+  const handleAcceptInvite = async (playlistId: string) => {
+    if (!cloudToken) return;
+    setAcceptingInvite(true);
+    try {
+      const res = await fetch(`/api/account/invites/${playlistId}/accept`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${cloudToken}` }
+      });
+      if (res.ok) {
+        setPendingInvites(prev => prev.filter(inv => inv.playlistId !== playlistId));
+        showSpiceNotice('Invite accepted. The playlist will sync shortly.', 'success');
+        // Trigger a sync
+        void syncWithCloud();
+      } else {
+        const err = await res.json();
+        showSpiceNotice(err.message || 'Failed to accept invite.', 'danger');
+      }
+    } catch (e) {
+      showSpiceNotice('Failed to accept invite.', 'danger');
+    } finally {
+      setAcceptingInvite(false);
+    }
+  };
+
+  const handleRejectInvite = async (playlistId: string) => {
+    if (!cloudToken) return;
+    setAcceptingInvite(true);
+    try {
+      const res = await fetch(`/api/account/invites/${playlistId}/reject`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${cloudToken}` }
+      });
+      if (res.ok) {
+        setPendingInvites(prev => prev.filter(inv => inv.playlistId !== playlistId));
+        showSpiceNotice('Invite rejected.', 'success');
+      } else {
+        const err = await res.json();
+        showSpiceNotice(err.message || 'Failed to reject invite.', 'danger');
+      }
+    } catch (e) {
+      showSpiceNotice('Failed to reject invite.', 'danger');
+    } finally {
+      setAcceptingInvite(false);
+    }
+  };
   useEffect(() => {
     if (cloudToken) {
       void fetchUsername(cloudToken, activeProfileId);
@@ -5890,9 +6029,9 @@ export default function SpiceApp() {
               </button>
               <button
                 type="button"
-                className={`spice-share-dialog__button ${directAudioDownloadUrl(songShareDialog.track) ? '' : 'is-muted'}`}
+                className="spice-share-dialog__button"
                 onClick={downloadSharedSong}
-                title={directAudioDownloadUrl(songShareDialog.track) ? 'Download audio file' : 'Direct audio download is not available for this provider stream'}
+                title="Download audio file"
               >
                 {Icons.download} Download
               </button>
@@ -7413,6 +7552,47 @@ export default function SpiceApp() {
                             </div>
                           )}
                         </div>
+
+                        {/* Pending Invites Section */}
+                        {cloudUsername && pendingInvites.length > 0 && (
+                          <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '20px', marginTop: '20px' }}>
+                            <h4 style={{ fontSize: '0.95rem', fontWeight: 600, margin: '0 0 12px 0', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              {Icons.plus} Pending Playlist Invites ({pendingInvites.length})
+                            </h4>
+                            {pendingInvitesLoading ? (
+                              <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Loading invites...</div>
+                            ) : (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                {pendingInvites.map((invite) => (
+                                  <div key={invite.playlistId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.05)', padding: '12px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                                    <div>
+                                      <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '4px' }}>{invite.playlistTitle}</div>
+                                      <div style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>Invited by <strong style={{ color: '#fff' }}>{invite.ownerDisplayName}</strong> (@{invite.ownerUsername})</div>
+                                    </div>
+                                    <div style={{ display: 'flex', gap: '8px' }}>
+                                      <button
+                                        className="btn btn--primary"
+                                        style={{ padding: '6px 12px', fontSize: '0.8rem', minHeight: 'auto', background: 'var(--accent-pink)' }}
+                                        onClick={() => handleAcceptInvite(invite.playlistId)}
+                                        disabled={acceptingInvite}
+                                      >
+                                        Accept
+                                      </button>
+                                      <button
+                                        className="btn btn--secondary"
+                                        style={{ padding: '6px 12px', fontSize: '0.8rem', minHeight: 'auto' }}
+                                        onClick={() => handleRejectInvite(invite.playlistId)}
+                                        disabled={acceptingInvite}
+                                      >
+                                        Deny
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     ) : (
                       <div>
@@ -8327,7 +8507,7 @@ export default function SpiceApp() {
                         {Icons.tool} System Diagnostics & Live Terminal
                       </h3>
                       <span style={{ fontSize: '0.75rem', background: 'rgba(255,255,255,0.04)', color: 'var(--text-secondary)', padding: '4px 10px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.06)' }}>
-                        Spice Media Core v1.0.58 (Duplicate Playlist Notification)
+                        Spice Media Core v1.0.61 (Short Share Links)
                       </span>
                     </div>
 

@@ -183,12 +183,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Add member with editor role
+    // Add member with pending status
     await db.insert(playlistMembers).values({
       playlistId,
       userId: targetUser.id,
       role: 'editor',
-      acceptedAt: new Date(),
+      status: 'pending',
+      // acceptedAt is handled dynamically or ignored until accepted
     });
 
     // Fetch target profile for response
@@ -204,6 +205,7 @@ export async function POST(request: NextRequest) {
         displayName: targetProfile?.displayName || targetUser.email || 'Unknown',
         avatarUrl: targetProfile?.avatarUrl || null,
         role: 'editor',
+        status: 'pending',
       },
     });
   } catch (error) {

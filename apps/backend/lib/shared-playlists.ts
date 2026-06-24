@@ -69,7 +69,7 @@ export async function getPlaylistSnapshot(playlistId: string, options: SharedPla
   // Optionally include member list
   let members: MemberInfo[] | undefined;
   if (options.includeMembers || options.shared) {
-    const memberRows = await db.select().from(playlistMembers).where(eq(playlistMembers.playlistId, playlist.id));
+    const memberRows = await db.select().from(playlistMembers).where(and(eq(playlistMembers.playlistId, playlist.id), eq(playlistMembers.status, 'accepted')));
     members = [];
     for (const row of memberRows) {
       if (row.userId === playlist.userId) continue;

@@ -63,7 +63,7 @@ export async function GET(request: Request) {
       if (snapshot) results.push(snapshot);
     }
 
-    const memberRows = await db.select().from(playlistMembers).where(eq(playlistMembers.userId, session.userId));
+    const memberRows = await db.select().from(playlistMembers).where(and(eq(playlistMembers.userId, session.userId), eq(playlistMembers.status, 'accepted')));
     for (const membership of memberRows) {
       const snapshot = await getPlaylistSnapshot(membership.playlistId, {
         shared: true,
