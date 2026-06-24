@@ -1,3 +1,4 @@
+
 import { jsonResponse, optionsResponse } from '@/lib/cors';
 import { verifySession } from '@/lib/auth';
 import { db } from '@/db';
@@ -29,7 +30,7 @@ export async function GET(request: Request) {
     if (!auth || !auth.startsWith('Bearer ')) {
       return jsonResponse({ error: 'unauthorized', message: 'Missing auth header.' }, { status: 401 });
     }
-    
+
     const token = auth.substring(7);
     const session = await verifySession(token);
 
@@ -116,7 +117,7 @@ export async function POST(request: Request) {
         eq(playlists.profileId, profileId)
       )
     );
-    
+
     // Only delete private (non-shared) playlists to preserve collaborative memberships/invites
     const privatePlaylists = [];
     for (const pl of existing) {
@@ -135,44 +136,21 @@ export async function POST(request: Request) {
 
     for (let i = 0; i < ownedClientPlaylists.length; i++) {
       const clientPl = ownedClientPlaylists[i];
-      
+
       // Ensure id is valid UUID if provided, else let database auto-generate
       const isUUID = typeof clientPl.id === 'string'
         && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(clientPl.id);
-      
-      let existingPlaylist = null;
-      if (isUUID) {
-        existingPlaylist = await db.query.playlists.findFirst({
-          where: eq(playlists.id, clientPl.id!)
-        });
-      }
 
-      let insertedPl;
-      if (existingPlaylist) {
-        // Update the existing playlist details instead of inserting to avoid unique constraint violations
-        [insertedPl] = await db.update(playlists).set({
-          title: clientPl.title || 'Untitled Playlist',
-          description: clientPl.description || '',
-          gradient: clientPl.gradient || 'linear-gradient(135deg, #a855f7, #ec4899)',
-          coverUrl: clientPl.coverUrl || null,
-          sortIndex: i,
-          deletedAt: null, // Undelete if it was marked as deleted
-        }).where(eq(playlists.id, clientPl.id!)).returning();
-
-        // Clear existing tracks first before re-inserting to prevent duplicates
-        await db.delete(playlistItems).where(eq(playlistItems.playlistId, insertedPl.id));
-      } else {
-        [insertedPl] = await db.insert(playlists).values({
-          id: isUUID ? clientPl.id : undefined,
-          userId: session.userId,
-          profileId,
-          title: clientPl.title || 'Untitled Playlist',
-          description: clientPl.description || '',
-          gradient: clientPl.gradient || 'linear-gradient(135deg, #a855f7, #ec4899)',
-          coverUrl: clientPl.coverUrl || null,
-          sortIndex: i,
-        }).returning();
-      }
+      const [insertedPl] = await db.insert(playlists).values({
+        id: isUUID ? clientPl.id : undefined,
+        userId: session.userId,
+        profileId,
+        title: clientPl.title || 'Untitled Playlist',
+        description: clientPl.description || '',
+        gradient: clientPl.gradient || 'linear-gradient(135deg, #a855f7, #ec4899)',
+        coverUrl: clientPl.coverUrl || null,
+        sortIndex: i,
+      }).returning();
 
       if (Array.isArray(clientPl.tracks) && clientPl.tracks.length > 0) {
         // Chunk list insertion to avoid exceeding Drizzle/Postgres parameters bounds
