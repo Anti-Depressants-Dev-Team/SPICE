@@ -22,7 +22,7 @@ import {
   buildPrivateTasteProfile,
   buildRecommendationSeeds,
   rankRecommendedTracks,
-  type RecommendationSeed,
+// type RecommendationSeed,
   type SeededRecommendationResult,
 } from './recommendations';
 import { isSpiceConnectCommandFresh, SPICE_CONNECT_COMMAND_TTL_MS } from '@/lib/spice-connect';
@@ -1598,7 +1598,7 @@ export default function SpiceApp() {
   const [homeEnergy, setHomeEnergy] = useState<Track[]>([]);
   const [homeListenAgain, setHomeListenAgain] = useState<Track[]>([]);
   const [homeRecommended, setHomeRecommended] = useState<Track[]>([]);
-  const [homeRecommendationSeed, setHomeRecommendationSeed] = useState<RecommendationSeed | null>(null);
+  const [homeRecommendationSeed, setHomeRecommendationSeed] = useState<import('./recommendations').RecommendationSeed | null>(null);
   const [isLoadingRecommendations, setIsLoadingRecommendations] = useState(false);
   const [isLoadingHome, setIsLoadingHome] = useState(true);
 
@@ -8633,7 +8633,7 @@ export default function SpiceApp() {
                         {Icons.tool} System Diagnostics & Live Terminal
                       </h3>
                       <span style={{ fontSize: '0.75rem', background: 'rgba(255,255,255,0.04)', color: 'var(--text-secondary)', padding: '4px 10px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.06)' }}>
-                        Spice Media Core v1.0.64 (Discord RPC)
+                        Spice Media Core v1.0.65
                       </span>
                     </div>
 
