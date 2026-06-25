@@ -1,5 +1,10 @@
 # SPICE Walkthrough
 
+## v1.0.65
+
+- [Spice.Admin main] Added unit tests for CORS utilities (`optionsResponse` and `jsonResponse`) in `apps/backend/test/cors.test.mjs` to improve backend test coverage and reliability.
+- [Spice.Admin main] Bump the visible diagnostics version to `Spice Media Core v1.0.65`.
+
 ## v1.0.64
 
 - [Spice.Music main] Added zero-dependency Discord Rich Presence (DRP) integration, allowing the SPICE player to show track details, artists, live elapsed/remaining ticking time progress, custom logo cover assets, and a button link back to the song.
