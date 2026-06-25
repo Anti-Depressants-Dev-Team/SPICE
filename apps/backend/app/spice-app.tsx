@@ -21,6 +21,8 @@ import {
   buildPrivateTasteProfile,
   buildRecommendationSeeds,
   rankRecommendedTracks,
+// type RecommendationSeed,
+  type SeededRecommendationResult,
   type RecommendationSeed,
 } from './recommendations';
 import { isSpiceConnectCommandFresh, SPICE_CONNECT_COMMAND_TTL_MS } from '@/lib/spice-connect';
@@ -1596,7 +1598,7 @@ export default function SpiceApp() {
   const [homeEnergy, setHomeEnergy] = useState<Track[]>([]);
   const [homeListenAgain, setHomeListenAgain] = useState<Track[]>([]);
   const [homeRecommended, setHomeRecommended] = useState<Track[]>([]);
-  const [homeRecommendationSeed, setHomeRecommendationSeed] = useState<RecommendationSeed | null>(null);
+  const [homeRecommendationSeed, setHomeRecommendationSeed] = useState<import('./recommendations').RecommendationSeed | null>(null);
   const [isLoadingRecommendations, setIsLoadingRecommendations] = useState(false);
   const [isLoadingHome, setIsLoadingHome] = useState(true);
 
