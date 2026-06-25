@@ -1,6 +1,8 @@
 import { SignJWT, jwtVerify } from 'jose';
 import { normalizeAccountRole, type AccountRole } from './account';
 
+const JWT_SECRET_STRING = process.env.JWT_SECRET || 'development-secret';
+if (!JWT_SECRET_STRING && process.env.NODE_ENV === 'production') {
 function getJwtSecret() {
   const secret = process.env.JWT_SECRET;
   if (!secret) {
