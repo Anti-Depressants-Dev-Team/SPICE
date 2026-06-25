@@ -13,6 +13,11 @@
 
 # SPICE Walkthrough
 
+
+## v1.0.65
+
+- Fixed a security vulnerability where a hardcoded default string was used for JWT and profile connection secrets if environment variables were missing.
+- The application now throws an error if JWT_SECRET or PROFILE_CONNECTION_SECRET is not configured properly, preventing the use of weak fallback keys.
 ## v1.0.65
 
 - [Spice.Music main] Fixed N+1 query issue when fetching members and profiles of shared playlists. Replaced iterative SQL queries with bulk fetches using `inArray` for better performance.
