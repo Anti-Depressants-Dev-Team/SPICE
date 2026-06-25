@@ -148,7 +148,8 @@
 
             /* Input Fields */
             input[type="text"],
-            input[type="password"] {
+            input[type="password"],
+            textarea {
                 background-color: #222;
                 color: #fff;
                 border: 1px solid #444;
@@ -161,9 +162,18 @@
             }
 
             input[type="text"]:focus,
-            input[type="password"]:focus {
+            input[type="password"]:focus,
+            textarea:focus {
                 outline: none;
                 border-color: #ba2f2f;
+            }
+
+            textarea {
+                min-height: 150px;
+                resize: vertical;
+                font-family:
+                    "Cascadia Code", Consolas, "Courier New", monospace;
+                line-height: 1.45;
             }
 
             /* Buttons */
@@ -310,7 +320,7 @@
                     <option value="home">None (Home Screen)</option>
                     <option value="yt">YouTube Music</option>
                     <option value="sc">SoundCloud (experimental)</option>
-                    <option value="spice_crazy">Spice Music</option>
+                    <option value="spice_crazy" selected>Spice Music</option>
                 </select>
             </div>
 
@@ -364,6 +374,50 @@
                 <p style="color: #666; font-size: 12px; margin-top: 5px">
                     Enable a quick search bar in the top navigation bar.
                 </p>
+            </div>
+
+            <div class="settings-section">
+                <div class="section-header">
+                    <div>
+                        <label style="margin: 0; font-size: 16px"
+                            >Toolbar Icons</label
+                        >
+                        <p style="color: #666; font-size: 12px; margin: 0">
+                            Pick which title bar icons are shown in a separate
+                            window.
+                        </p>
+                    </div>
+                    <button
+                        id="open-toolbar-settings-btn"
+                        class="btn"
+                        style="margin-left: auto"
+                    >
+                        Customize
+                    </button>
+                </div>
+            </div>
+
+            <div class="settings-section">
+                <label for="custom-css" style="font-size: 16px"
+                    >Custom CSS</label
+                >
+                <p style="color: #666; font-size: 12px; margin-bottom: 10px">
+                    Add your own CSS for the Spice app shell and loaded music
+                    view.
+                </p>
+                <textarea
+                    id="custom-css"
+                    spellcheck="false"
+                    placeholder=":root { --accent: #ff4d8d; }"
+                ></textarea>
+                <div style="display: flex; gap: 10px; justify-content: flex-end">
+                    <button id="clear-custom-css-btn" class="btn btn-secondary">
+                        Clear
+                    </button>
+                    <button id="save-custom-css-btn" class="btn">
+                        Save CSS
+                    </button>
+                </div>
             </div>
 
             <!-- Updates Section -->
@@ -553,6 +607,15 @@
             const topbarSearchToggle = document.getElementById(
                 "topbar-search-toggle",
             );
+            const openToolbarSettingsBtn = document.getElementById(
+                "open-toolbar-settings-btn",
+            );
+            const customCssInput = document.getElementById("custom-css");
+            const saveCustomCssBtn =
+                document.getElementById("save-custom-css-btn");
+            const clearCustomCssBtn = document.getElementById(
+                "clear-custom-css-btn",
+            );
 
             // Load settings
             window.api.getSettings().then((settings) => {
@@ -569,6 +632,7 @@
                 discordToggle.checked = settings.discordRpcEnabled;
                 vkPlayerToggle.checked = settings.vkPlayerEnabled;
                 topbarSearchToggle.checked = settings.topBarSearchEnabled;
+                customCssInput.value = settings.customCss || "";
             });
 
             adBlockTypeSelect.addEventListener("change", (e) => {
@@ -603,6 +667,19 @@
 
             topbarSearchToggle.addEventListener("change", (e) => {
                 window.api.setTopBarSearch(e.target.checked);
+            });
+
+            openToolbarSettingsBtn.addEventListener("click", () => {
+                window.api.openToolbarSettings();
+            });
+
+            saveCustomCssBtn.addEventListener("click", () => {
+                window.api.setCustomCss(customCssInput.value);
+            });
+
+            clearCustomCssBtn.addEventListener("click", () => {
+                customCssInput.value = "";
+                window.api.setCustomCss("");
             });
 
             defaultServiceSelect.addEventListener("change", (e) => {

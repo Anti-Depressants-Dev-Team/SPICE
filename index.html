@@ -285,7 +285,7 @@
                      onClick=${function(e) { e.stopPropagation(); }}>
                     <h3 class="text-lg font-semibold mb-4">Open URL</h3>
                     <input ref=${inputRef} type="text"
-                           placeholder="https://music.youtube.com/watch?v=..."
+                           placeholder="https://music.spice-app.xyz/?song=..."
                            class="w-full bg-black/40 border border-white/10 rounded-lg px-4 py-2.5 text-sm text-white
                                   placeholder-gray-600 focus:border-purple-500/50 focus:ring-2 focus:ring-purple-500/20
                                   outline-none transition-all"
@@ -408,9 +408,14 @@
         var showVolumePopup = props.showVolumePopup;
         var setShowVolumePopup = props.setShowVolumePopup;
         var topSearchVisible = props.topSearchVisible;
+        var toolbarButtons = props.toolbarButtons || {};
         var activeService = props.activeService;
         var onOpenUrlModal = props.onOpenUrlModal;
         var showServiceTools = activeService === 'yt';
+        var showYoutubeTools = showServiceTools;
+        function toolbarVisible(key) {
+            return toolbarButtons[key] !== false;
+        }
 
         var volumeRef = useRef(null);
 
@@ -462,18 +467,18 @@
 
                 <!-- LEFT: Nav Controls -->
                 <div class="flex items-center h-full pl-2 no-drag gap-0.5">
-                    <button class="nav-btn" onClick=${function() { callApi('navigate', 'back'); }}
-                            title="Back">${icon(IC.back)}</button>
-                    <button class="nav-btn" onClick=${function() { callApi('navigate', 'reload'); }}
-                            title="Reload">${icon(IC.refresh)}</button>
-                    <button class="nav-btn" onClick=${function() { onOpenUrlModal(); }}
-                            title="Open URL">${icon(IC.link)}</button>
-                    <button class="nav-btn" onClick=${function() { callApi('navigate', 'home'); }}
-                            title="Home">${icon(IC.home)}</button>
+                    ${toolbarVisible('back') && html`<button class="nav-btn" onClick=${function() { callApi('navigate', 'back'); }}
+                            title="Back">${icon(IC.back)}</button>`}
+                    ${toolbarVisible('reload') && html`<button class="nav-btn" onClick=${function() { callApi('navigate', 'reload'); }}
+                            title="Reload">${icon(IC.refresh)}</button>`}
+                    ${toolbarVisible('openUrl') && html`<button class="nav-btn" onClick=${function() { onOpenUrlModal(); }}
+                            title="Open URL">${icon(IC.link)}</button>`}
+                    ${toolbarVisible('home') && html`<button class="nav-btn" onClick=${function() { callApi('navigate', 'home'); }}
+                            title="Home">${icon(IC.home)}</button>`}
                 </div>
 
                 <!-- CENTER: Search Bar -->
-                ${topSearchVisible && showServiceTools && html`
+                ${topSearchVisible && showYoutubeTools && html`
                     <div class="absolute left-1/2 w-[320px] no-drag transition-transform duration-300"
                          style=${{ transform: showVolumePopup ? 'translateX(calc(-50% - 150px))' : 'translateX(-50%)' }}>
                         <div class="relative">
@@ -499,7 +504,7 @@
                 <!-- RIGHT: Feature + Window Buttons -->
                 <div class="flex items-center h-full ml-auto no-drag">
                     <!-- Volume -->
-                    <div ref=${volumeRef} class=${(showServiceTools ? 'flex' : 'hidden') + ' items-center h-full'}>
+                    <div ref=${volumeRef} class=${(showServiceTools && toolbarVisible('volume') ? 'flex' : 'hidden') + ' items-center h-full'}>
                         <button class="nav-btn"
                                 onClick=${function(e) { e.stopPropagation(); setShowVolumePopup(!showVolumePopup); }}
                                 title="Volume">
@@ -548,12 +553,12 @@
                     </div>
 
                     <!-- Feature Buttons -->
-                    <button class=${(showServiceTools ? 'nav-btn' : 'hidden')} onClick=${function() { callApi('openLyrics'); }}
-                            title="Lyrics">${icon(IC.mic)}</button>
-                    <button class=${(showServiceTools ? 'nav-btn' : 'hidden')} onClick=${function() { callApi('openMiniPlayer'); }}
-                            title="Mini Player">${icon(IC.pip)}</button>
-                    <button class=${(showServiceTools ? 'nav-btn' : 'hidden')} onClick=${function() { callApi('openQueue'); }}
-                            title="Queue">${icon(IC.queue)}</button>
+                    ${showServiceTools && toolbarVisible('lyrics') && html`<button class="nav-btn" onClick=${function() { callApi('openLyrics'); }}
+                            title="Lyrics">${icon(IC.mic)}</button>`}
+                    ${showServiceTools && toolbarVisible('miniPlayer') && html`<button class="nav-btn" onClick=${function() { callApi('openMiniPlayer'); }}
+                            title="Mini Player">${icon(IC.pip)}</button>`}
+                    ${showServiceTools && toolbarVisible('queue') && html`<button class="nav-btn" onClick=${function() { callApi('openQueue'); }}
+                            title="Queue">${icon(IC.queue)}</button>`}
                     <button class="nav-btn" onClick=${function() { callApi('openSettings'); }}
                             title="Settings">${icon(IC.settings)}</button>
 
@@ -628,6 +633,7 @@
         var _vp    = useState(false);            var showVolumePopup = _vp[0]; var setShowVolumePopup = _vp[1];
         var _url   = useState(false);            var showUrlModal = _url[0];  var setShowUrlModal = _url[1];
         var _ts    = useState(false);            var topSearchVisible = _ts[0]; var setTopSearchVisible = _ts[1];
+        var _tb    = useState({});               var toolbarButtons = _tb[0]; var setToolbarButtons = _tb[1];
         var _drag  = useState(false);            var isDragging = _drag[0];   var setIsDragging = _drag[1];
         var _dragT = useState(0);                var dragTime = _dragT[0];    var setDragTime = _dragT[1];
 
@@ -699,6 +705,12 @@
                 });
             }
 
+            if (window.api.onToolbarButtonsChanged) {
+                window.api.onToolbarButtonsChanged(function(buttons) {
+                    setToolbarButtons(buttons || {});
+                });
+            }
+
             // Update status notifications
             if (window.api.onUpdateStatus) {
                 window.api.onUpdateStatus(function(status) {
@@ -719,6 +731,11 @@
                 // Check search bar visibility
                 var searchVis = await callApi('getTopBarSearch');
                 if (searchVis === true) setTopSearchVisible(true);
+
+                if (window.api && window.api.getSettings) {
+                    var settings = await window.api.getSettings();
+                    setToolbarButtons((settings && settings.toolbarButtons) || {});
+                }
             })();
         }, []);
 
@@ -829,6 +846,7 @@
                     showVolumePopup=${showVolumePopup}
                     setShowVolumePopup=${setShowVolumePopup}
                     topSearchVisible=${topSearchVisible}
+                    toolbarButtons=${toolbarButtons}
                     activeService=${activeService}
                     onOpenUrlModal=${openUrlModal}
                 />

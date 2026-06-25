@@ -65,6 +65,8 @@ try {
 let store;
 let mainWindow;
 let view;
+let settingsWindow = null;
+let toolbarSettingsWindow = null;
 let adBlocker = null;
 let scrobbler = null;
 let currentService = null; // Track which service is active for Discord RPC
@@ -78,6 +80,17 @@ const SERVICES = {
   yt_vk: "https://music.youtube.com", // VK layout uses same URL, just injects VK player UI
   sc: "https://soundcloud.com",
   spice_crazy: "https://music.spice-app.xyz/",
+};
+const DEFAULT_STARTUP_SERVICE = "spice_crazy";
+const DEFAULT_TOOLBAR_BUTTONS = {
+  back: true,
+  reload: true,
+  openUrl: true,
+  home: true,
+  volume: true,
+  lyrics: true,
+  miniPlayer: true,
+  queue: true,
 };
 
 const AD_CSS = `
@@ -175,11 +188,13 @@ function createWindow() {
   // Initial load via local server
   mainWindow.loadURL("http://localhost:6969/").then(() => {
     mainWindow.show();
+    applyCustomCssToWebContents(mainWindow.webContents);
     // mainWindow.webContents.openDevTools({ mode: "detach" }); // Disabled to stop DevTools console from popping up automatically
 
     // Check for Default Service Startup.
-    // If not set, stay on Home instead of silently launching a service.
-    const startupService = store ? store.get("defaultService", "home") : "home";
+    const startupService = store
+      ? store.get("defaultService", DEFAULT_STARTUP_SERVICE)
+      : DEFAULT_STARTUP_SERVICE;
 
     if (
       startupService &&
@@ -287,6 +302,46 @@ function sendActiveServiceState(active) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send("service-active", active);
   mainWindow.webContents.send("active-service-changed", active ? currentService : null);
+}
+
+function getToolbarButtons() {
+  const saved = store ? store.get("toolbarButtons", {}) : {};
+  return { ...DEFAULT_TOOLBAR_BUTTONS, ...(saved || {}) };
+}
+
+function applyCustomCssToWebContents(webContents) {
+  if (!webContents || webContents.isDestroyed()) return;
+  const css = store ? store.get("customCss", "") : "";
+  const script = `
+    (() => {
+      const existing = document.getElementById('spice-custom-css');
+      if (existing) existing.remove();
+      const css = ${JSON.stringify(css)};
+      if (!css.trim()) return;
+      const style = document.createElement('style');
+      style.id = 'spice-custom-css';
+      style.textContent = css;
+      document.head.appendChild(style);
+    })();
+  `;
+  webContents.executeJavaScript(script).catch((err) => {
+    console.error("[CustomCSS] Failed to apply CSS:", err);
+  });
+}
+
+function applyCustomCssEverywhere() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    applyCustomCssToWebContents(mainWindow.webContents);
+  }
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    applyCustomCssToWebContents(settingsWindow.webContents);
+  }
+  if (toolbarSettingsWindow && !toolbarSettingsWindow.isDestroyed()) {
+    applyCustomCssToWebContents(toolbarSettingsWindow.webContents);
+  }
+  if (view && !view.webContents.isDestroyed()) {
+    applyCustomCssToWebContents(view.webContents);
+  }
 }
 
 const AD_SKIP_SCRIPT = `
@@ -786,6 +841,7 @@ function loadService(serviceKey) {
     .then(() => {
       console.log(`Successfully loaded ${serviceKey} `);
       updateViewBounds(); // Re-apply bounds just in case
+      applyCustomCssToWebContents(view.webContents);
 
       if (supportsInjectedPlayback(trackDetectionKey)) {
         // Inject CSS for Cosmetic Blocking
@@ -2013,6 +2069,7 @@ app.whenReady().then(async () => {
         .loadURL(url)
         .then(() => {
           console.log(`Successfully loaded URL: ${url} `);
+          applyCustomCssToWebContents(view.webContents);
 
           // Open DevTools for debugging - REMOVED for "Settings Only" restriction
           // view.webContents.openDevTools({ mode: 'detach' });
@@ -2360,8 +2417,6 @@ app.whenReady().then(async () => {
   // Main process receiving track info from Renderer (which got it from BrowserView)
   // scrobble-now-playing removed (duplicate)
 
-  let settingsWindow = null;
-
   function createSettingsWindow() {
     if (settingsWindow) {
       settingsWindow.focus();
@@ -2386,14 +2441,52 @@ app.whenReady().then(async () => {
     });
 
     settingsWindow.loadURL("http://localhost:6969/settings");
+    settingsWindow.webContents.on("did-finish-load", () => {
+      applyCustomCssToWebContents(settingsWindow.webContents);
+    });
 
     settingsWindow.on("closed", () => {
       settingsWindow = null;
     });
   }
 
+  function createToolbarSettingsWindow() {
+    if (toolbarSettingsWindow) {
+      toolbarSettingsWindow.focus();
+      return;
+    }
+
+    toolbarSettingsWindow = new BrowserWindow({
+      width: 460,
+      height: 560,
+      backgroundColor: "#121212",
+      frame: false,
+      titleBarStyle: "hidden",
+      titleBarOverlay: false,
+      parent: settingsWindow || mainWindow,
+      webPreferences: {
+        preload: path.join(__dirname, "preload.js"),
+        contextIsolation: true,
+        nodeIntegration: false,
+      },
+    });
+
+    toolbarSettingsWindow.loadFile(path.join(__dirname, "toolbar-icons.html"));
+    toolbarSettingsWindow.webContents.on("did-finish-load", () => {
+      applyCustomCssToWebContents(toolbarSettingsWindow.webContents);
+    });
+
+    toolbarSettingsWindow.on("closed", () => {
+      toolbarSettingsWindow = null;
+    });
+  }
+
   ipcMain.on("open-settings", () => {
     createSettingsWindow();
+  });
+
+  ipcMain.on("open-toolbar-settings", () => {
+    createToolbarSettingsWindow();
   });
 
   // Volume Logic
@@ -2489,7 +2582,11 @@ app.whenReady().then(async () => {
       adBlockerEnabled: store ? store.get("adBlockerEnabled", true) : true,
       // Return type explicitly so UI can show correct state
       adBlockerType: store ? store.get("adBlockerType", "spice") : "spice",
-      defaultService: store ? store.get("defaultService", "home") : "home",
+      defaultService: store
+        ? store.get("defaultService", DEFAULT_STARTUP_SERVICE)
+        : DEFAULT_STARTUP_SERVICE,
+      toolbarButtons: getToolbarButtons(),
+      customCss: store ? store.get("customCss", "") : "",
       discordRpcEnabled: store ? store.get("discordRpcEnabled", true) : true,
       vkPlayerEnabled: store ? store.get("vkPlayerEnabled", false) : false,
       topBarSearchEnabled: store
@@ -2507,6 +2604,24 @@ app.whenReady().then(async () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send("topbar-search-visibility", enabled);
     }
+  });
+
+  ipcMain.on("set-toolbar-buttons", (event, buttons) => {
+    if (!store || !buttons || typeof buttons !== "object") return;
+    const next = {};
+    for (const key of Object.keys(DEFAULT_TOOLBAR_BUTTONS)) {
+      next[key] = buttons[key] !== false;
+    }
+    store.set("toolbarButtons", next);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("toolbar-buttons-changed", getToolbarButtons());
+    }
+  });
+
+  ipcMain.on("set-custom-css", (event, css) => {
+    if (!store) return;
+    store.set("customCss", typeof css === "string" ? css : "");
+    applyCustomCssEverywhere();
   });
 
   ipcMain.on("execute-search", (event, query) => {
