@@ -16,7 +16,6 @@ import {
   rememberSearchResults,
   rememberTrackSnapshots,
   savePlaybackState,
-  type SearchCacheEntry,
 } from './spice-storage';
 import {
   buildPrivateTasteProfile,
@@ -1609,7 +1608,7 @@ export default function SpiceApp() {
   const [searchResultsSource, setSearchResultsSource] = useState<'network' | 'cache' | null>(null);
   const [isSearching, setIsSearching] = useState(false);
   const [topbarSearchTrayOpen, setTopbarSearchTrayOpen] = useState(false);
-  const [recentSearchEntries, setRecentSearchEntries] = useState<SearchCacheEntry[]>([]);
+  const [recentSearchEntries, setRecentSearchEntries] = useState<ReturnType<typeof getRecentCachedSearches>>([]);
   const [error, setError] = useState<string>();
 
   const [selfTestRunning, setSelfTestRunning] = useState(false);
@@ -4169,7 +4168,7 @@ export default function SpiceApp() {
     }
   };
 
-  const runRecentTopbarSearch = (entry: SearchCacheEntry) => {
+  const runRecentTopbarSearch = (entry: ReturnType<typeof getRecentCachedSearches>[number]) => {
     const cachedProvider = entry.sourceId ?? null;
     const provider = isSearchProvider(cachedProvider) ? cachedProvider : searchProvider;
     runTopbarSearch(entry.query, provider);
