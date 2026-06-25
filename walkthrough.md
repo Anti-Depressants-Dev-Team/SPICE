@@ -1,3 +1,8 @@
+## v1.0.66
+
+- [Spice.Music main] Fixed code health issue in `apps/backend/lib/lrclib.ts` by suppressing hardcoded `console.error` for expected LRCLIB lookup failures.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.66`.
+
 ## v1.0.67
 
 - [Spice.Music main] ListenBrainz user tokens are now encrypted and saved on the signed-in SPICE account instead of browser local storage, with restore on login and account-backed resolution during profile sync submissions.
