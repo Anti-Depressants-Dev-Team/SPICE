@@ -7,6 +7,7 @@
 
 ## v1.0.65
 
+- [Spice.Admin main] Added unit tests for CORS utilities (`optionsResponse` and `jsonResponse`) in `apps/backend/test/cors.test.mjs` to improve backend test coverage and reliability.
 - [Spice.Admin main] Removed hardcoded fallback secrets for JWT signing and profile connections. The application will now refuse to start and throw an error if the required `JWT_SECRET` environment variable is not explicitly set, fixing a critical security vulnerability.
 - [Spice.Admin main] Bump the visible diagnostics version to `Spice Media Core v1.0.65`.
 
