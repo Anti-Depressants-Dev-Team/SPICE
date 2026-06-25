@@ -9,6 +9,12 @@
 - [Spice.Music main] Removed the scrapped Discord Rich Presence integration, including the `/api/discord/presence` route, `discord-ipc` server helper, client playback hooks, and `DISCORD_CLIENT_ID` environment variable documentation.
 - [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.66`.
 
+## v1.0.66
+
+- [Spice.Music main] Added a setting in the settings tab to allow users to customize their global theme color.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.66`.
+
+
 ## v1.0.65
 
 - [Spice.Music main] Fixed a code health warning in `spice-app.tsx` by commenting out the unused `RecommendationSeed` import and using an inline type import at the usage site to satisfy TypeScript requirements.
@@ -18,6 +24,11 @@
 
 # SPICE Walkthrough
 
+
+## v1.0.65
+
+- Fixed a security vulnerability where a hardcoded default string was used for JWT and profile connection secrets if environment variables were missing.
+- The application now throws an error if JWT_SECRET or PROFILE_CONNECTION_SECRET is not configured properly, preventing the use of weak fallback keys.
 ## v1.0.65
 
 - [Spice.Music main] Fixed N+1 query issue when fetching members and profiles of shared playlists. Replaced iterative SQL queries with bulk fetches using `inArray` for better performance.
