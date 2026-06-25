@@ -21,6 +21,8 @@ import {
   buildPrivateTasteProfile,
   buildRecommendationSeeds,
   rankRecommendedTracks,
+// type RecommendationSeed,
+  type SeededRecommendationResult,
   type RecommendationSeed,
 } from './recommendations';
 import { isSpiceConnectCommandFresh, SPICE_CONNECT_COMMAND_TTL_MS } from '@/lib/spice-connect';
@@ -740,32 +742,6 @@ const profileOriginUrl = (track: Track) => {
 const safeSharedString = (value: unknown, fallback = '') =>
   typeof value === 'string' && value.trim() ? value.trim() : fallback;
 
-const compactTrackForSongShare = (track: Track): Track => ({
-  id: track.id,
-  title: track.title,
-  artists: (track.artists || []).map((artist) => ({
-    id: safeSharedString(artist.id, artist.name || 'artist'),
-    name: safeSharedString(artist.name, 'Unknown Artist'),
-    ...(artist.artworkUrl ? { artworkUrl: artist.artworkUrl } : {}),
-  })),
-  ...(track.album ? {
-    album: {
-      id: track.album.id,
-      title: track.album.title,
-      artists: (track.album.artists || []).map((artist) => ({
-        id: safeSharedString(artist.id, artist.name || 'artist'),
-        name: safeSharedString(artist.name, 'Unknown Artist'),
-        ...(artist.artworkUrl ? { artworkUrl: artist.artworkUrl } : {}),
-      })),
-      ...(track.album.artworkUrl ? { artworkUrl: track.album.artworkUrl } : {}),
-      ...(track.album.year ? { year: track.album.year } : {}),
-    },
-  } : {}),
-  ...(track.durationMs ? { durationMs: track.durationMs } : {}),
-  ...(track.artworkUrl ? { artworkUrl: track.artworkUrl } : {}),
-  ...(track.sourceId ? { sourceId: track.sourceId } : {}),
-  ...(track.permalinkUrl ? { permalinkUrl: track.permalinkUrl } : {}),
-});
 
 const encodeBase64Url = (value: string) => {
   const bytes = new TextEncoder().encode(value);
@@ -930,8 +906,22 @@ const scrobbleThresholdSeconds = (durationSeconds: number) => {
   return Math.min(Math.max(durationSeconds * 0.5, 30), 240);
 };
 
-const randomIndex = (length: number) => Math.floor(Math.random() * length);
-const randomSuffix = () => Math.random().toString(36).substring(2, 5);
+
+/**
+ * Generates a random number between 0 (inclusive) and 1 (exclusive) using crypto.getRandomValues
+ * Fallback to Math.random() if crypto is not available.
+ */
+const getSecureRandom = () => {
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    const array = new Uint32Array(1);
+    crypto.getRandomValues(array);
+    return array[0] / (0xffffffff + 1);
+  }
+  return Math.random();
+};
+
+const randomIndex = (length: number) => Math.floor(getSecureRandom() * length);
+const randomSuffix = () => getSecureRandom().toString(36).substring(2, 5);
 const playlistUuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isPlaylistUuid = (id: string) => playlistUuidPattern.test(id);
 
@@ -942,7 +932,7 @@ const createPlaylistId = () => {
 
   // Fallback RFC4122 version 4 UUID generator
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
+    const r = (getSecureRandom() * 16) | 0;
     const v = c === 'x' ? r : (r & 0x3) | 0x8;
     return v.toString(16);
   });
@@ -1142,6 +1132,10 @@ export default function SpiceApp() {
   const [lastFmLinkStatus, setLastFmLinkStatus] = useState<string | null>(null);
   const [isLinkingLastFm, setIsLinkingLastFm] = useState(false);
   const [listenBrainzToken, setListenBrainzToken] = useState('');
+  const [listenBrainzAccountLinked, setListenBrainzAccountLinked] = useState(false);
+  const [listenBrainzLinkStatus, setListenBrainzLinkStatus] = useState<string | null>(null);
+  const listenBrainzSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const migratedLegacyListenBrainzRef = useRef(false);
   const [profileSyncStatus, setProfileSyncStatus] = useState<ProfileSyncStatus>('idle');
   const [showQueueDrawer, setShowQueueDrawer] = useState(false);
   const [spiceNotices, setSpiceNotices] = useState<SpiceNotice[]>([]);
@@ -1159,7 +1153,7 @@ export default function SpiceApp() {
   }, []);
 
   const showSpiceNotice = useCallback((message: string, kind: SpiceNoticeKind = 'info') => {
-    const id = Date.now() + Math.random();
+    const id = Date.now() + getSecureRandom();
     setSpiceNotices((prev) => {
       const next = prev.length >= 2 ? prev.slice(1) : prev;
       return [...next, { id, message, kind }];
@@ -1596,7 +1590,7 @@ export default function SpiceApp() {
   const [homeEnergy, setHomeEnergy] = useState<Track[]>([]);
   const [homeListenAgain, setHomeListenAgain] = useState<Track[]>([]);
   const [homeRecommended, setHomeRecommended] = useState<Track[]>([]);
-  const [homeRecommendationSeed, setHomeRecommendationSeed] = useState<RecommendationSeed | null>(null);
+  const [homeRecommendationSeed, setHomeRecommendationSeed] = useState<import('./recommendations').RecommendationSeed | null>(null);
   const [isLoadingRecommendations, setIsLoadingRecommendations] = useState(false);
   const [isLoadingHome, setIsLoadingHome] = useState(true);
 
@@ -1905,9 +1899,10 @@ export default function SpiceApp() {
     });
   };
 
-  const restoreLastFmAccountLink = useCallback(async (token: string | null = cloudToken) => {
+  const restoreProfileConnections = useCallback(async (token: string | null = cloudToken) => {
     if (!token) {
       setLastFmAccountLinked(false);
+      setListenBrainzAccountLinked(false);
       localStorage.setItem('spice_lastfm_account_linked', 'false');
       return;
     }
@@ -1922,11 +1917,15 @@ export default function SpiceApp() {
           name?: string;
           linkedAt?: string;
         };
+        listenbrainz?: {
+          linked?: boolean;
+          linkedAt?: string;
+        };
         message?: string;
       };
 
       if (!response.ok) {
-        throw new Error(data.message || 'Failed to restore Last.fm account link.');
+        throw new Error(data.message || 'Failed to restore profile connections.');
       }
 
       if (data.lastfm?.linked) {
@@ -1943,11 +1942,78 @@ export default function SpiceApp() {
         setLastFmAccountLinked(false);
         localStorage.setItem('spice_lastfm_account_linked', 'false');
       }
+
+      if (data.listenbrainz?.linked) {
+        setListenBrainzAccountLinked(true);
+        setProfileSyncEnabled(true);
+        localStorage.setItem('spice_profile_sync_enabled', 'true');
+        setListenBrainzLinkStatus('Restored ListenBrainz token from your SPICE account. Profile sync is enabled.');
+        logDebug('profile', 'ListenBrainz token restored from SPICE account.');
+      } else {
+        setListenBrainzAccountLinked(false);
+      }
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to restore Last.fm account link.';
-      logDebug('error', `Last.fm account restore failed: ${message}`);
+      const message = error instanceof Error ? error.message : 'Failed to restore profile connections.';
+      logDebug('error', `Profile connection restore failed: ${message}`);
     }
   }, [cloudToken, logDebug]);
+
+  const saveListenBrainzToken = useCallback(async (rawToken: string) => {
+    if (!cloudToken) {
+      if (rawToken.trim()) {
+        setListenBrainzLinkStatus('Sign in to SPICE to save your ListenBrainz token on your account.');
+      }
+      setListenBrainzAccountLinked(false);
+      return;
+    }
+
+    setListenBrainzLinkStatus('Saving ListenBrainz token to your SPICE account...');
+    try {
+      const response = await fetch('/api/profile/connections', {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${cloudToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          listenbrainz: { token: rawToken.trim() || null },
+        }),
+      });
+      const data = await response.json().catch(() => ({})) as {
+        listenbrainz?: { linked?: boolean };
+        message?: string;
+      };
+
+      if (!response.ok) {
+        throw new Error(data.message || 'Failed to save ListenBrainz token.');
+      }
+
+      if (data.listenbrainz?.linked) {
+        setListenBrainzAccountLinked(true);
+        setProfileSyncEnabled(true);
+        localStorage.setItem('spice_profile_sync_enabled', 'true');
+        setListenBrainzLinkStatus('ListenBrainz token saved to your SPICE account. Profile sync is enabled.');
+        logDebug('profile', 'ListenBrainz token saved to SPICE account.');
+      } else {
+        setListenBrainzAccountLinked(false);
+        setListenBrainzLinkStatus(null);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to save ListenBrainz token.';
+      setListenBrainzLinkStatus(message);
+      logDebug('error', `ListenBrainz token save failed: ${message}`);
+    }
+  }, [cloudToken, logDebug]);
+
+  const queueListenBrainzTokenSave = useCallback((token: string) => {
+    if (listenBrainzSaveTimeoutRef.current) {
+      clearTimeout(listenBrainzSaveTimeoutRef.current);
+    }
+    listenBrainzSaveTimeoutRef.current = setTimeout(() => {
+      listenBrainzSaveTimeoutRef.current = null;
+      void saveListenBrainzToken(token);
+    }, 800);
+  }, [saveListenBrainzToken]);
 
   const [isMounted, setIsMounted] = useState(false);
 
@@ -1995,7 +2061,11 @@ export default function SpiceApp() {
       localStorage.removeItem('spice_lastfm_api_key');
       localStorage.removeItem('spice_lastfm_shared_secret');
       localStorage.removeItem('spice_lastfm_link_token');
-      setListenBrainzToken(localStorage.getItem('spice_listenbrainz_token') || '');
+      const legacyListenBrainzToken = localStorage.getItem('spice_listenbrainz_token');
+      if (legacyListenBrainzToken) {
+        setListenBrainzToken(legacyListenBrainzToken);
+      }
+      localStorage.removeItem('spice_listenbrainz_token');
 
       const savedSearchProvider = localStorage.getItem('spice_search_provider');
       if (isSearchProvider(savedSearchProvider)) {
@@ -2113,8 +2183,16 @@ export default function SpiceApp() {
 
   useEffect(() => {
     if (!cloudToken) return;
-    void restoreLastFmAccountLink(cloudToken);
-  }, [cloudToken, restoreLastFmAccountLink]);
+    void restoreProfileConnections(cloudToken);
+  }, [cloudToken, restoreProfileConnections]);
+
+  useEffect(() => {
+    if (migratedLegacyListenBrainzRef.current || !cloudToken) return;
+    const legacyToken = listenBrainzToken.trim();
+    if (!legacyToken || listenBrainzAccountLinked) return;
+    migratedLegacyListenBrainzRef.current = true;
+    void saveListenBrainzToken(legacyToken);
+  }, [cloudToken, listenBrainzToken, listenBrainzAccountLinked, saveListenBrainzToken]);
 
   const loadPlaylistInvite = useCallback(async (token: string) => {
     setInviteStatus('Loading shared playlist invite...');
@@ -2821,7 +2899,7 @@ export default function SpiceApp() {
 
       // Auto sync after login
       await syncWithCloud(data.token, authProfileId, { cloudUser: data.user, cloudUsername: null });
-      await restoreLastFmAccountLink(data.token);
+      await restoreProfileConnections(data.token);
       void fetchUsername(data.token, authProfileId);
     } catch (err: any) {
       console.error(err);
@@ -2849,6 +2927,7 @@ export default function SpiceApp() {
       cloudUsername: null,
     });
     setLastFmAccountLinked(false);
+    setListenBrainzAccountLinked(false);
     localStorage.setItem('spice_lastfm_account_linked', 'false');
     setDbError(null);
     setAuthError(null);
@@ -2915,7 +2994,7 @@ export default function SpiceApp() {
     if (
       profileSyncEnabled
       && currentTrack.id !== 'placeholder'
-      && (lastFmSessionKey.trim() || listenBrainzToken.trim())
+      && (lastFmSessionKey.trim() || lastFmAccountLinked || listenBrainzToken.trim() || listenBrainzAccountLinked)
       && scrobbleState
       && scrobbleState.trackKey === currentTrackKey
       && !scrobbleState.scrobbled
@@ -3021,7 +3100,8 @@ export default function SpiceApp() {
     const lastfmSession = lastFmSessionKey.trim();
     const shouldSyncLastFm = Boolean(lastfmSession || lastFmAccountLinked);
     const listenbrainzToken = listenBrainzToken.trim();
-    if (!shouldSyncLastFm && !listenbrainzToken) {
+    const shouldSyncListenBrainz = Boolean(listenbrainzToken || listenBrainzAccountLinked);
+    if (!shouldSyncLastFm && !shouldSyncListenBrainz) {
       setProfileSyncStatus('idle');
       return;
     }
@@ -3043,7 +3123,11 @@ export default function SpiceApp() {
                 sessionKey: lastfmSession || undefined,
               }
               : undefined,
-            listenbrainz: listenbrainzToken ? { token: listenbrainzToken } : undefined,
+            listenbrainz: shouldSyncListenBrainz
+              ? {
+                token: listenbrainzToken || undefined,
+              }
+              : undefined,
           },
           track: {
             id: currentTrack.id,
@@ -3150,7 +3234,7 @@ export default function SpiceApp() {
 
   useEffect(() => {
     if (!profileSyncEnabled || currentTrack.id === 'placeholder' || !isPlaying) return;
-    if (!lastFmSessionKey.trim() && !lastFmAccountLinked && !listenBrainzToken.trim()) return;
+    if (!lastFmSessionKey.trim() && !lastFmAccountLinked && !listenBrainzToken.trim() && !listenBrainzAccountLinked) return;
 
     const scrobbleState = scrobbleStateRef.current;
     if (!scrobbleState || scrobbleState.trackKey !== currentTrackKey) return;
@@ -3172,93 +3256,7 @@ export default function SpiceApp() {
       scrobbleState.scrobbled = true;
       void submitProfileListen('scrobble', scrobbleState.startedAt);
     }
-  }, [profileSyncEnabled, cloudToken, lastFmSessionKey, lastFmAccountLinked, listenBrainzToken, isPlaying, progress, duration, currentTrackKey]);
-
-  // ── Discord Rich Presence Integration ──────────────────────────────
-  const lastDiscordUpdateRef = useRef<{
-    trackId: string;
-    isPlaying: boolean;
-    progress: number;
-    updatedAt: number;
-  } | null>(null);
-
-  useEffect(() => {
-    const now = Date.now();
-    const last = lastDiscordUpdateRef.current;
-    
-    let shouldUpdate = false;
-    if (!last) {
-      shouldUpdate = true;
-    } else if (last.trackId !== currentTrack.id) {
-      shouldUpdate = true;
-    } else if (last.isPlaying !== isPlaying) {
-      shouldUpdate = true;
-    } else {
-      if (isPlaying) {
-        const expectedProgress = last.progress + (now - last.updatedAt) / 1000;
-        if (Math.abs(progress - expectedProgress) > 1.5) {
-          shouldUpdate = true;
-        }
-      } else {
-        if (Math.abs(progress - last.progress) > 1.0) {
-          shouldUpdate = true;
-        }
-      }
-      
-      if (now - last.updatedAt >= 4500) {
-        shouldUpdate = true;
-      }
-    }
-
-    if (shouldUpdate) {
-      lastDiscordUpdateRef.current = {
-        trackId: currentTrack.id,
-        isPlaying,
-        progress,
-        updatedAt: now,
-      };
-
-      const durationMs = currentTrack.durationMs || (duration > 0 ? Math.round(duration * 1000) : undefined);
-      const progressMs = Math.round(progress * 1000);
-
-      fetch('/api/discord/presence', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          track: currentTrack.id === 'placeholder' ? null : {
-            id: currentTrack.id,
-            title: currentTrack.title,
-            artist: profileArtistName(currentTrack),
-            durationMs,
-            artworkUrl: currentTrack.artworkUrl,
-            permalinkUrl: (() => {
-              const u = new URL('https://music.spice-app.xyz/');
-              u.searchParams.set('song', encodeSongShareToken(currentTrack));
-              return u.toString();
-            })(),
-          },
-          isPlaying,
-          progressMs,
-        }),
-      }).catch((err) => {
-        console.error('[Discord RPC Client] Failed to update presence:', err);
-      });
-    }
-  }, [currentTrack, isPlaying, progress, duration]);
-
-  useEffect(() => {
-    return () => {
-      fetch('/api/discord/presence', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          track: null,
-          isPlaying: false,
-          progressMs: 0,
-        }),
-      }).catch(() => {});
-    };
-  }, []);
+  }, [profileSyncEnabled, cloudToken, lastFmSessionKey, lastFmAccountLinked, listenBrainzToken, listenBrainzAccountLinked, isPlaying, progress, duration, currentTrackKey]);
 
   useEffect(() => {
     handleAudioEndedRef.current = handleAudioEnded;
@@ -4778,7 +4776,7 @@ export default function SpiceApp() {
         const err = await res.json();
         showSpiceNotice(err.message || 'Failed to accept invite.', 'danger');
       }
-    } catch (e) {
+    } catch {
       showSpiceNotice('Failed to accept invite.', 'danger');
     } finally {
       setAcceptingInvite(false);
@@ -4800,7 +4798,7 @@ export default function SpiceApp() {
         const err = await res.json();
         showSpiceNotice(err.message || 'Failed to reject invite.', 'danger');
       }
-    } catch (e) {
+    } catch {
       showSpiceNotice('Failed to reject invite.', 'danger');
     } finally {
       setAcceptingInvite(false);
@@ -5311,7 +5309,7 @@ export default function SpiceApp() {
     if (!tracks || tracks.length === 0) return;
     setIsShuffle(true);
     localStorage.setItem('spice_is_shuffle', 'true');
-    const shuffled = [...tracks].sort(() => Math.random() - 0.5);
+    const shuffled = [...tracks].sort(() => getSecureRandom() - 0.5);
     startTrackOnActiveReceiver(shuffled[0], shuffled);
   };
 
@@ -8368,21 +8366,50 @@ export default function SpiceApp() {
                       </div>
 
                       <div style={{ border: '1px solid var(--border-color)', borderRadius: '12px', padding: '16px', background: '#070707' }}>
-                        <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>ListenBrainz User Token</label>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px', marginBottom: '12px' }}>
+                          <div>
+                            <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>ListenBrainz User Token</label>
+                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.73rem', lineHeight: 1.4, margin: 0 }}>
+                              Sends temporary playing-now updates and permanent listens after the scrobble threshold.
+                            </p>
+                          </div>
+                          {listenBrainzAccountLinked && (
+                            <span style={{ color: '#34d399', border: '1px solid rgba(52, 211, 153, 0.35)', borderRadius: '999px', padding: '4px 9px', fontSize: '0.72rem', whiteSpace: 'nowrap' }}>
+                              Linked
+                            </span>
+                          )}
+                        </div>
+
                         <input
                           type="password"
                           value={listenBrainzToken}
                           onChange={(e) => {
                             setListenBrainzToken(e.target.value);
-                            localStorage.setItem('spice_listenbrainz_token', e.target.value);
+                            queueListenBrainzTokenSave(e.target.value);
                           }}
-                          placeholder="Paste user token"
+                          onBlur={() => {
+                            if (listenBrainzSaveTimeoutRef.current) {
+                              clearTimeout(listenBrainzSaveTimeoutRef.current);
+                              listenBrainzSaveTimeoutRef.current = null;
+                            }
+                            void saveListenBrainzToken(listenBrainzToken);
+                          }}
+                          placeholder={listenBrainzAccountLinked ? 'Token saved on your SPICE account' : 'Paste user token'}
                           autoComplete="off"
                           style={{ width: '100%', padding: '10px 14px', background: '#0a0a0a', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', outline: 'none' }}
                         />
-                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.74rem', lineHeight: 1.4, margin: '8px 0 0 0' }}>
-                          Sends temporary playing-now updates and permanent listens after the scrobble threshold.
+                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.73rem', lineHeight: 1.4, margin: '8px 0 0 0' }}>
+                          {listenBrainzAccountLinked
+                            ? 'Saved to your SPICE account, so it can be restored after clearing browser storage.'
+                            : cloudToken
+                              ? 'Paste your token and SPICE will save it to your account automatically.'
+                              : 'Sign in to SPICE before pasting a token so it is backed up on your account.'}
                         </p>
+                        {listenBrainzLinkStatus && (
+                          <p style={{ color: listenBrainzLinkStatus.includes('failed') || listenBrainzLinkStatus.includes('Sign in') ? '#f87171' : 'var(--text-secondary)', fontSize: '0.74rem', lineHeight: 1.4, margin: '8px 0 0 0' }}>
+                            {listenBrainzLinkStatus}
+                          </p>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -8631,8 +8658,10 @@ export default function SpiceApp() {
                         {Icons.tool} System Diagnostics & Live Terminal
                       </h3>
                       <span style={{ fontSize: '0.75rem', background: 'rgba(255,255,255,0.04)', color: 'var(--text-secondary)', padding: '4px 10px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.06)' }}>
-                        Spice Media Core v1.0.65 (Discord RPC)
-                        Spice Media Core v1.0.65
+                        Spice Media Core v1.0.67
+                        Spice Media Core v1.0.65 (Security Fix)
+                        Spice Media Core v1.0.66 (Discord RPC)
+                        Spice Media Core v1.0.66
                       </span>
                     </div>
 

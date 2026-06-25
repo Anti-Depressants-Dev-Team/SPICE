@@ -49,9 +49,12 @@ test('hashPassword creates a properly formatted hash string', () => {
 
   // Both salt and hash should be non-empty hex strings
   const [salt, _, hash] = parts;
+  const [salt, iterations, hash] = parts;
   assert.ok(salt.length > 0);
+  assert.ok(iterations.length > 0);
   assert.ok(hash.length > 0);
   assert.match(salt, /^[0-9a-f]+$/i);
+  assert.match(iterations, /^[0-9]+$/);
   assert.match(hash, /^[0-9a-f]+$/i);
 });
 
