@@ -1,5 +1,10 @@
 # SPICE Walkthrough
 
+## v1.0.65
+
+- [Spice.Music main] Throw an error in production if the stream HMAC secret is missing, removing the hardcoded fallback secret to prevent unauthorized stream URL generation.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.65`.
+
 ## v1.0.64
 
 - [Spice.Music main] Added zero-dependency Discord Rich Presence (DRP) integration, allowing the SPICE player to show track details, artists, live elapsed/remaining ticking time progress, custom logo cover assets, and a button link back to the song.
@@ -223,6 +228,10 @@
 - Add backend tests for Last.fm request signing, scrobble timestamp validation, and account-backed Last.fm session fallback.
 - Add Spice Connect tests for device-state normalization, command validation, and resilient remote payload parsing.
 - Extract small profile-listen and Spice Connect helper modules so API route behavior is covered without mocking the full Next.js runtime.
+
+## v1.0.29
+
+- [Spice.Music main] Throw an error in production if the stream HMAC secret is missing, removing the hardcoded fallback secret to prevent unauthorized stream URL generation.
 
 ## v1.0.28
 
