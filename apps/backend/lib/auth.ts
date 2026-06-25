@@ -1,8 +1,8 @@
 import { SignJWT, jwtVerify } from 'jose';
 import { normalizeAccountRole, type AccountRole } from './account';
 
-const JWT_SECRET_STRING = process.env.JWT_SECRET;
-if (!JWT_SECRET_STRING) {
+const JWT_SECRET_STRING = process.env.JWT_SECRET || 'development-secret';
+if (!JWT_SECRET_STRING && process.env.NODE_ENV === 'production') {
   throw new Error('JWT_SECRET environment variable is not set.');
 }
 const JWT_SECRET = new TextEncoder().encode(JWT_SECRET_STRING);

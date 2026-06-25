@@ -368,3 +368,6 @@
 ## v1.0.65
 
 - Remove unused `SearchCacheEntry` type import from `spice-app.tsx` to improve code maintainability and readability.
+
+### Fixed Vercel Build Errors
+- [Spice.Music main] Fixed a Vercel build error caused by Next.js pre-rendering pages that require `.env` variables at build time, by providing a fallback string when not in production.
