@@ -5,7 +5,7 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 /* eslint-disable react-hooks/exhaustive-deps */
 
-import { type FormEvent, useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   enrichTrackSnapshot,
   getCachedSearch,
@@ -16,14 +16,14 @@ import {
   rememberSearchResults,
   rememberTrackSnapshots,
   savePlaybackState,
-  type SearchCacheEntry,
 } from './spice-storage';
 import {
   buildPrivateTasteProfile,
   buildRecommendationSeeds,
   rankRecommendedTracks,
-  type RecommendationSeed,
+// type RecommendationSeed,
   type SeededRecommendationResult,
+  type RecommendationSeed,
 } from './recommendations';
 import { isSpiceConnectCommandFresh, SPICE_CONNECT_COMMAND_TTL_MS } from '@/lib/spice-connect';
 
@@ -932,8 +932,22 @@ const scrobbleThresholdSeconds = (durationSeconds: number) => {
   return Math.min(Math.max(durationSeconds * 0.5, 30), 240);
 };
 
-const randomIndex = (length: number) => Math.floor(Math.random() * length);
-const randomSuffix = () => Math.random().toString(36).substring(2, 5);
+
+/**
+ * Generates a random number between 0 (inclusive) and 1 (exclusive) using crypto.getRandomValues
+ * Fallback to Math.random() if crypto is not available.
+ */
+const getSecureRandom = () => {
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    const array = new Uint32Array(1);
+    crypto.getRandomValues(array);
+    return array[0] / (0xffffffff + 1);
+  }
+  return Math.random();
+};
+
+const randomIndex = (length: number) => Math.floor(getSecureRandom() * length);
+const randomSuffix = () => getSecureRandom().toString(36).substring(2, 5);
 const playlistUuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isPlaylistUuid = (id: string) => playlistUuidPattern.test(id);
 
@@ -944,7 +958,7 @@ const createPlaylistId = () => {
 
   // Fallback RFC4122 version 4 UUID generator
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
+    const r = (getSecureRandom() * 16) | 0;
     const v = c === 'x' ? r : (r & 0x3) | 0x8;
     return v.toString(16);
   });
@@ -1161,7 +1175,7 @@ export default function SpiceApp() {
   }, []);
 
   const showSpiceNotice = useCallback((message: string, kind: SpiceNoticeKind = 'info') => {
-    const id = Date.now() + Math.random();
+    const id = Date.now() + getSecureRandom();
     setSpiceNotices((prev) => {
       const next = prev.length >= 2 ? prev.slice(1) : prev;
       return [...next, { id, message, kind }];
@@ -1598,7 +1612,7 @@ export default function SpiceApp() {
   const [homeEnergy, setHomeEnergy] = useState<Track[]>([]);
   const [homeListenAgain, setHomeListenAgain] = useState<Track[]>([]);
   const [homeRecommended, setHomeRecommended] = useState<Track[]>([]);
-  const [homeRecommendationSeed, setHomeRecommendationSeed] = useState<RecommendationSeed | null>(null);
+  const [homeRecommendationSeed, setHomeRecommendationSeed] = useState<import('./recommendations').RecommendationSeed | null>(null);
   const [isLoadingRecommendations, setIsLoadingRecommendations] = useState(false);
   const [isLoadingHome, setIsLoadingHome] = useState(true);
 
@@ -1610,7 +1624,7 @@ export default function SpiceApp() {
   const [searchResultsSource, setSearchResultsSource] = useState<'network' | 'cache' | null>(null);
   const [isSearching, setIsSearching] = useState(false);
   const [topbarSearchTrayOpen, setTopbarSearchTrayOpen] = useState(false);
-  const [recentSearchEntries, setRecentSearchEntries] = useState<SearchCacheEntry[]>([]);
+  const [recentSearchEntries, setRecentSearchEntries] = useState<ReturnType<typeof getRecentCachedSearches>>([]);
   const [error, setError] = useState<string>();
 
   const [selfTestRunning, setSelfTestRunning] = useState(false);
@@ -4156,7 +4170,7 @@ export default function SpiceApp() {
     queueSearch(trimmedQuery, provider);
   };
 
-  const handleTopbarSearchSubmit = (e: FormEvent) => {
+  const handleTopbarSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     runTopbarSearch(topbarSearchQuery, searchProvider);
   };
@@ -4170,7 +4184,7 @@ export default function SpiceApp() {
     }
   };
 
-  const runRecentTopbarSearch = (entry: SearchCacheEntry) => {
+  const runRecentTopbarSearch = (entry: ReturnType<typeof getRecentCachedSearches>[number]) => {
     const cachedProvider = entry.sourceId ?? null;
     const provider = isSearchProvider(cachedProvider) ? cachedProvider : searchProvider;
     runTopbarSearch(entry.query, provider);
@@ -4283,7 +4297,7 @@ export default function SpiceApp() {
     }
 
     const exclude = [currentTrack, ...history.slice(0, 20)];
-    const cachedBatches = seeds.flatMap((seed): SeededRecommendationResult<Track>[] => {
+    const cachedBatches = seeds.flatMap((seed) => {
       const cached = getCachedSearch(seed.query, 'hybrid');
       if (!cached) return [];
 
@@ -4304,7 +4318,7 @@ export default function SpiceApp() {
     const timeout = setTimeout(async () => {
       try {
         const batches = await Promise.allSettled(
-          seeds.map(async (seed): Promise<SeededRecommendationResult<Track>> => {
+          seeds.map(async (seed) => {
             const tracks = await fetchSearchProviderResults(seed.query, 'hybrid');
             rememberSearchResults(seed.query, tracks, 'hybrid');
             return { seed, tracks };
@@ -4341,7 +4355,7 @@ export default function SpiceApp() {
     }
   };
 
-  const createPlaylist = (e: FormEvent) => {
+  const createPlaylist = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newPlTitle.trim()) return;
 
@@ -4416,7 +4430,7 @@ export default function SpiceApp() {
     reader.readAsDataURL(file);
   };
 
-  const savePlaylistEdits = async (e: FormEvent) => {
+  const savePlaylistEdits = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedPlaylist) return;
 
@@ -4953,7 +4967,7 @@ export default function SpiceApp() {
     setShowMembersPanel(false);
   }, [selectedPlaylist?.id]);
 
-  const createSharedPlaylist = async (e: FormEvent) => {
+  const createSharedPlaylist = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newSharedPlTitle.trim() || !cloudToken) return;
 
@@ -5313,7 +5327,7 @@ export default function SpiceApp() {
     if (!tracks || tracks.length === 0) return;
     setIsShuffle(true);
     localStorage.setItem('spice_is_shuffle', 'true');
-    const shuffled = [...tracks].sort(() => Math.random() - 0.5);
+    const shuffled = [...tracks].sort(() => getSecureRandom() - 0.5);
     startTrackOnActiveReceiver(shuffled[0], shuffled);
   };
 
@@ -5435,7 +5449,7 @@ export default function SpiceApp() {
     }
   };
 
-  const createProfile = (e: FormEvent) => {
+  const createProfile = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newProfileName.trim()) return;
 
@@ -5527,7 +5541,7 @@ export default function SpiceApp() {
     showSpiceNotice('Passcode protection removed successfully.', 'success');
   };
 
-  const saveProfile = (e: FormEvent) => {
+  const saveProfile = (e: React.FormEvent) => {
     e.preventDefault();
 
     // Passcode validation
@@ -8634,6 +8648,8 @@ export default function SpiceApp() {
                       </h3>
                       <span style={{ fontSize: '0.75rem', background: 'rgba(255,255,255,0.04)', color: 'var(--text-secondary)', padding: '4px 10px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.06)' }}>
                         Spice Media Core v1.0.65 (Security Fix)
+                        Spice Media Core v1.0.66 (Discord RPC)
+                        Spice Media Core v1.0.66
                       </span>
                     </div>
 

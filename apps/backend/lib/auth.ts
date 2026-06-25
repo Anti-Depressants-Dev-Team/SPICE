@@ -19,6 +19,10 @@ function getJwtSecret() {
 }
 
 const JWT_SECRET_STRING = getJwtSecret();
+const JWT_SECRET_STRING = process.env.JWT_SECRET;
+if (!JWT_SECRET_STRING) {
+  throw new Error('JWT_SECRET environment variable is not set.');
+}
 const JWT_SECRET = new TextEncoder().encode(JWT_SECRET_STRING);
 
 export interface SpiceSession {
