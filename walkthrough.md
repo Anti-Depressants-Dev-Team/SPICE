@@ -1,3 +1,8 @@
+## v1.0.65
+
+- [Spice.Music main] Added unit tests for hash functions `hashPassword` and `verifyPassword`.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.65`.
+
 # SPICE Walkthrough
 
 ## v1.0.65
@@ -10,6 +15,7 @@
 - [Spice.Music main] Added zero-dependency Discord Rich Presence (DRP) integration, allowing the SPICE player to show track details, artists, live elapsed/remaining ticking time progress, custom logo cover assets, and a button link back to the song.
 - [Spice.Music main] Added automatic Windows named-pipe and Linux/macOS Unix domain socket discovery scanner for communicating with the local Discord client from Next.js server runtime.
 - [Spice.Music main] Wired state tracking hooks in `spice-app.tsx` to handle heartbeat ticks, unmount cleanups, and instant notifications on track play, pause, and seek actions.
+
 - [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.64 (Discord RPC)`.
 
 ## v1.0.63
