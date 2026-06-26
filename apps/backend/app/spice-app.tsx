@@ -1979,6 +1979,7 @@ export default function SpiceApp() {
         };
         listenbrainz?: {
           linked?: boolean;
+          token?: string;
           linkedAt?: string;
         };
         message?: string;
@@ -2005,6 +2006,9 @@ export default function SpiceApp() {
 
       if (data.listenbrainz?.linked) {
         setListenBrainzAccountLinked(true);
+        if (data.listenbrainz.token) {
+          setListenBrainzToken(data.listenbrainz.token);
+        }
         setProfileSyncEnabled(true);
         localStorage.setItem('spice_profile_sync_enabled', 'true');
         setListenBrainzLinkStatus('Restored ListenBrainz token from your SPICE account. Profile sync is enabled.');
@@ -10480,7 +10484,7 @@ export default function SpiceApp() {
           <div style={{ opacity: 0.3, fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
             <span>Spice Premium Audio Resolution Engine</span>
             <span>•</span>
-            <span>PWA v1.0.43</span>
+            <span>PWA v1.0.75</span>
           </div>
 
         </div>

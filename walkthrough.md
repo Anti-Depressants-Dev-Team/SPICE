@@ -1,4 +1,7 @@
 ## v1.0.75
+
+- [Spice.Music main] Fixed an issue where the ListenBrainz user token input field appeared empty after a browser refresh by populating it directly from the database profile connections endpoint, avoiding any dependency on browser cookies or local storage.
+- [Spice.Music main] Bump the visible diagnostics version to `PWA v1.0.75`.
 - [Spice.Marketing main] Fix layout clipping in the top navigation bar by restructuring the CSS grid and adjusting element widths.
 - [Spice.Marketing main] Synchronize the "account info" state on the home screen to match `spice_cloud_user` and `spice_profiles_list` from localStorage.
 

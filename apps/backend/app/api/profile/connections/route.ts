@@ -53,6 +53,7 @@ export async function GET(request: NextRequest) {
       listenbrainz: listenbrainz
         ? {
             linked: true,
+            token: listenbrainz.token,
             linkedAt: listenbrainz.linkedAt.toISOString(),
           }
         : { linked: false },
@@ -110,6 +111,7 @@ export async function PUT(request: NextRequest) {
         listenbrainz: saved
           ? {
               linked: true,
+              token: saved.token,
               linkedAt: saved.linkedAt.toISOString(),
             }
           : { linked: false },
