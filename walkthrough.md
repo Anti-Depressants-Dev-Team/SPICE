@@ -421,6 +421,11 @@
 - [Spice.Music main] Fixed a Vercel build error caused by Next.js pre-rendering pages that require `.env` variables at build time, by providing a fallback string when not in production.
 * [Spice Music Backend] Optimized shared playlist snapshot generation by replacing N+1 queries with batched user profile lookups, reducing DB overhead.
 
+## v1.0.72
+
+- Add auto-update polling mechanism in the background that checks for new builds via a `/api/version` endpoint and automatically reloads the client when a new version is detected.
+- Added `GET /api/version` endpoint which outputs the current `VERCEL_GIT_COMMIT_SHA` or `VERCEL_URL`.
+
 ## v1.0.71
 
 - Replaced sequential database operations with `db.batch()` across all sync endpoints (`profiles`, `likes`, `history`, `playlists`) for improved performance using the `neon-http` driver.

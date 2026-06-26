@@ -29,7 +29,7 @@ const SPICE_CONNECT_DEVICE_SYNC_INTERVAL_MS = 1500;
 const SPICE_CONNECT_POST_COMMAND_SYNC_DELAY_MS = 450;
 const SPICE_CONNECT_STALE_DEVICE_SECONDS = 20;
 const MAX_LOCAL_PROFILES = 6;
-const SPICE_MEDIA_CORE_VERSION = '1.0.71';
+const SPICE_MEDIA_CORE_VERSION = '1.0.72';
 const SPICE_MEDIA_CORE_LABEL = `Spice Media Core v${SPICE_MEDIA_CORE_VERSION}`;
 const RELEASE_NOTIFICATION_STORAGE_KEY = 'spice_read_release_notifications';
 
@@ -2423,6 +2423,53 @@ export default function SpiceApp() {
       logDebug('error', `YouTube Embed player initialization failed: ${e}`);
     }
   }, [volume, logDebug]);
+
+
+  // Auto-update mechanism: poll API for new versions
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    let currentBuildVersion: string | null = null;
+    let isFetching = false;
+
+    const checkVersion = async () => {
+      if (isFetching) return;
+      isFetching = true;
+      try {
+        const response = await fetch('/api/version');
+        if (!response.ok) return;
+
+        const data = await response.json();
+        const serverVersion = data.version;
+
+        if (serverVersion && serverVersion !== 'development') {
+          if (currentBuildVersion === null) {
+            // First time we get a valid version, just record it
+            currentBuildVersion = serverVersion;
+          } else if (currentBuildVersion !== serverVersion) {
+            // Version changed! Wait a moment to ensure deployment finishes, then reload.
+            logDebug('system', 'New deployment detected. Reloading app to update...');
+            clearInterval(intervalId);
+            window.setTimeout(() => window.location.reload(), 1500);
+          }
+        }
+      } catch {
+        // Silently ignore fetch errors (e.g. offline)
+      } finally {
+        isFetching = false;
+      }
+    };
+
+    // Check every 60 seconds
+    const intervalId = setInterval(checkVersion, 60000);
+    // Initial check after 5 seconds
+    const timeoutId = setTimeout(checkVersion, 5000);
+
+    return () => {
+      clearInterval(intervalId);
+      clearTimeout(timeoutId);
+    };
+  }, [logDebug]);
 
   // Load YouTube Iframe API on client mount
   useEffect(() => {
