@@ -52,10 +52,19 @@ export async function GET(
   const headers: Record<string, string> = {
     'User-Agent': 'com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)',
   };
-  const rangeHeader = request.headers.get('range');
-  if (rangeHeader) {
-    headers['Range'] = rangeHeader;
+  let rangeHeader = request.headers.get('range');
+
+  // Optimize Vercel Fluid Compute: chunking
+  const CHUNK_SIZE = 2 * 1024 * 1024; // 2MB
+  if (!rangeHeader) {
+      rangeHeader = `bytes=0-${CHUNK_SIZE - 1}`;
+  } else {
+      const parts = rangeHeader.replace(/bytes=/, "").split("-");
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : start + CHUNK_SIZE - 1;
+      rangeHeader = `bytes=${start}-${Math.min(end, start + CHUNK_SIZE - 1)}`;
   }
+  headers['Range'] = rangeHeader;
 
   try {
     let upstream;
@@ -68,9 +77,17 @@ export async function GET(
       return Response.redirect(upstreamUrl, 307);
     }
 
-    if (!upstream.ok && upstream.status !== 206) {
+    if (!upstream.ok && upstream.status !== 206 && upstream.status !== 416) {
       console.warn(`[stream-proxy] Upstream failed with status ${upstream.status}. Falling back to HTTP 307 Redirect.`);
       return Response.redirect(upstreamUrl, 307);
+    }
+
+    if (upstream.status === 416) {
+        // Range Not Satisfiable
+        return new Response(null, {
+            status: 416,
+            headers: { ...corsHeaders, 'Content-Range': upstream.headers.get('content-range') || 'bytes */*' }
+        });
     }
 
     // Build response headers for the browser.

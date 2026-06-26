@@ -437,3 +437,7 @@
 - **Version:** 1.0.43
 - **Changes:** Fixed a `QuotaExceededError` issue on `spice_profiles_list` by catching and shrinking massive track items (omitting artwork URLs and keeping only IDs/Names) before saving to local storage.
 - **Affected Lane:** [Spice.Music main]
+
+## Optimization & Containerization Update
+- [Spice.Music main] Added multi-stage Dockerfile for Next.js to enable VPS deployments and set Next config output to `standalone`.
+- [Spice.Music main] Optimized Vercel Fluid Compute costs on media proxy streams by introducing a 2MB chunking strategy for Range requests in the YouTube and SoundCloud APIs.
