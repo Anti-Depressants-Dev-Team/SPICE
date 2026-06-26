@@ -210,14 +210,17 @@ const sortedSignals = (buckets: Map<string, ScoreBucket>) =>
     .map(([id, bucket]) => ({ id, ...bucket }))
     .sort((a, b) => b.score - a.score || b.count - a.count || a.label.localeCompare(b.label));
 
-const languageScore = (track: RecommendationTrack, language: typeof LANGUAGE_HINTS[number]) => {
+
+const trackLanguageTokens = (track: RecommendationTrack) => {
   const normalized = normalizeText([
     track.title,
     track.album?.title,
     ...track.artists.map((artist) => artist.name),
   ].filter(Boolean).join(' '));
-  const tokens = new Set(normalized.split(/[^a-z0-9-]+/).filter(Boolean));
+  return new Set(normalized.split(/[^a-z0-9-]+/).filter(Boolean));
+};
 
+const languageScore = (tokens: Set<string>, language: typeof LANGUAGE_HINTS[number]) => {
   let score = 0;
   for (const token of language.tokens) {
     if (tokens.has(token)) score += 1;
@@ -238,13 +241,15 @@ export function buildPrivateTasteProfile<TTrack extends RecommendationTrack>({
   const artists = new Map<string, ScoreBucket>();
   const languages = new Map<string, ScoreBucket>();
   const trackIds = new Set<string>();
+  const tokenCache = new Map<string, Set<string>>();
   let totalSignals = 0;
 
   const collect = (track: TTrack, baseWeight: number, recencyBonus = 0) => {
     if (!track?.id || track.id === 'placeholder') return;
 
+    const tKey = trackKey(track);
     const weight = baseWeight + recencyBonus;
-    trackIds.add(trackKey(track));
+    trackIds.add(tKey);
     totalSignals += weight;
 
     for (const artist of track.artists || []) {
@@ -253,8 +258,14 @@ export function buildPrivateTasteProfile<TTrack extends RecommendationTrack>({
       addScore(artists, normalizeKey(label), label, weight);
     }
 
+    let tokens = tokenCache.get(tKey);
+    if (!tokens) {
+      tokens = trackLanguageTokens(track);
+      tokenCache.set(tKey, tokens);
+    }
+
     for (const language of LANGUAGE_HINTS) {
-      const score = languageScore(track, language);
+      const score = languageScore(tokens, language);
       if (score >= 2) {
         addScore(languages, language.id, language.label, weight * score);
       }

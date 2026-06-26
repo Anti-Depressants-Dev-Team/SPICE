@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 ## v1.0.70
 
 - [Spice.Music main] Added a topbar notification bell to the right of the profile control, with a lower-right badge showing unread release updates plus pending shared playlist requests.
@@ -16,6 +17,19 @@
 
 - [Spice.Music main] Fixed local profile deletion so removing an inactive profile no longer forces a switch away from the current profile, while active profile deletion switches cleanly to the next remaining profile.
 - [Spice.Music main] Added a six-profile cap to local profile creation, including disabled create controls and a warning when the cap is reached.
+=======
+## v1.0.69
+## v1.0.68
+
+### Added Volume Booster Feature
+- [Spice.Music main] Added a volume booster feature to the player bar (up to 1000% volume via Web Audio API) with a disclaimer modal that must be accepted at least once.
+
+
+- [Spice.Music main] Fixed JWT secret initialization bug that failed production builds.
+- [Spice.Music main] Cleaned up unused discord-ipc imports and route handler.
+- [Spice.Music main] Updated AGENTS.md with rules for asynchronous agent workflow coordination.
+- [Spice.Music main] Fixed walkthrough and version string conflicts from concurrent merges.
+>>>>>>> 1227595be8267417683161acc59fda1c385f1b88
 - [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.68`.
 
 ## v1.0.67
@@ -26,7 +40,9 @@
 
 ## v1.0.66
 
+- [Spice.Music main] Fixed code health issue in `apps/backend/lib/lrclib.ts` by suppressing hardcoded `console.error` for expected LRCLIB lookup failures.
 - [Spice.Music main] Removed the scrapped Discord Rich Presence integration, including the `/api/discord/presence` route, `discord-ipc` server helper, client playback hooks, and `DISCORD_CLIENT_ID` environment variable documentation.
+- [Spice.Music main] Added a setting in the settings tab to allow users to customize their global theme color.
 - [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.66`.
 
 ## v1.0.65
@@ -38,6 +54,10 @@
 
 # SPICE Walkthrough
 
+## v1.0.65
+
+- Fixed a security vulnerability where a hardcoded default string was used for JWT and profile connection secrets if environment variables were missing.
+- The application now throws an error if JWT_SECRET or PROFILE_CONNECTION_SECRET is not configured properly, preventing the use of weak fallback keys.
 ## v1.0.65
 
 - [Spice.Music main] Fixed N+1 query issue when fetching members and profiles of shared playlists. Replaced iterative SQL queries with bulk fetches using `inArray` for better performance.
@@ -57,7 +77,6 @@
 - [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.64 (Discord RPC)`.
 
 ## v1.0.63
-
 
 - [Spice.Music main] Fixed share dialog and other modals (confirmations, locks) appearing behind the expanded full-screen player by setting their z-index layer styles to stack correctly above it.
 - [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.63`.
@@ -400,4 +419,7 @@
 ## v1.0.65
 
 - Remove unused `SearchCacheEntry` type import from `spice-app.tsx` to improve code maintainability and readability.
+
+### Fixed Vercel Build Errors
+- [Spice.Music main] Fixed a Vercel build error caused by Next.js pre-rendering pages that require `.env` variables at build time, by providing a fallback string when not in production.
 * [Spice Music Backend] Optimized shared playlist snapshot generation by replacing N+1 queries with batched user profile lookups, reducing DB overhead.

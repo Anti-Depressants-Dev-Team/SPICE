@@ -776,32 +776,6 @@ const profileOriginUrl = (track: Track) => {
 const safeSharedString = (value: unknown, fallback = '') =>
   typeof value === 'string' && value.trim() ? value.trim() : fallback;
 
-const compactTrackForSongShare = (track: Track): Track => ({
-  id: track.id,
-  title: track.title,
-  artists: (track.artists || []).map((artist) => ({
-    id: safeSharedString(artist.id, artist.name || 'artist'),
-    name: safeSharedString(artist.name, 'Unknown Artist'),
-    ...(artist.artworkUrl ? { artworkUrl: artist.artworkUrl } : {}),
-  })),
-  ...(track.album ? {
-    album: {
-      id: track.album.id,
-      title: track.album.title,
-      artists: (track.album.artists || []).map((artist) => ({
-        id: safeSharedString(artist.id, artist.name || 'artist'),
-        name: safeSharedString(artist.name, 'Unknown Artist'),
-        ...(artist.artworkUrl ? { artworkUrl: artist.artworkUrl } : {}),
-      })),
-      ...(track.album.artworkUrl ? { artworkUrl: track.album.artworkUrl } : {}),
-      ...(track.album.year ? { year: track.album.year } : {}),
-    },
-  } : {}),
-  ...(track.durationMs ? { durationMs: track.durationMs } : {}),
-  ...(track.artworkUrl ? { artworkUrl: track.artworkUrl } : {}),
-  ...(track.sourceId ? { sourceId: track.sourceId } : {}),
-  ...(track.permalinkUrl ? { permalinkUrl: track.permalinkUrl } : {}),
-});
 
 const encodeBase64Url = (value: string) => {
   const bytes = new TextEncoder().encode(value);
@@ -1164,6 +1138,8 @@ const initialDefaultProfile: UserProfile = {
 const createUserProfileId = () => 'profile_' + Date.now();
 
 export default function SpiceApp() {
+  const [volumeBoosterAccepted, setVolumeBoosterAccepted] = useState(false);
+  const [showVolumeBoosterDisclaimer, setShowVolumeBoosterDisclaimer] = useState(false);
   const [currentPage, setCurrentPage] = useState<AppPage>('home');
   const [selectedPlaylist, setSelectedPlaylist] = useState<Playlist | null>(null);
 
@@ -1341,9 +1317,17 @@ export default function SpiceApp() {
         finalUrl.searchParams.set('download', 'true');
         finalUrl.searchParams.set('title', downloadTitle);
         
+<<<<<<< HEAD
         const link = document.createElement('a');
         link.href = finalUrl.toString();
         link.download = `${downloadTitle}.mp3`;
+=======
+        // This will trigger the browser's download manager safely without unloading
+        const link = document.createElement('a');
+        link.href = finalUrl.toString();
+        link.download = downloadTitle;
+        link.target = '_blank';
+>>>>>>> 1227595be8267417683161acc59fda1c385f1b88
         link.rel = 'noopener noreferrer';
         document.body.appendChild(link);
         link.click();
@@ -1813,6 +1797,9 @@ export default function SpiceApp() {
   };
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const gainNodeRef = useRef<GainNode | null>(null);
+  const sourceNodeRef = useRef<MediaElementAudioSourceNode | null>(null);
   const ytPlayerRef = useRef<any>(null);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const searchRequestRef = useRef(0);
@@ -2517,7 +2504,33 @@ export default function SpiceApp() {
   // Sync volume
   useEffect(() => {
     if (audioRef.current) {
-      audioRef.current.volume = volume / 100;
+      if (volume <= 100) {
+        audioRef.current.volume = volume / 100;
+        if (gainNodeRef.current) {
+          gainNodeRef.current.gain.value = 1;
+        }
+      } else {
+        audioRef.current.volume = 1;
+
+        if (!audioContextRef.current) {
+          const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+          if (AudioContextClass) {
+            audioContextRef.current = new AudioContextClass();
+            sourceNodeRef.current = audioContextRef.current.createMediaElementSource(audioRef.current);
+            gainNodeRef.current = audioContextRef.current.createGain();
+            sourceNodeRef.current.connect(gainNodeRef.current);
+            gainNodeRef.current.connect(audioContextRef.current.destination);
+          }
+        }
+
+        if (audioContextRef.current?.state === 'suspended') {
+          audioContextRef.current.resume();
+        }
+
+        if (gainNodeRef.current) {
+          gainNodeRef.current.gain.value = volume / 100;
+        }
+      }
     }
   }, [volume]);
 
@@ -4082,12 +4095,23 @@ export default function SpiceApp() {
     void reportRemoteDeviceState();
     void loadRemoteDevices();
 
-    const interval = setInterval(() => {
+    const syncInterval = setInterval(() => {
       void reportRemoteDeviceState();
-      void loadRemoteDevices();
     }, SPICE_CONNECT_DEVICE_SYNC_INTERVAL_MS);
 
-    return () => clearInterval(interval);
+    const timerInterval = setInterval(() => {
+      setRemoteDevices((currentDevices) =>
+        currentDevices.map((device) => ({
+          ...device,
+          lastSeenSeconds: (device.lastSeenSeconds ?? 0) + 1,
+        }))
+      );
+    }, 1000);
+
+    return () => {
+      clearInterval(syncInterval);
+      clearInterval(timerInterval);
+    };
   }, [isMounted, cloudToken, remoteControlEnabled, remoteDeviceId, remoteDeviceName]);
 
   useEffect(() => {
@@ -4873,7 +4897,7 @@ export default function SpiceApp() {
         const err = await res.json();
         showSpiceNotice(err.message || 'Failed to accept invite.', 'danger');
       }
-    } catch (e) {
+    } catch {
       showSpiceNotice('Failed to accept invite.', 'danger');
     } finally {
       setAcceptingInvite(false);
@@ -4895,7 +4919,7 @@ export default function SpiceApp() {
         const err = await res.json();
         showSpiceNotice(err.message || 'Failed to reject invite.', 'danger');
       }
-    } catch (e) {
+    } catch {
       showSpiceNotice('Failed to reject invite.', 'danger');
     } finally {
       setAcceptingInvite(false);
@@ -5269,7 +5293,7 @@ export default function SpiceApp() {
   };
 
   const setReceiverVolume = (nextVolume: number) => {
-    const safeVolume = Math.max(0, Math.min(100, Math.round(nextVolume)));
+    const safeVolume = Math.max(0, Math.min(1000, Math.round(nextVolume)));
     if (isControllingRemoteReceiver) {
       if (!canControlSelectedRemoteReceiver('volume')) return;
       patchSelectedRemoteDevice({ volume: safeVolume });
@@ -6168,6 +6192,30 @@ export default function SpiceApp() {
   return (
     <div className={`app ${sidebarHidden ? 'app--sidebar-hidden' : ''}`}>
       <style dangerouslySetInnerHTML={{ __html: getAccentStyles() }} />
+      {showVolumeBoosterDisclaimer && (
+        <div className="modal-overlay" style={{ zIndex: 9999 }} onClick={() => setShowVolumeBoosterDisclaimer(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h2>Volume Booster Warning</h2>
+            <p>
+              Warning: Boosting the volume above 100% may cause audio distortion and could potentially damage your speakers or hearing. Use at your own risk.
+            </p>
+            <div className="modal-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '24px' }}>
+              <button className="btn" onClick={() => setShowVolumeBoosterDisclaimer(false)}>Cancel</button>
+              <button
+                className="btn btn--primary"
+                onClick={() => {
+                  setVolumeBoosterAccepted(true);
+                  localStorage.setItem('spice_volume_booster_accepted', 'true');
+                  setShowVolumeBoosterDisclaimer(false);
+                }}
+              >
+                I Accept
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {spiceNotices.length > 0 && (
         <div className="spice-notices-container">
           {spiceNotices.map((notice) => (
@@ -6388,6 +6436,7 @@ export default function SpiceApp() {
         <audio
           key={streamUrl}
           ref={audioRef}
+          crossOrigin="anonymous"
           src={streamUrl}
           autoPlay={isPlaying}
           preload="auto"
@@ -8898,7 +8947,11 @@ export default function SpiceApp() {
                         {Icons.tool} System Diagnostics & Live Terminal
                       </h3>
                       <span style={{ fontSize: '0.75rem', background: 'rgba(255,255,255,0.04)', color: 'var(--text-secondary)', padding: '4px 10px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.06)' }}>
+<<<<<<< HEAD
                         {SPICE_MEDIA_CORE_LABEL}
+=======
+                        Spice Media Core v1.0.69
+>>>>>>> 1227595be8267417683161acc59fda1c385f1b88
                       </span>
                     </div>
 
@@ -9865,11 +9918,19 @@ export default function SpiceApp() {
               type="range"
               className="now-playing__volume-slider"
               min="0"
-              max="100"
+              max="1000"
               value={playerVolume}
-              onChange={(e) => setReceiverVolume(Number(e.target.value))}
+              onChange={(e) => {
+                const newVol = Number(e.target.value);
+                if (newVol > 100 && !volumeBoosterAccepted) {
+                  setShowVolumeBoosterDisclaimer(true);
+                  setReceiverVolume(100);
+                } else {
+                  setReceiverVolume(newVol);
+                }
+              }}
               style={{
-                background: `linear-gradient(to right, var(--accent-pink) 0%, var(--accent-pink) ${playerVolume}%, hsla(270, 10%, 25%, 0.5) ${playerVolume}%, hsla(270, 10%, 25%, 0.5) 100%)`
+                background: `linear-gradient(to right, var(--accent-pink) 0%, var(--accent-pink) ${Math.min(playerVolume, 1000) / 10}%, hsla(270, 10%, 25%, 0.5) ${Math.min(playerVolume, 1000) / 10}%, hsla(270, 10%, 25%, 0.5) 100%)`
               }}
             />
           </div>
@@ -10361,7 +10422,7 @@ export default function SpiceApp() {
           <div style={{ opacity: 0.3, fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
             <span>Spice Premium Audio Resolution Engine</span>
             <span>•</span>
-            <span>PWA v1.0.42</span>
+            <span>PWA v1.0.43</span>
           </div>
 
         </div>

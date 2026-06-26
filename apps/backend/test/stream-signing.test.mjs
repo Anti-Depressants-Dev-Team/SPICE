@@ -33,7 +33,6 @@ test('STREAM_HMAC_SECRET required in production', () => {
 
 
 
-
 test('stream signing builds a verifiable URL', () => {
   const origin = 'https://spice.example.com';
   const input = {
