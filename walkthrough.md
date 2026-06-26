@@ -1,3 +1,10 @@
+## v1.0.74
+
+- [Spice.Music main] Added a notification bell to the top bar for checking release notes and shared playlist invites.
+- [Spice.Music main] Shared playlist invites now display as pending requests inside the new notification tray, allowing users to Accept or Reject them safely.
+- [Spice.Music main] Update the SPICE Home screen topbar to include the new notification bell and pending invite synchronization.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.74`.
+
 ## v1.0.73
 
 

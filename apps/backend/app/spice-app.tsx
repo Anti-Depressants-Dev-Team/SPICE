@@ -23,15 +23,14 @@ import {
   rankRecommendedTracks,
 } from './recommendations';
 import { isSpiceConnectCommandFresh, SPICE_CONNECT_COMMAND_TTL_MS } from '@/lib/spice-connect';
+import { SPICE_MEDIA_CORE_VERSION, RELEASE_NOTIFICATION_STORAGE_KEY, RELEASE_NOTIFICATIONS, type ReleaseNotification } from '@/lib/release-notifications';
 
 const SPICE_CONNECT_COMMAND_POLL_INTERVAL_MS = 400;
 const SPICE_CONNECT_DEVICE_SYNC_INTERVAL_MS = 1500;
 const SPICE_CONNECT_POST_COMMAND_SYNC_DELAY_MS = 450;
 const SPICE_CONNECT_STALE_DEVICE_SECONDS = 20;
 const MAX_LOCAL_PROFILES = 6;
-const SPICE_MEDIA_CORE_VERSION = '1.0.73';
 const SPICE_MEDIA_CORE_LABEL = `Spice Media Core v${SPICE_MEDIA_CORE_VERSION}`;
-const RELEASE_NOTIFICATION_STORAGE_KEY = 'spice_read_release_notifications';
 
 // ── Icons ──────────────────────────────────────────────────────────
 const Icons = {
@@ -506,27 +505,9 @@ interface PendingInvite {
   ownerDisplayName: string;
 }
 
-interface ReleaseNotification {
-  id: string;
-  version: string;
-  title: string;
-  summary: string;
-  body: string[];
-}
 
-const RELEASE_NOTIFICATIONS: ReleaseNotification[] = [
-  {
-    id: `spice-media-core-${SPICE_MEDIA_CORE_VERSION}`,
-    version: `v${SPICE_MEDIA_CORE_VERSION}`,
-    title: 'Notification Center & Playlist Requests',
-    summary: 'SPICE now has topbar notifications for release updates and shared playlist requests.',
-    body: [
-      'A new notification bell now lives beside your profile in the top bar. When there is something new, the badge in the lower-right corner shows the number of notifications waiting for you.',
-      'Version notes can be opened from the notification tray for a larger release detail view, so changes to SPICE are easier to read without digging through settings.',
-      'Shared playlist collaborator invites now surface as notification requests. You choose Accept or Reject from the notification tray, and pending invites stay out of your library until you accept them.',
-    ],
-  },
-];
+
+
 
 interface PlaylistMember {
   userId: string;

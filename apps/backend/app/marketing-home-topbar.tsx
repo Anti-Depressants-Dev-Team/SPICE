@@ -3,6 +3,7 @@
 /* eslint-disable @next/next/no-img-element */
 
 import { type FormEvent, useEffect, useMemo, useState } from 'react';
+import { RELEASE_NOTIFICATIONS, RELEASE_NOTIFICATION_STORAGE_KEY, type ReleaseNotification } from '@/lib/release-notifications';
 
 import styles from './marketing-home.module.css';
 
@@ -32,6 +33,20 @@ interface StoredProfile {
   gradient?: string;
 }
 
+
+const Icons = {
+  bell: (
+    <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+      <path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z" />
+    </svg>
+  ),
+  close: (
+    <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+      <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
+    </svg>
+  ),
+};
+
 const MUSIC_APP_URL = 'https://music.spice-app.xyz';
 const DEFAULT_PROFILE: HomeProfile = {
   displayName: 'Spice Listener',
@@ -51,6 +66,12 @@ export default function MarketingHomeTopbar({ onProfileClick }: { onProfileClick
   const [profile, setProfile] = useState<HomeProfile>(DEFAULT_PROFILE);
   const [account, setAccount] = useState<HomeAccount | null>(null);
   const [accountStatus, setAccountStatus] = useState<AccountStatus>('checking');
+  const [notificationTrayOpen, setNotificationTrayOpen] = useState(false);
+  const [selectedReleaseNotification, setSelectedReleaseNotification] = useState<ReleaseNotification | null>(null);
+  const [readReleaseNotificationIds, setReadReleaseNotificationIds] = useState<string[]>([]);
+  const [pendingInvites, setPendingInvites] = useState<{ playlistId: string; playlistTitle: string; ownerDisplayName: string; ownerUsername: string | null }[]>([]);
+  const [pendingInvitesLoading, _setPendingInvitesLoading] = useState(false);
+  const [acceptingInvite, setAcceptingInvite] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -58,6 +79,12 @@ export default function MarketingHomeTopbar({ onProfileClick }: { onProfileClick
     window.queueMicrotask(() => {
       if (!active) return;
 
+      try {
+        const saved = window.localStorage.getItem(RELEASE_NOTIFICATION_STORAGE_KEY);
+        if (saved) {
+          setReadReleaseNotificationIds(JSON.parse(saved));
+        }
+      } catch {}
       const savedProvider = window.localStorage.getItem('spice_search_provider');
       if (isSearchProvider(savedProvider)) {
         setProvider(savedProvider);
@@ -94,6 +121,14 @@ export default function MarketingHomeTopbar({ onProfileClick }: { onProfileClick
           if (!active) return;
           const nextAccount = payload.account || payload.user || null;
           setAccount(nextAccount);
+          if (token) {
+            void fetch('/api/account/invites', {
+              headers: { Authorization: `Bearer ${token}` }
+            })
+            .then(res => res.json())
+            .then(data => setPendingInvites(data.invites || []))
+            .catch(() => {});
+          }
           if (nextAccount) {
             window.localStorage.setItem('spice_cloud_user', JSON.stringify(nextAccount));
           }
@@ -142,6 +177,60 @@ export default function MarketingHomeTopbar({ onProfileClick }: { onProfileClick
   const displayName = account?.email ? account.email.split('@')[0] : profile.displayName;
   const avatarLetter = (displayName || 'S').charAt(0).toUpperCase();
 
+
+  const unreadReleaseNotifications = RELEASE_NOTIFICATIONS.filter((notification) => !readReleaseNotificationIds.includes(notification.id));
+  const notificationCount = unreadReleaseNotifications.length + pendingInvites.length;
+  const notificationCountLabel = notificationCount > 99 ? '99+' : String(notificationCount);
+
+  const openReleaseNotification = (notification: ReleaseNotification) => {
+    setSelectedReleaseNotification(notification);
+    setNotificationTrayOpen(false);
+    setReadReleaseNotificationIds((prev) => {
+      if (prev.includes(notification.id)) return prev;
+      const next = [...prev, notification.id];
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem(RELEASE_NOTIFICATION_STORAGE_KEY, JSON.stringify(next));
+      }
+      return next;
+    });
+  };
+
+  const handleAcceptInvite = async (playlistId: string) => {
+    const token = window.localStorage.getItem('spice_cloud_token');
+    if (!token) return;
+    setAcceptingInvite(true);
+    try {
+      const res = await fetch(`/api/account/invites/${playlistId}/accept`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        setPendingInvites(prev => prev.filter(inv => inv.playlistId !== playlistId));
+      }
+    } catch {
+    } finally {
+      setAcceptingInvite(false);
+    }
+  };
+
+  const handleRejectInvite = async (playlistId: string) => {
+    const token = window.localStorage.getItem('spice_cloud_token');
+    if (!token) return;
+    setAcceptingInvite(true);
+    try {
+      const res = await fetch(`/api/account/invites/${playlistId}/reject`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        setPendingInvites(prev => prev.filter(inv => inv.playlistId !== playlistId));
+      }
+    } catch {
+    } finally {
+      setAcceptingInvite(false);
+    }
+  };
+
   const handleSearchSubmit = (event: FormEvent) => {
     event.preventDefault();
     const trimmedQuery = query.trim();
@@ -155,8 +244,40 @@ export default function MarketingHomeTopbar({ onProfileClick }: { onProfileClick
     });
   };
 
+
   return (
-    <header className={styles.homeTopbar} aria-label="SPICE home topbar">
+    <>
+      {selectedReleaseNotification && (
+        <div className="spice-dialog-backdrop" role="presentation" onClick={() => setSelectedReleaseNotification(null)}>
+          <div className="spice-dialog" onClick={(e) => e.stopPropagation()} role="dialog" aria-labelledby="spice-release-title" aria-modal="true">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <span className="spice-dialog__tag" style={{ background: 'rgba(216, 180, 254, 0.1)', color: '#d8b4fe', padding: '4px 8px', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Release Notes</span>
+              <button
+                type="button"
+                className="app-topbar__tray-close"
+                onClick={() => setSelectedReleaseNotification(null)}
+                aria-label="Close dialog"
+                style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '32px', height: '32px', borderRadius: '50%', margin: '-8px -8px 0 0' }}
+              >
+                {Icons.close}
+              </button>
+            </div>
+            <h2 id="spice-release-title" style={{ margin: '0 0 8px 0', fontSize: '1.25rem', color: 'var(--text-primary)' }}>{selectedReleaseNotification.version}: {selectedReleaseNotification.title}</h2>
+            <p className="spice-release-dialog__summary" style={{ margin: '0 0 24px 0', color: '#d8b4fe', fontSize: '0.9rem', lineHeight: '1.4' }}>{selectedReleaseNotification.summary}</p>
+            <div className="spice-dialog__content" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              {selectedReleaseNotification.body.map((paragraph, i) => (
+                <p key={i} style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.9rem', lineHeight: '1.5' }}>{paragraph}</p>
+              ))}
+            </div>
+            <div className="spice-dialog__actions" style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '32px' }}>
+              <button type="button" className="app-topbar__notification-action app-topbar__notification-action--primary" onClick={() => setSelectedReleaseNotification(null)} style={{ padding: '8px 16px', background: 'var(--text-primary)', color: 'var(--bg-primary)', border: 'none', borderRadius: '999px', fontSize: '0.9rem', fontWeight: 700, cursor: 'pointer' }}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      <header className={styles.homeTopbar} aria-label="SPICE home topbar">
       <a className={styles.brand} href={MUSIC_APP_URL} aria-label="Open SPICE Music">
         <span className={styles.logoMark}>
           <svg viewBox="0 0 48 48" role="img" aria-hidden="true">
@@ -213,6 +334,103 @@ export default function MarketingHomeTopbar({ onProfileClick }: { onProfileClick
             Admin
           </a>
         ) : null}
+
+        <div className="app-topbar__notification-shell" style={{ zIndex: 100 }}>
+          <button
+            className={`app-topbar__notification ${notificationTrayOpen ? 'active' : ''}`}
+            type="button"
+            onClick={() => setNotificationTrayOpen(!notificationTrayOpen)}
+            aria-label={`Open notifications${notificationCount > 0 ? ` (${notificationCount} waiting)` : ''}`}
+            aria-expanded={notificationTrayOpen}
+            title="Notifications"
+          >
+            {Icons.bell}
+            {notificationCount > 0 && (
+              <span className="app-topbar__notification-badge">{notificationCountLabel}</span>
+            )}
+          </button>
+
+          {notificationTrayOpen && (
+            <div className="app-topbar__notification-tray" role="region" aria-label="SPICE notifications">
+              <div className="app-topbar__notification-header">
+                <div>
+                  <span>Notifications</span>
+                  <strong>{notificationCount > 0 ? `${notificationCount} waiting` : 'All caught up'}</strong>
+                </div>
+                <button
+                  type="button"
+                  className="app-topbar__tray-close"
+                  onClick={() => setNotificationTrayOpen(false)}
+                  aria-label="Close notifications"
+                >
+                  {Icons.close}
+                </button>
+              </div>
+
+              <div className="app-topbar__notification-section">
+                <span className="app-topbar__notification-section-title">Version updates</span>
+                {RELEASE_NOTIFICATIONS.map((notification) => {
+                  const isUnread = !readReleaseNotificationIds.includes(notification.id);
+                  return (
+                    <div key={notification.id} className={`app-topbar__notification-item ${isUnread ? 'is-unread' : ''}`}>
+                      <div className="app-topbar__notification-copy">
+                        <span>{notification.version}</span>
+                        <strong>{notification.title}</strong>
+                        <p>{notification.summary}</p>
+                      </div>
+                      <button
+                        type="button"
+                        className="app-topbar__notification-action"
+                        onClick={() => openReleaseNotification(notification)}
+                      >
+                        View
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="app-topbar__notification-section">
+                <span className="app-topbar__notification-section-title">Shared playlist requests</span>
+                {pendingInvitesLoading && pendingInvites.length === 0 ? (
+                  <p className="app-topbar__notification-empty">Checking for playlist requests...</p>
+                ) : pendingInvites.length > 0 ? (
+                  pendingInvites.map((invite) => (
+                    <div key={invite.playlistId} className="app-topbar__notification-item app-topbar__notification-item--request">
+                      <div className="app-topbar__notification-copy">
+                        <span>Join request</span>
+                        <strong>{invite.playlistTitle}</strong>
+                        <p>{invite.ownerDisplayName} (@{invite.ownerUsername || 'unknown'}) invited you to join.</p>
+                      </div>
+                      <div className="app-topbar__notification-actions">
+                        <button
+                          type="button"
+                          className="app-topbar__notification-action"
+                          onClick={() => handleRejectInvite(invite.playlistId)}
+                          disabled={acceptingInvite}
+                        >
+                          Reject
+                        </button>
+                        <button
+                          type="button"
+                          className="app-topbar__notification-action app-topbar__notification-action--primary"
+                          onClick={() => handleAcceptInvite(invite.playlistId)}
+                          disabled={acceptingInvite}
+                        >
+                          Accept
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <p className="app-topbar__notification-empty">
+                    Playlist requests will appear here before anything joins your library.
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
         <a
           className={styles.homeTopbarProfile}
           href={accountHref}
@@ -235,6 +453,7 @@ export default function MarketingHomeTopbar({ onProfileClick }: { onProfileClick
         </a>
       </div>
     </header>
+    </>
   );
 }
 
