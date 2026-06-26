@@ -2,7 +2,7 @@ import { jsonResponse, optionsResponse } from '@/lib/cors';
 import { verifySession } from '@/lib/auth';
 import { db } from '@/db';
 import { remoteCommands } from '@/db/schema';
-import { and, asc, eq, inArray, isNull, lt } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, isNull, lt, or } from 'drizzle-orm';
 import {
   normalizeSpiceConnectCommandInput,
   parseRemotePayload,
@@ -39,35 +39,39 @@ export async function GET(request: Request) {
     const now = new Date();
     const staleCutoff = new Date(now.getTime() - SPICE_CONNECT_COMMAND_TTL_MS);
 
-    await db
+    const updatedCommands = await db
       .update(remoteCommands)
       .set({ consumedAt: now })
-      .where(and(
-        eq(remoteCommands.userId, session.userId),
-        eq(remoteCommands.targetDeviceId, deviceId),
-        isNull(remoteCommands.consumedAt),
-        lt(remoteCommands.createdAt, staleCutoff),
-      ));
+      .where(or(
+        inArray(
+          remoteCommands.id,
+          db
+            .select({ id: remoteCommands.id })
+            .from(remoteCommands)
+            .where(and(
+              eq(remoteCommands.userId, session.userId),
+              eq(remoteCommands.targetDeviceId, deviceId),
+              isNull(remoteCommands.consumedAt),
+              gte(remoteCommands.createdAt, staleCutoff),
+            ))
+            .orderBy(asc(remoteCommands.createdAt))
+            .limit(20)
+        ),
+        and(
+          eq(remoteCommands.userId, session.userId),
+          eq(remoteCommands.targetDeviceId, deviceId),
+          isNull(remoteCommands.consumedAt),
+          lt(remoteCommands.createdAt, staleCutoff),
+        )
+      ))
+      .returning();
 
-    const commands = await db.query.remoteCommands.findMany({
-      where: and(
-        eq(remoteCommands.userId, session.userId),
-        eq(remoteCommands.targetDeviceId, deviceId),
-        isNull(remoteCommands.consumedAt),
-      ),
-      orderBy: asc(remoteCommands.createdAt),
-      limit: 20,
-    });
-
-    if (commands.length > 0) {
-      await db
-        .update(remoteCommands)
-        .set({ consumedAt: new Date() })
-        .where(inArray(remoteCommands.id, commands.map((command) => command.id)));
-    }
+    const freshCommands = updatedCommands
+      .filter((command) => command.createdAt >= staleCutoff)
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
 
     return jsonResponse({
-      commands: commands.map((command) => ({
+      commands: freshCommands.map((command) => ({
         id: command.id,
         sourceDeviceId: command.sourceDeviceId,
         targetDeviceId: command.targetDeviceId,
