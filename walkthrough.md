@@ -419,3 +419,7 @@
 ### Fixed Vercel Build Errors
 - [Spice.Music main] Fixed a Vercel build error caused by Next.js pre-rendering pages that require `.env` variables at build time, by providing a fallback string when not in production.
 * [Spice Music Backend] Optimized shared playlist snapshot generation by replacing N+1 queries with batched user profile lookups, reducing DB overhead.
+
+- **Version:** 1.0.43
+- **Changes:** Fixed a `QuotaExceededError` issue on `spice_profiles_list` by catching and shrinking massive track items (omitting artwork URLs and keeping only IDs/Names) before saving to local storage.
+- **Affected Lane:** [Spice.Music main]
