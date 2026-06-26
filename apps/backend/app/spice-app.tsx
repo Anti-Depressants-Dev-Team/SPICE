@@ -4057,12 +4057,23 @@ export default function SpiceApp() {
     void reportRemoteDeviceState();
     void loadRemoteDevices();
 
-    const interval = setInterval(() => {
+    const syncInterval = setInterval(() => {
       void reportRemoteDeviceState();
-      void loadRemoteDevices();
     }, SPICE_CONNECT_DEVICE_SYNC_INTERVAL_MS);
 
-    return () => clearInterval(interval);
+    const timerInterval = setInterval(() => {
+      setRemoteDevices((currentDevices) =>
+        currentDevices.map((device) => ({
+          ...device,
+          lastSeenSeconds: (device.lastSeenSeconds ?? 0) + 1,
+        }))
+      );
+    }, 1000);
+
+    return () => {
+      clearInterval(syncInterval);
+      clearInterval(timerInterval);
+    };
   }, [isMounted, cloudToken, remoteControlEnabled, remoteDeviceId, remoteDeviceName]);
 
   useEffect(() => {
