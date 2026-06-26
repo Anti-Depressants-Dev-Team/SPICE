@@ -1,3 +1,23 @@
+<<<<<<< HEAD
+## v1.0.70
+
+- [Spice.Music main] Added a topbar notification bell to the right of the profile control, with a lower-right badge showing unread release updates plus pending shared playlist requests.
+- [Spice.Music main] Added version-change notifications with a large detail dialog for reading the current Spice Media Core release notes.
+- [Spice.Music main] Surfaced shared playlist collaborator requests in notifications with Accept and Reject actions, while pending requests stay out of the library until accepted.
+- [Spice.Music main] Updated collaborator lists to show pending join request status instead of presenting requested users as fully active collaborators.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.70`.
+
+## v1.0.69
+
+- [Spice.Music main] Removed the external loader.to fallback from song downloads so the share dialog Download action stays inside SPICE.
+- [Spice.Music main] Updated stream downloads to trigger the browser download manager directly with an MP3 filename by default.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.69`.
+
+## v1.0.68
+
+- [Spice.Music main] Fixed local profile deletion so removing an inactive profile no longer forces a switch away from the current profile, while active profile deletion switches cleanly to the next remaining profile.
+- [Spice.Music main] Added a six-profile cap to local profile creation, including disabled create controls and a warning when the cap is reached.
+=======
 ## v1.0.69
 ## v1.0.68
 
@@ -9,6 +29,7 @@
 - [Spice.Music main] Cleaned up unused discord-ipc imports and route handler.
 - [Spice.Music main] Updated AGENTS.md with rules for asynchronous agent workflow coordination.
 - [Spice.Music main] Fixed walkthrough and version string conflicts from concurrent merges.
+>>>>>>> 1227595be8267417683161acc59fda1c385f1b88
 - [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.68`.
 
 ## v1.0.67
