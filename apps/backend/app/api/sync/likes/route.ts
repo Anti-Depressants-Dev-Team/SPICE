@@ -72,16 +72,15 @@ export async function POST(request: Request) {
       return jsonResponse({ error: 'database_not_configured', message: 'Backend DATABASE_URL environment variable is not configured.' }, { status: 500 });
     }
 
-    // Clear old likes and push modern favorites (transaction-free for neon-http compatibility)
-    await db.delete(likes).where(
+    const batch = [];
+    batch.push(db.delete(likes).where(
       and(
         eq(likes.userId, session.userId),
         eq(likes.profileId, profileId)
       )
-    );
+    ));
 
     if (likedTracks.length > 0) {
-      // Insert chunks of unique tracks
       const uniqueTracks = Array.from(new Set(likedTracks));
       const payload = uniqueTracks.map(id => ({
         userId: session.userId,
@@ -90,8 +89,11 @@ export async function POST(request: Request) {
         trackId: id as string,
         ...trackSnapshotColumns(likedTrackDetails[id as string], id as string),
       }));
-      await db.insert(likes).values(payload);
+      batch.push(db.insert(likes).values(payload));
     }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await db.batch(batch as any);
 
     return jsonResponse({ success: true, count: likedTracks.length });
   } catch (error) {

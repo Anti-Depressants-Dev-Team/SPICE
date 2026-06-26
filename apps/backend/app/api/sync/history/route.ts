@@ -71,28 +71,29 @@ export async function POST(request: Request) {
       return jsonResponse({ error: 'database_not_configured', message: 'Backend DATABASE_URL environment variable is not configured.' }, { status: 500 });
     }
 
-    // Clear old history and replace with modern client stack (transaction-free for neon-http compatibility)
-    await db.delete(history).where(
+    const batch = [];
+    batch.push(db.delete(history).where(
       and(
         eq(history.userId, session.userId),
         eq(history.profileId, profileId)
       )
-    );
+    ));
 
     if (clientHistory.length > 0) {
-      // Dedup consecutive ids
       const payload = clientHistory.slice(0, 50).map((h: { id: string; sourceId?: string }, i: number) => ({
         userId: session.userId,
         profileId,
         sourceId: h.sourceId || 'youtube_music',
         trackId: h.id,
         ...trackSnapshotColumns(h, h.id),
-        // Stagger playedAt times slightly to preserve order
         playedAt: new Date(Date.now() - i * 1000),
-        msListened: 30000, // stub duration
+        msListened: 30000,
       }));
-      await db.insert(history).values(payload);
+      batch.push(db.insert(history).values(payload));
     }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await db.batch(batch as any);
 
     return jsonResponse({ success: true, count: clientHistory.length });
   } catch (error) {

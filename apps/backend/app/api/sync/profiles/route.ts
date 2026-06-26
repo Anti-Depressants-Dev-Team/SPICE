@@ -61,8 +61,8 @@ export async function POST(request: Request) {
       return jsonResponse({ error: 'database_not_configured', message: 'Backend DATABASE_URL environment variable is not configured.' }, { status: 500 });
     }
 
-    // Clear old profiles and push updated profiles (transaction-free for neon-http compatibility)
-    await db.delete(profiles).where(eq(profiles.userId, session.userId));
+    const batch = [];
+    batch.push(db.delete(profiles).where(eq(profiles.userId, session.userId)));
 
     if (profilesPayload.length > 0) {
       const payload = profilesPayload.map(p => ({
@@ -76,8 +76,11 @@ export async function POST(request: Request) {
         passcode: p.passcode || null,
         avatarUrl: p.avatarUrl || null,
       }));
-      await db.insert(profiles).values(payload);
+      batch.push(db.insert(profiles).values(payload));
     }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await db.batch(batch as any);
 
     return jsonResponse({ success: true, count: profilesPayload.length });
   } catch (error) {
