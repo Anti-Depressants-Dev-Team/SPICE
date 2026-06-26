@@ -18,6 +18,7 @@
 - [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.67`.
 
 ## v1.0.66
+- [Spice] Removed Flutter client and Dart packages from the monorepo.
 
 - [Spice.Music main] Fixed code health issue in `apps/backend/lib/lrclib.ts` by suppressing hardcoded `console.error` for expected LRCLIB lookup failures.
 - [Spice.Music main] Removed the scrapped Discord Rich Presence integration, including the `/api/discord/presence` route, `discord-ipc` server helper, client playback hooks, and `DISCORD_CLIENT_ID` environment variable documentation.
