@@ -92,7 +92,8 @@ export async function GET(request: NextRequest) {
           displayName: profile?.displayName || user?.email || 'Unknown',
           avatarUrl: profile?.avatarUrl || null,
           role: row.role,
-          acceptedAt: row.acceptedAt.toISOString(),
+          status: row.status,
+          acceptedAt: row.status === 'accepted' ? row.acceptedAt.toISOString() : null,
         });
       }
     }

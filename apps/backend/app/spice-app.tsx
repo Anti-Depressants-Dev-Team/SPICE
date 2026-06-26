@@ -31,6 +31,10 @@ const SPICE_CONNECT_COMMAND_POLL_INTERVAL_MS = 400;
 const SPICE_CONNECT_DEVICE_SYNC_INTERVAL_MS = 1500;
 const SPICE_CONNECT_POST_COMMAND_SYNC_DELAY_MS = 450;
 const SPICE_CONNECT_STALE_DEVICE_SECONDS = 20;
+const MAX_LOCAL_PROFILES = 6;
+const SPICE_MEDIA_CORE_VERSION = '1.0.70';
+const SPICE_MEDIA_CORE_LABEL = `Spice Media Core v${SPICE_MEDIA_CORE_VERSION}`;
+const RELEASE_NOTIFICATION_STORAGE_KEY = 'spice_read_release_notifications';
 
 // ── Icons ──────────────────────────────────────────────────────────
 const Icons = {
@@ -86,6 +90,12 @@ const Icons = {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="22" height="22">
       <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
       <circle cx="12" cy="7" r="4" />
+    </svg>
+  ),
+  bell: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="20" height="20">
+      <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
+      <path d="M13.73 21a2 2 0 0 1-3.46 0" />
     </svg>
   ),
   chevronLeft: (
@@ -499,12 +509,36 @@ interface PendingInvite {
   ownerDisplayName: string;
 }
 
+interface ReleaseNotification {
+  id: string;
+  version: string;
+  title: string;
+  summary: string;
+  body: string[];
+}
+
+const RELEASE_NOTIFICATIONS: ReleaseNotification[] = [
+  {
+    id: `spice-media-core-${SPICE_MEDIA_CORE_VERSION}`,
+    version: `v${SPICE_MEDIA_CORE_VERSION}`,
+    title: 'Notification Center & Playlist Requests',
+    summary: 'SPICE now has topbar notifications for release updates and shared playlist requests.',
+    body: [
+      'A new notification bell now lives beside your profile in the top bar. When there is something new, the badge in the lower-right corner shows the number of notifications waiting for you.',
+      'Version notes can be opened from the notification tray for a larger release detail view, so changes to SPICE are easier to read without digging through settings.',
+      'Shared playlist collaborator invites now surface as notification requests. You choose Accept or Reject from the notification tray, and pending invites stay out of your library until you accept them.',
+    ],
+  },
+];
+
 interface PlaylistMember {
   userId: string;
   username: string | null;
   displayName: string;
   avatarUrl: string | null;
   role: string;
+  status?: string;
+  acceptedAt?: string | null;
 }
 
 interface Playlist {
@@ -1278,10 +1312,6 @@ export default function SpiceApp() {
     showSpiceNotice(`Preparing download for "${track.title}"...`, 'info');
 
     const isSoundCloud = isSoundCloudTrack(track);
-    let fallbackWindow: Window | null = null;
-    if (!isSoundCloud) {
-      fallbackWindow = window.open('about:blank', '_blank');
-    }
 
     try {
       const trackEndpoint = isSoundCloud
@@ -1304,10 +1334,6 @@ export default function SpiceApp() {
       const streamUrl = data.streamUrl || (streamObj ? streamObj.url : null);
 
       if (streamUrl) {
-        if (fallbackWindow) {
-          fallbackWindow.close();
-        }
-
         const downloadTitle = sanitizeDownloadName(track);
         
         // Convert relative URL to absolute URL to parse/append params
@@ -1315,9 +1341,13 @@ export default function SpiceApp() {
         finalUrl.searchParams.set('download', 'true');
         finalUrl.searchParams.set('title', downloadTitle);
         
-        // This will trigger the browser's download manager without unloading the page
-        // because the backend endpoint now returns Content-Disposition: attachment
-        window.location.href = finalUrl.toString();
+        const link = document.createElement('a');
+        link.href = finalUrl.toString();
+        link.download = `${downloadTitle}.mp3`;
+        link.rel = 'noopener noreferrer';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
 
         showSpiceNotice(`Started downloading "${track.title}".`, 'success');
         setSongShareDialog(null);
@@ -1326,15 +1356,9 @@ export default function SpiceApp() {
       }
     } catch (err: any) {
       logDebug('error', `Download stream failed: ${err}`);
-      if (fallbackWindow) {
-        fallbackWindow.location.href = `https://loader.to/api/card/?url=https://www.youtube.com/watch?v=${encodeURIComponent(track.id)}&f=mp3`;
-        showSpiceNotice(`Direct download failed. Opened external converter for "${track.title}".`, 'warning');
-        setSongShareDialog(null);
-      } else {
-        showSpiceNotice(`Failed to download stream: ${err?.message || 'Unknown error'}`, 'danger');
-      }
+      showSpiceNotice(`Failed to download MP3: ${err?.message || 'Unknown error'}`, 'danger');
     }
-  }, [showSpiceNotice, songShareDialog, audioQuality]);
+  }, [showSpiceNotice, songShareDialog, audioQuality, logDebug]);
 
   const openSongSource = useCallback(() => {
     if (!songShareDialog) return;
@@ -1502,6 +1526,18 @@ export default function SpiceApp() {
   const [usernameSuccess, setUsernameSuccess] = useState(false);
   const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([]);
   const [pendingInvitesLoading, setPendingInvitesLoading] = useState(false);
+  const [notificationTrayOpen, setNotificationTrayOpen] = useState(false);
+  const [selectedReleaseNotification, setSelectedReleaseNotification] = useState<ReleaseNotification | null>(null);
+  const [readReleaseNotificationIds, setReadReleaseNotificationIds] = useState<string[]>(() => {
+    if (typeof window === 'undefined') return [];
+    try {
+      const saved = localStorage.getItem(RELEASE_NOTIFICATION_STORAGE_KEY);
+      const parsed = saved ? JSON.parse(saved) : [];
+      return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : [];
+    } catch {
+      return [];
+    }
+  });
   const [showMembersPanel, setShowMembersPanel] = useState(false);
   const [membersLoading, setMembersLoading] = useState(false);
   const [membersList, setMembersList] = useState<{ owner: PlaylistMember; members: PlaylistMember[]; maxMembers: number } | null>(null);
@@ -4168,6 +4204,7 @@ export default function SpiceApp() {
     setTopbarSearchQuery(trimmedQuery);
     setSelectedPlaylist(null);
     setTopbarSearchTrayOpen(true);
+    setNotificationTrayOpen(false);
     setRecentSearchEntries(getRecentCachedSearches());
 
     if (provider !== searchProvider) {
@@ -4189,6 +4226,7 @@ export default function SpiceApp() {
     setRecentSearchEntries(recent);
     if (!topbarSearchTrayOpen && (e.target.value.trim() || recent.length > 0)) {
       setTopbarSearchTrayOpen(true);
+      setNotificationTrayOpen(false);
     }
   };
 
@@ -4200,6 +4238,7 @@ export default function SpiceApp() {
 
   const openAccountFromTopbar = () => {
     setSelectedPlaylist(null);
+    setNotificationTrayOpen(false);
     setCurrentPage('account');
   };
 
@@ -4761,8 +4800,12 @@ export default function SpiceApp() {
       }
     } catch { /* silent */ }
   }, [cloudToken, activeProfileId]);
-  const fetchPendingInvites = async () => {
-    if (!cloudToken) return;
+  const fetchPendingInvites = useCallback(async () => {
+    if (!cloudToken) {
+      setPendingInvites([]);
+      setPendingInvitesLoading(false);
+      return;
+    }
     setPendingInvitesLoading(true);
     try {
       const res = await fetch('/api/account/invites', {
@@ -4777,13 +4820,41 @@ export default function SpiceApp() {
     } finally {
       setPendingInvitesLoading(false);
     }
-  };
+  }, [cloudToken, logDebug]);
 
   useEffect(() => {
     if (currentPage === 'settings' && cloudToken) {
-      fetchPendingInvites();
+      void fetchPendingInvites();
     }
-  }, [currentPage, cloudToken]);
+  }, [currentPage, cloudToken, fetchPendingInvites]);
+
+  useEffect(() => {
+    if (!cloudToken) {
+      setPendingInvites([]);
+      setPendingInvitesLoading(false);
+      return;
+    }
+
+    void fetchPendingInvites();
+    const interval = window.setInterval(() => {
+      void fetchPendingInvites();
+    }, 30000);
+
+    return () => window.clearInterval(interval);
+  }, [cloudToken, fetchPendingInvites]);
+
+  const openReleaseNotification = useCallback((notification: ReleaseNotification) => {
+    setSelectedReleaseNotification(notification);
+    setNotificationTrayOpen(false);
+    setReadReleaseNotificationIds((prev) => {
+      if (prev.includes(notification.id)) return prev;
+      const next = [...prev, notification.id];
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(RELEASE_NOTIFICATION_STORAGE_KEY, JSON.stringify(next));
+      }
+      return next;
+    });
+  }, []);
 
   const handleAcceptInvite = async (playlistId: string) => {
     if (!cloudToken) return;
@@ -4795,7 +4866,7 @@ export default function SpiceApp() {
       });
       if (res.ok) {
         setPendingInvites(prev => prev.filter(inv => inv.playlistId !== playlistId));
-        showSpiceNotice('Invite accepted. The playlist will sync shortly.', 'success');
+        showSpiceNotice('Playlist request accepted. The playlist will sync shortly.', 'success');
         // Trigger a sync
         void syncWithCloud();
       } else {
@@ -4819,7 +4890,7 @@ export default function SpiceApp() {
       });
       if (res.ok) {
         setPendingInvites(prev => prev.filter(inv => inv.playlistId !== playlistId));
-        showSpiceNotice('Invite rejected.', 'success');
+        showSpiceNotice('Playlist request rejected.', 'success');
       } else {
         const err = await res.json();
         showSpiceNotice(err.message || 'Failed to reject invite.', 'danger');
@@ -4912,7 +4983,7 @@ export default function SpiceApp() {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.message || 'Failed to invite member.');
-      setMemberActionStatus(`Invited ${data.member?.displayName || inviteUsername}!`);
+      setMemberActionStatus(`Join request sent to ${data.member?.displayName || inviteUsername}.`);
       setInviteUsername('');
       await fetchPlaylistMembers(playlistId);
     } catch (error) {
@@ -5460,6 +5531,11 @@ export default function SpiceApp() {
   const createProfile = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newProfileName.trim()) return;
+    if (profiles.length >= MAX_LOCAL_PROFILES) {
+      showSpiceNotice(`You can keep up to ${MAX_LOCAL_PROFILES} local profiles in SPICE Music.`, 'warning');
+      setShowCreateProfileDialog(false);
+      return;
+    }
 
     const newId = createUserProfileId();
     const sanitizedUrl = sanitizePfpUrl(newProfileAvatarUrl);
@@ -5510,8 +5586,9 @@ export default function SpiceApp() {
         localStorage.setItem('spice_profiles_list', JSON.stringify(updated));
         autoSyncProfiles(updated);
 
-        // Switch to first profile
-        switchProfile(updated[0].id);
+        if (profileId === activeProfileIdRef.current) {
+          switchProfile(updated[0].id);
+        }
         showSpiceNotice('Profile deleted.', 'success');
       },
     });
@@ -6080,6 +6157,9 @@ export default function SpiceApp() {
   const shouldShowTopbarSearchTray =
     topbarSearchTrayOpen
     && (Boolean(topbarSearchQuery.trim()) || topbarRecentSuggestions.length > 0 || topbarTrayResults.length > 0 || isSearching);
+  const unreadReleaseNotifications = RELEASE_NOTIFICATIONS.filter((notification) => !readReleaseNotificationIds.includes(notification.id));
+  const notificationCount = unreadReleaseNotifications.length + pendingInvites.length;
+  const notificationCountLabel = notificationCount > 99 ? '99+' : String(notificationCount);
 
   const isPlaylistOwner = selectedPlaylist
     ? (!selectedPlaylist.shared || selectedPlaylist.shareRole === 'owner' || selectedPlaylist.ownerId === cloudUser?.id)
@@ -6190,7 +6270,38 @@ export default function SpiceApp() {
           </div>
         </div>
       )}
-      {/* ── Security Passcode Lock Overlay ── */}
+      {/* Release Notification Detail */}
+      {selectedReleaseNotification && (
+        <div className="spice-dialog-backdrop" role="presentation" onClick={() => setSelectedReleaseNotification(null)}>
+          <div
+            className="spice-release-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="spice-release-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="spice-release-dialog__header">
+              <span>{SPICE_MEDIA_CORE_LABEL}</span>
+              <button
+                type="button"
+                className="spice-share-dialog__close"
+                onClick={() => setSelectedReleaseNotification(null)}
+                aria-label="Close version details"
+              >
+                {Icons.close}
+              </button>
+            </div>
+            <h2 id="spice-release-title">{selectedReleaseNotification.version}: {selectedReleaseNotification.title}</h2>
+            <p className="spice-release-dialog__summary">{selectedReleaseNotification.summary}</p>
+            <div className="spice-release-dialog__body">
+              {selectedReleaseNotification.body.map((paragraph) => (
+                <p key={paragraph}>{paragraph}</p>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Security Passcode Lock Overlay */}
       {isLocked && (
         <div className="passcode-overlay animate-in" style={{ position: 'fixed', inset: 0, background: '#000000', zIndex: 120000, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(32px)' }}>
           <div style={{ textAlign: 'center', maxWidth: '320px', width: '100%', padding: '24px' }}>
@@ -6573,6 +6684,105 @@ export default function SpiceApp() {
                   <small>{cloudUser?.accountRole ? `${cloudUser.accountRole} account` : 'Local profile'}</small>
                 </span>
               </button>
+              <div className="app-topbar__notification-shell">
+                <button
+                  className={`app-topbar__notification ${notificationTrayOpen ? 'active' : ''}`}
+                  type="button"
+                  onClick={() => {
+                    setNotificationTrayOpen((open) => !open);
+                    setTopbarSearchTrayOpen(false);
+                  }}
+                  aria-label={`Open notifications${notificationCount > 0 ? ` (${notificationCount} waiting)` : ''}`}
+                  aria-expanded={notificationTrayOpen}
+                  title="Notifications"
+                >
+                  {Icons.bell}
+                  {notificationCount > 0 && (
+                    <span className="app-topbar__notification-badge">{notificationCountLabel}</span>
+                  )}
+                </button>
+
+                {notificationTrayOpen && (
+                  <div className="app-topbar__notification-tray" role="region" aria-label="SPICE notifications">
+                    <div className="app-topbar__notification-header">
+                      <div>
+                        <span>Notifications</span>
+                        <strong>{notificationCount > 0 ? `${notificationCount} waiting` : 'All caught up'}</strong>
+                      </div>
+                      <button
+                        type="button"
+                        className="app-topbar__tray-close"
+                        onClick={() => setNotificationTrayOpen(false)}
+                        aria-label="Close notifications"
+                      >
+                        {Icons.close}
+                      </button>
+                    </div>
+
+                    <div className="app-topbar__notification-section">
+                      <span className="app-topbar__notification-section-title">Version updates</span>
+                      {RELEASE_NOTIFICATIONS.map((notification) => {
+                        const isUnread = !readReleaseNotificationIds.includes(notification.id);
+                        return (
+                          <div key={notification.id} className={`app-topbar__notification-item ${isUnread ? 'is-unread' : ''}`}>
+                            <div className="app-topbar__notification-copy">
+                              <span>{notification.version}</span>
+                              <strong>{notification.title}</strong>
+                              <p>{notification.summary}</p>
+                            </div>
+                            <button
+                              type="button"
+                              className="app-topbar__notification-action"
+                              onClick={() => openReleaseNotification(notification)}
+                            >
+                              View
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="app-topbar__notification-section">
+                      <span className="app-topbar__notification-section-title">Shared playlist requests</span>
+                      {pendingInvitesLoading && pendingInvites.length === 0 ? (
+                        <p className="app-topbar__notification-empty">Checking for playlist requests...</p>
+                      ) : pendingInvites.length > 0 ? (
+                        pendingInvites.map((invite) => (
+                          <div key={invite.playlistId} className="app-topbar__notification-item app-topbar__notification-item--request">
+                            <div className="app-topbar__notification-copy">
+                              <span>Join request</span>
+                              <strong>{invite.playlistTitle}</strong>
+                              <p>{invite.ownerDisplayName} (@{invite.ownerUsername || 'unknown'}) invited you to join.</p>
+                            </div>
+                            <div className="app-topbar__notification-actions">
+                              <button
+                                type="button"
+                                className="app-topbar__notification-action"
+                                onClick={() => handleRejectInvite(invite.playlistId)}
+                                disabled={acceptingInvite}
+                              >
+                                Reject
+                              </button>
+                              <button
+                                type="button"
+                                className="app-topbar__notification-action app-topbar__notification-action--primary"
+                                onClick={() => handleAcceptInvite(invite.playlistId)}
+                                disabled={acceptingInvite}
+                              >
+                                Accept
+                              </button>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <p className="app-topbar__notification-empty">
+                          Playlist requests will appear here before anything joins your library.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           </header>
 
@@ -6750,7 +6960,9 @@ export default function SpiceApp() {
                               </div>
                               <div style={{ flex: 1 }}>
                                 <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{m.displayName}</div>
-                                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Collaborator ({m.role})</div>
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                                  {m.status === 'pending' ? `Join request pending (${m.role})` : `Collaborator (${m.role})`}
+                                </div>
                               </div>
                               {/* Kick option if caller is owner */}
                               {isPlaylistOwner && (
@@ -7583,9 +7795,11 @@ export default function SpiceApp() {
                     })}
                     <button
                       onClick={() => setShowCreateProfileDialog(true)}
-                      style={{ background: 'rgba(255,255,255,0.02)', border: '1px dashed var(--border-color)', borderRadius: '12px', padding: '16px', minWidth: '180px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', cursor: 'pointer', color: 'var(--text-secondary)' }}
+                      disabled={profiles.length >= MAX_LOCAL_PROFILES}
+                      title={profiles.length >= MAX_LOCAL_PROFILES ? `Maximum of ${MAX_LOCAL_PROFILES} profiles reached` : 'Create Profile'}
+                      style={{ background: 'rgba(255,255,255,0.02)', border: '1px dashed var(--border-color)', borderRadius: '12px', padding: '16px', minWidth: '180px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', cursor: profiles.length >= MAX_LOCAL_PROFILES ? 'not-allowed' : 'pointer', color: 'var(--text-secondary)', opacity: profiles.length >= MAX_LOCAL_PROFILES ? 0.5 : 1 }}
                     >
-                      <span>+ Create Profile</span>
+                      <span>{profiles.length >= MAX_LOCAL_PROFILES ? `${MAX_LOCAL_PROFILES} Profile Max` : '+ Create Profile'}</span>
                     </button>
                   </div>
 
@@ -7701,21 +7915,21 @@ export default function SpiceApp() {
                           )}
                         </div>
 
-                        {/* Pending Invites Section */}
+                        {/* Pending Playlist Requests */}
                         {cloudUsername && pendingInvites.length > 0 && (
                           <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '20px', marginTop: '20px' }}>
                             <h4 style={{ fontSize: '0.95rem', fontWeight: 600, margin: '0 0 12px 0', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                              {Icons.plus} Pending Playlist Invites ({pendingInvites.length})
+                              {Icons.plus} Playlist Requests ({pendingInvites.length})
                             </h4>
                             {pendingInvitesLoading ? (
-                              <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Loading invites...</div>
+                              <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Loading requests...</div>
                             ) : (
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                 {pendingInvites.map((invite) => (
                                   <div key={invite.playlistId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.05)', padding: '12px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
                                     <div>
                                       <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '4px' }}>{invite.playlistTitle}</div>
-                                      <div style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>Invited by <strong style={{ color: '#fff' }}>{invite.ownerDisplayName}</strong> (@{invite.ownerUsername})</div>
+                                      <div style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>Requested by <strong style={{ color: '#fff' }}>{invite.ownerDisplayName}</strong> (@{invite.ownerUsername})</div>
                                     </div>
                                     <div style={{ display: 'flex', gap: '8px' }}>
                                       <button
@@ -7732,7 +7946,7 @@ export default function SpiceApp() {
                                         onClick={() => handleRejectInvite(invite.playlistId)}
                                         disabled={acceptingInvite}
                                       >
-                                        Deny
+                                        Reject
                                       </button>
                                     </div>
                                   </div>
@@ -8684,7 +8898,7 @@ export default function SpiceApp() {
                         {Icons.tool} System Diagnostics & Live Terminal
                       </h3>
                       <span style={{ fontSize: '0.75rem', background: 'rgba(255,255,255,0.04)', color: 'var(--text-secondary)', padding: '4px 10px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.06)' }}>
-                        Spice Media Core v1.0.67
+                        {SPICE_MEDIA_CORE_LABEL}
                       </span>
                     </div>
 
