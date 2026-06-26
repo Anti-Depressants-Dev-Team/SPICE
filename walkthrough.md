@@ -418,3 +418,9 @@
 ### Fixed Vercel Build Errors
 - [Spice.Music main] Fixed a Vercel build error caused by Next.js pre-rendering pages that require `.env` variables at build time, by providing a fallback string when not in production.
 * [Spice Music Backend] Optimized shared playlist snapshot generation by replacing N+1 queries with batched user profile lookups, reducing DB overhead.
+
+## v1.0.71
+
+- Replaced sequential database operations with `db.batch()` across all sync endpoints (`profiles`, `likes`, `history`, `playlists`) for improved performance using the `neon-http` driver.
+- Fixed TypeScript errors related to `db.batch()` typing in Next.js `POST` handlers.
+- Updated SPICE_MEDIA_CORE_VERSION to v1.0.71 in `spice-app.tsx`.

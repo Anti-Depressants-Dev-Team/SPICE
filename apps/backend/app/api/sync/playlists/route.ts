@@ -1,4 +1,3 @@
-
 import { jsonResponse, optionsResponse } from '@/lib/cors';
 import { verifySession } from '@/lib/auth';
 import { db } from '@/db';
@@ -110,7 +109,6 @@ export async function POST(request: Request) {
       clientPl && !clientPl.shared
     ));
 
-    // Run clean operations sequentially without transactions for neon-http driver compatibility
     const existing = await db.select().from(playlists).where(
       and(
         eq(playlists.userId, session.userId),
@@ -118,7 +116,6 @@ export async function POST(request: Request) {
       )
     );
 
-    // Only delete private (non-shared) playlists to preserve collaborative memberships/invites
     const privatePlaylists = [];
     const existingIds = existing.map((pl) => pl.id);
 
@@ -138,20 +135,23 @@ export async function POST(request: Request) {
       }
     }
 
+    const batch = [];
+
     for (const pl of privatePlaylists) {
-      await db.delete(playlistItems).where(eq(playlistItems.playlistId, pl.id));
-      await db.delete(playlists).where(eq(playlists.id, pl.id));
+      batch.push(db.delete(playlistItems).where(eq(playlistItems.playlistId, pl.id)));
+      batch.push(db.delete(playlists).where(eq(playlists.id, pl.id)));
     }
 
     for (let i = 0; i < ownedClientPlaylists.length; i++) {
       const clientPl = ownedClientPlaylists[i];
 
-      // Ensure id is valid UUID if provided, else let database auto-generate
       const isUUID = typeof clientPl.id === 'string'
         && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(clientPl.id);
 
-      const [insertedPl] = await db.insert(playlists).values({
-        id: isUUID ? clientPl.id : undefined,
+      const playlistId = isUUID ? clientPl.id : crypto.randomUUID();
+
+      batch.push(db.insert(playlists).values({
+        id: playlistId,
         userId: session.userId,
         profileId,
         title: clientPl.title || 'Untitled Playlist',
@@ -159,22 +159,25 @@ export async function POST(request: Request) {
         gradient: clientPl.gradient || 'linear-gradient(135deg, #a855f7, #ec4899)',
         coverUrl: clientPl.coverUrl || null,
         sortIndex: i,
-      }).returning();
+      }));
 
       if (Array.isArray(clientPl.tracks) && clientPl.tracks.length > 0) {
-        // Chunk list insertion to avoid exceeding Drizzle/Postgres parameters bounds
         const itemsPayload = clientPl.tracks.map((t, pos: number) => ({
-          playlistId: insertedPl.id,
+          playlistId: playlistId as string,
           position: pos,
           sourceId: t.sourceId || 'youtube_music',
           trackId: t.id,
           ...trackSnapshotColumns(t, t.id),
         }));
-        await db.insert(playlistItems).values(itemsPayload);
+        batch.push(db.insert(playlistItems).values(itemsPayload));
       }
     }
 
-    // After synchronization, fetch and return the current active profile playlists to client (including their database-assigned UUIDs)
+    if (batch.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await db.batch(batch as any);
+    }
+
     const userPlaylists = await db.query.playlists.findMany({
       where: and(
         eq(playlists.userId, session.userId),
