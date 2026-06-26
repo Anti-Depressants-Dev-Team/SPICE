@@ -418,3 +418,7 @@
 ### Fixed Vercel Build Errors
 - [Spice.Music main] Fixed a Vercel build error caused by Next.js pre-rendering pages that require `.env` variables at build time, by providing a fallback string when not in production.
 * [Spice Music Backend] Optimized shared playlist snapshot generation by replacing N+1 queries with batched user profile lookups, reducing DB overhead.
+
+### v1.0.36
+* [Spice.Music main] UI changes to the volume lever control now include a percentage readout, and max out at 200%. Added a Boost button to optionally enable volume boosting up to 1000% maximum.
+* [Spice.Music main] Fixed the placement of the volume booster disclaimer to render in the center of the viewport.

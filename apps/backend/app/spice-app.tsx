@@ -2064,6 +2064,10 @@ export default function SpiceApp() {
   useEffect(() => {
     setIsMounted(true);
     if (typeof window !== 'undefined') {
+      const savedBooster = localStorage.getItem('spice_volume_booster_accepted');
+      if (savedBooster === 'true') setVolumeBoosterAccepted(true);
+    }
+    if (typeof window !== 'undefined') {
       const savedTheme = localStorage.getItem('spice_accent_theme');
       if (isAccentTheme(savedTheme)) setAccentTheme(savedTheme);
 
