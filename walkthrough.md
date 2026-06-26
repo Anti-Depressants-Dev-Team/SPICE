@@ -1,3 +1,16 @@
+## v1.0.69
+## v1.0.68
+
+### Added Volume Booster Feature
+- [Spice.Music main] Added a volume booster feature to the player bar (up to 1000% volume via Web Audio API) with a disclaimer modal that must be accepted at least once.
+
+
+- [Spice.Music main] Fixed JWT secret initialization bug that failed production builds.
+- [Spice.Music main] Cleaned up unused discord-ipc imports and route handler.
+- [Spice.Music main] Updated AGENTS.md with rules for asynchronous agent workflow coordination.
+- [Spice.Music main] Fixed walkthrough and version string conflicts from concurrent merges.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.68`.
+
 ## v1.0.67
 
 - [Spice.Music main] ListenBrainz user tokens are now encrypted and saved on the signed-in SPICE account instead of browser local storage, with restore on login and account-backed resolution during profile sync submissions.
@@ -6,14 +19,10 @@
 
 ## v1.0.66
 
+- [Spice.Music main] Fixed code health issue in `apps/backend/lib/lrclib.ts` by suppressing hardcoded `console.error` for expected LRCLIB lookup failures.
 - [Spice.Music main] Removed the scrapped Discord Rich Presence integration, including the `/api/discord/presence` route, `discord-ipc` server helper, client playback hooks, and `DISCORD_CLIENT_ID` environment variable documentation.
-- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.66`.
-
-## v1.0.66
-
 - [Spice.Music main] Added a setting in the settings tab to allow users to customize their global theme color.
 - [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.66`.
-
 
 ## v1.0.65
 
@@ -23,7 +32,6 @@
 - [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.65`.
 
 # SPICE Walkthrough
-
 
 ## v1.0.65
 
@@ -48,7 +56,6 @@
 - [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.64 (Discord RPC)`.
 
 ## v1.0.63
-
 
 - [Spice.Music main] Fixed share dialog and other modals (confirmations, locks) appearing behind the expanded full-screen player by setting their z-index layer styles to stack correctly above it.
 - [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.63`.
@@ -391,4 +398,7 @@
 ## v1.0.65
 
 - Remove unused `SearchCacheEntry` type import from `spice-app.tsx` to improve code maintainability and readability.
+
+### Fixed Vercel Build Errors
+- [Spice.Music main] Fixed a Vercel build error caused by Next.js pre-rendering pages that require `.env` variables at build time, by providing a fallback string when not in production.
 * [Spice Music Backend] Optimized shared playlist snapshot generation by replacing N+1 queries with batched user profile lookups, reducing DB overhead.
