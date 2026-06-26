@@ -1,4 +1,9 @@
+## v1.0.69
 ## v1.0.68
+
+### Added Volume Booster Feature
+- [Spice.Music main] Added a volume booster feature to the player bar (up to 1000% volume via Web Audio API) with a disclaimer modal that must be accepted at least once.
+
 
 - [Spice.Music main] Fixed JWT secret initialization bug that failed production builds.
 - [Spice.Music main] Cleaned up unused discord-ipc imports and route handler.
