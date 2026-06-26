@@ -62,6 +62,16 @@ export async function POST(request: Request) {
       );
     }
 
+    if (account.accountRole === 'banned') {
+      return jsonResponse(
+        {
+          error: 'account_banned',
+          message: 'This account has been banned.',
+        },
+        { status: 403 }
+      );
+    }
+
     const token = await signSession({
       userId: user.id,
       email: user.email,

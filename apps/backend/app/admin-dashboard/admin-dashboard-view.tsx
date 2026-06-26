@@ -392,6 +392,7 @@ export default function AdminDashboardView() {
                       >
                         <option value="user">User</option>
                         <option value="admin">Admin</option>
+                        <option value="banned">Banned</option>
                       </select>
                     </td>
                     <td>

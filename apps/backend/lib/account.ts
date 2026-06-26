@@ -1,6 +1,7 @@
 export const ACCOUNT_ROLE_USER = 'user';
 export const ACCOUNT_ROLE_ADMIN = 'admin';
-export const ACCOUNT_ROLES = [ACCOUNT_ROLE_USER, ACCOUNT_ROLE_ADMIN] as const;
+export const ACCOUNT_ROLE_BANNED = 'banned';
+export const ACCOUNT_ROLES = [ACCOUNT_ROLE_USER, ACCOUNT_ROLE_ADMIN, ACCOUNT_ROLE_BANNED] as const;
 export type AccountRole = (typeof ACCOUNT_ROLES)[number];
 
 export const SUBSCRIPTION_TIER_FREE = 'free';

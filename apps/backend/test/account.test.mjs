@@ -13,6 +13,7 @@ import {
 test('account roles normalize to user unless explicitly admin', () => {
   assert.equal(normalizeAccountRole('admin'), 'admin');
   assert.equal(normalizeAccountRole('user'), 'user');
+  assert.equal(normalizeAccountRole('banned'), 'banned');
   assert.equal(normalizeAccountRole('owner'), 'user');
   assert.equal(isAdminAccount({ accountRole: 'admin' }), true);
   assert.equal(isAdminAccount({ accountRole: 'user' }), false);

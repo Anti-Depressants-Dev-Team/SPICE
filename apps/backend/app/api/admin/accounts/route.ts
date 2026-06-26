@@ -89,7 +89,7 @@ export async function POST(request: Request) {
 
     // 2. Update users table if accountRole is provided
     if (accountRole !== undefined) {
-      if (accountRole !== 'user' && accountRole !== 'admin') {
+      if (accountRole !== 'user' && accountRole !== 'admin' && accountRole !== 'banned') {
         return jsonResponse({ error: 'bad_request', message: 'Invalid account role.' }, { status: 400 });
       }
       await db.update(users)
