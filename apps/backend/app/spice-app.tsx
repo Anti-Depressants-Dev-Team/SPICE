@@ -21,9 +21,6 @@ import {
   buildPrivateTasteProfile,
   buildRecommendationSeeds,
   rankRecommendedTracks,
-// type RecommendationSeed,
-  type SeededRecommendationResult,
-  type RecommendationSeed,
 } from './recommendations';
 import { isSpiceConnectCommandFresh, SPICE_CONNECT_COMMAND_TTL_MS } from '@/lib/spice-connect';
 
