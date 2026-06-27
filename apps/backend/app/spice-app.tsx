@@ -5106,7 +5106,7 @@ export default function SpiceApp() {
     if (currentPage === 'account' && cloudToken) {
       void fetchMyLikesCount();
     }
-  }, [currentPage, cloudToken, fetchMyLikesCount]);
+  }, [currentPage, cloudToken, activeProfileId, fetchMyLikesCount]);
 
   useEffect(() => {
     if (!cloudToken) {
@@ -6769,7 +6769,10 @@ export default function SpiceApp() {
   const notificationCountLabel = notificationCount > 99 ? '99+' : String(notificationCount);
 
   const isPlaylistOwner = selectedPlaylist
-    ? (!selectedPlaylist.shared || selectedPlaylist.shareRole === 'owner' || selectedPlaylist.ownerId === cloudUser?.id)
+    ? (
+        (selectedPlaylist.shared && (selectedPlaylist.shareRole === 'owner' || selectedPlaylist.ownerId === cloudUser?.id)) ||
+        (!selectedPlaylist.shared && (!selectedPlaylist.ownerId || (cloudUser?.id && selectedPlaylist.ownerId === cloudUser.id)))
+      )
     : false;
 
   return (
@@ -7709,7 +7712,7 @@ export default function SpiceApp() {
                         : 'Playlist'}
                     </span>
                     <h1 className="playlist-hero__title">{selectedPlaylist.title}</h1>
-                    {selectedPlaylist.description && (
+                    {selectedPlaylist.description && selectedPlaylist.description !== '[object Object]' && (
                       <p className="playlist-hero__desc">{selectedPlaylist.description}</p>
                     )}
                     <p className="playlist-hero__meta">
@@ -8149,7 +8152,18 @@ export default function SpiceApp() {
                   {/* cover greetings header */}
                   <section style={{ marginBottom: '32px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255, 255, 255, 0.02)', border: '1px solid var(--border-color)', padding: '28px', borderRadius: '16px', backdropFilter: 'blur(10px)' }} className="home-greeting animate-in">
                     <div className="home-greeting__copy">
-                      <h1 style={{ fontFamily: 'Outfit, sans-serif', fontSize: '2.25rem', fontWeight: 800, margin: '0 0 6px 0', background: activeProfile.gradient, WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+                      <h1 style={{
+                        fontFamily: 'Outfit, sans-serif',
+                        fontSize: '2.25rem',
+                        fontWeight: 800,
+                        margin: '0 0 6px 0',
+                        display: 'inline-block',
+                        background: activeProfile.gradient,
+                        WebkitBackgroundClip: 'text',
+                        WebkitTextFillColor: 'transparent',
+                        backgroundClip: 'text',
+                        color: '#fff'
+                      }}>
                         Welcome back, {activeProfile.displayName}!
                       </h1>
                       <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
@@ -11657,6 +11671,7 @@ export default function SpiceApp() {
           <div style={{ opacity: 0.3, fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
             <span>Spice Premium Audio Resolution Engine</span>
             <span>•</span>
+            <span>PWA v1.0.84</span>
             <span>PWA v1.0.83</span>
             <span>PWA v1.0.79</span>
           </div>

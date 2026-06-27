@@ -1,5 +1,14 @@
 # SPICE Walkthrough
 
+## v1.0.84
+
+- [Spice.Music main] Fixed duplicate `@username` rendering in settings profile header by removing legacy tag-splitting fallback code.
+- [Spice.Music main] Fixed greetings banner text-clipping bug where title display could render as solid redacted blocks on theme/gradient transitions by wrapping the header in `display: inline-block` and setting correct fallback styles.
+- [Spice.Music main] Fixed profile likes count sync issue on settings page by adding the active profile ID as a dependency to the likes fetch effect.
+- [Spice.Music main] Restructured playlist ownership verification (`isPlaylistOwner`) to prevent users from seeing edit and action buttons when viewing other users' public playlists.
+- [Spice.Music main] Fixed the description display to exclude unparsed `[object Object]` strings.
+- [Spice.Music main] Bump the visible diagnostics version to `PWA v1.0.84`.
+
 ## v1.0.83
 
 - [Spice.Music main] Removed username tag-suffixes (e.g. `#12345678`) and random numbers, transitioning Spicer usernames to clean globally unique handles.
