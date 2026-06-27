@@ -214,6 +214,14 @@ export default function MarketingHomeTopbar({ onProfileClick }: { onProfileClick
     });
   };
 
+  const markAllReleaseNotificationsAsRead = () => {
+    const allIds = releaseNotifications.map(n => n.id);
+    setReadReleaseNotificationIds(allIds);
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(RELEASE_NOTIFICATION_STORAGE_KEY, JSON.stringify(allIds));
+    }
+  };
+
   const handleAcceptInvite = async (playlistId: string) => {
     const token = window.localStorage.getItem('spice_cloud_token');
     if (!token) return;
@@ -377,14 +385,26 @@ export default function MarketingHomeTopbar({ onProfileClick }: { onProfileClick
                   <span>Notifications</span>
                   <strong>{notificationCount > 0 ? `${notificationCount} waiting` : 'All caught up'}</strong>
                 </div>
-                <button
-                  type="button"
-                  className="app-topbar__tray-close"
-                  onClick={() => setNotificationTrayOpen(false)}
-                  aria-label="Close notifications"
-                >
-                  {Icons.close}
-                </button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  {unreadReleaseNotifications.length > 0 && (
+                    <button
+                      type="button"
+                      className="app-topbar__notification-action"
+                      style={{ padding: '4px 10px', fontSize: '0.75rem' }}
+                      onClick={markAllReleaseNotificationsAsRead}
+                    >
+                      Mark all read
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="app-topbar__tray-close"
+                    onClick={() => setNotificationTrayOpen(false)}
+                    aria-label="Close notifications"
+                  >
+                    {Icons.close}
+                  </button>
+                </div>
               </div>
 
               <div className="app-topbar__notification-section">

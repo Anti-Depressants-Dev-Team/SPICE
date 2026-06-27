@@ -88,12 +88,19 @@ export async function GET(request: NextRequest) {
         durationMs: listenTogetherSessions.durationMs,
         updatedAt: listenTogetherSessions.updatedAt,
         hostUserId: users.id,
-        hostUsername: users.username,
+        hostUserUsername: users.username,
+        hostProfileUsername: profiles.username,
         hostDisplayName: profiles.displayName,
       })
       .from(listenTogetherSessions)
       .innerJoin(users, eq(listenTogetherSessions.hostUserId, users.id))
-      .leftJoin(profiles, eq(profiles.userId, users.id))
+      .leftJoin(
+        profiles,
+        and(
+          eq(profiles.userId, users.id),
+          eq(profiles.id, listenTogetherSessions.hostProfileId)
+        )
+      )
       .where(eq(listenTogetherSessions.id, sessionId))
       .then(rows => rows[0]);
 
@@ -101,14 +108,14 @@ export async function GET(request: NextRequest) {
       return jsonResponse({ error: 'session_not_found', message: 'Session not found.' }, { status: 404 });
     }
 
-    // Check if the session is active (updated in the last 15 seconds)
+    // Check if the session is active (updated in the last 120 seconds)
     const lastActiveSeconds = Math.round((Date.now() - new Date(session.updatedAt).getTime()) / 1000);
-    const isActive = lastActiveSeconds <= 15;
+    const isActive = lastActiveSeconds <= 120;
 
     return jsonResponse({
       isActive,
       sessionId: session.sessionId,
-      hostName: session.hostDisplayName || session.hostUsername || 'Host',
+      hostName: session.hostDisplayName || session.hostProfileUsername || session.hostUserUsername || 'Host',
       isPlaying: session.isPlaying,
       progressMs: session.progressMs,
       durationMs: session.durationMs,

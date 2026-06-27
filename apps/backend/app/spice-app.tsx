@@ -1899,7 +1899,7 @@ export default function SpiceApp() {
 
   const handleAudioEndedRef = useRef<() => void>(() => { });
   const handleAudioErrorRef = useRef<() => void>(() => { });
-  const playTrackRef = useRef<(track: Track, newQueue?: Track[], startSearchIndex?: number) => Promise<void>>(async () => { });
+  const playTrackRef = useRef<(track: Track, newQueue?: Track[], startSearchIndex?: number, isSyncLoopCall?: boolean) => Promise<void>>(async () => { });
   const handleNextRef = useRef<(overrideIndex?: any, startSearchIndex?: number) => void>(() => { });
 
   useEffect(() => {
@@ -3650,7 +3650,12 @@ export default function SpiceApp() {
   }, [currentTrack.id, currentTrack.title, currentTrack.artists, currentTrack.durationMs]);
 
   // Play a track
-  const playTrack = async (track: Track, newQueue?: Track[], startSearchIndex?: number) => {
+  const playTrack = async (track: Track, newQueue?: Track[], startSearchIndex?: number, isSyncLoopCall?: boolean) => {
+    if (listenTogetherHostSessionId && !isSyncLoopCall) {
+      showSpiceNotice('You cannot change tracks while listening in a Listen Together session.', 'warning');
+      return;
+    }
+
     if (errorSkipTimeoutRef.current) {
       clearTimeout(errorSkipTimeoutRef.current);
       errorSkipTimeoutRef.current = null;
@@ -5137,6 +5142,14 @@ export default function SpiceApp() {
     });
   }, []);
 
+  const markAllReleaseNotificationsAsRead = useCallback(() => {
+    const allIds = releaseNotifications.map(n => n.id);
+    setReadReleaseNotificationIds(allIds);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(RELEASE_NOTIFICATION_STORAGE_KEY, JSON.stringify(allIds));
+    }
+  }, [releaseNotifications]);
+
   const handleAcceptInvite = async (playlistId: string) => {
     if (!cloudToken) return;
     setAcceptingInvite(true);
@@ -5227,7 +5240,8 @@ export default function SpiceApp() {
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${cloudToken}`
-        }
+        },
+        body: JSON.stringify({ profileId: activeProfileId })
       });
       if (res.ok) {
         const data = await res.json();
@@ -5323,7 +5337,15 @@ export default function SpiceApp() {
     }
   };
 
-  const handleLeaveListenTogetherSession = () => {
+  const handleLeaveListenTogetherSession = async () => {
+    if (cloudToken && listenTogetherHostSessionId) {
+      try {
+        await fetch(`/api/listen-together/invite?sessionId=${listenTogetherHostSessionId}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${cloudToken}` }
+        });
+      } catch { /* silent */ }
+    }
     setListenTogetherHostSessionId(null);
     setListenTogetherHostName(null);
     showSpiceNotice('Left Listen Together session.', 'success');
@@ -5333,7 +5355,7 @@ export default function SpiceApp() {
     if (listenTogetherSession) {
       void handleEndListenTogetherSession();
     } else if (listenTogetherHostSessionId) {
-      handleLeaveListenTogetherSession();
+      void handleLeaveListenTogetherSession();
     }
   };
 
@@ -5349,7 +5371,8 @@ export default function SpiceApp() {
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${cloudToken}`
-          }
+          },
+          body: JSON.stringify({ profileId: activeProfileId })
         });
         if (res.ok) {
           const data = await res.json();
@@ -5437,6 +5460,18 @@ export default function SpiceApp() {
     };
   }, [cloudToken, listenTogetherSession, fetchListenTogetherInvitesList]);
 
+  const resumeCurrentPlaybackRef = useRef(resumeCurrentPlayback);
+  const pauseCurrentPlaybackRef = useRef(pauseCurrentPlayback);
+  const seekToPositionRef = useRef(seekToPosition);
+  const enrichTrackSnapshotRef = useRef(enrichTrackSnapshot);
+
+  useEffect(() => {
+    resumeCurrentPlaybackRef.current = resumeCurrentPlayback;
+    pauseCurrentPlaybackRef.current = pauseCurrentPlayback;
+    seekToPositionRef.current = seekToPosition;
+    enrichTrackSnapshotRef.current = enrichTrackSnapshot;
+  });
+
   // Listener Sync Loop
   useEffect(() => {
     if (!cloudToken || !listenTogetherHostSessionId) return;
@@ -5473,12 +5508,12 @@ export default function SpiceApp() {
 
         if (hostTrack && (!localTrack || localTrack.id !== hostTrack.id)) {
           const hydratedQueue = hostQueue.length > 0 ? hostQueue : [hostTrack];
-          void playTrack(enrichTrackSnapshot(hostTrack), hydratedQueue.map(enrichTrackSnapshot));
+          void playTrackRef.current(enrichTrackSnapshotRef.current(hostTrack), hydratedQueue.map(enrichTrackSnapshotRef.current), undefined, true);
           return;
         }
 
         if (!hostTrack && localTrack && localTrack.id !== 'placeholder') {
-          pauseCurrentPlayback();
+          pauseCurrentPlaybackRef.current();
           return;
         }
 
@@ -5486,21 +5521,21 @@ export default function SpiceApp() {
 
         if (hostIsPlaying !== localIsPlaying) {
           if (hostIsPlaying) {
-            resumeCurrentPlayback();
+            resumeCurrentPlaybackRef.current();
           } else {
-            pauseCurrentPlayback();
+            pauseCurrentPlaybackRef.current();
           }
         }
 
         const progressDiff = Math.abs(hostProgress - localProgress);
         if (progressDiff > 3 && hostProgress >= 0) {
-          seekToPosition(hostProgress);
+          seekToPositionRef.current(hostProgress);
         }
       } catch { /* silent */ }
     }, 2500);
 
     return () => window.clearInterval(syncInterval);
-  }, [cloudToken, listenTogetherHostSessionId, playTrack, resumeCurrentPlayback, pauseCurrentPlayback, seekToPosition, enrichTrackSnapshot]);
+  }, [cloudToken, listenTogetherHostSessionId]);
 
   useEffect(() => {
     if (cloudToken) {
@@ -5793,6 +5828,7 @@ export default function SpiceApp() {
   };
 
   const handleReceiverPrev = () => {
+    if (listenTogetherHostSessionId) return;
     if (isControllingRemoteReceiver) {
       if (!canControlSelectedRemoteReceiver('previous')) return;
       patchSelectedRemoteDevice({ isPlaying: true });
@@ -5803,6 +5839,7 @@ export default function SpiceApp() {
   };
 
   const handleReceiverNext = () => {
+    if (listenTogetherHostSessionId) return;
     if (isControllingRemoteReceiver) {
       if (!canControlSelectedRemoteReceiver('next')) return;
       patchSelectedRemoteDevice({ isPlaying: true });
@@ -5813,6 +5850,7 @@ export default function SpiceApp() {
   };
 
   const toggleReceiverPlayPause = () => {
+    if (listenTogetherHostSessionId) return;
     if (isControllingRemoteReceiver) {
       const nextCommand: RemoteCommandType = playerIsPlaying ? 'pause' : 'play';
       if (!canControlSelectedRemoteReceiver(nextCommand)) return;
@@ -5824,6 +5862,7 @@ export default function SpiceApp() {
   };
 
   const seekActiveReceiverTo = (seekTime: number) => {
+    if (listenTogetherHostSessionId) return;
     if (isControllingRemoteReceiver) {
       if (!canControlSelectedRemoteReceiver('seek')) return;
       const safeSeek = Math.max(0, Math.min(seekTime, playerDuration || seekTime));
@@ -5835,6 +5874,7 @@ export default function SpiceApp() {
   };
 
   const handleReceiverSeek = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (listenTogetherHostSessionId) return;
     if (playerDuration <= 0) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
@@ -7541,14 +7581,26 @@ export default function SpiceApp() {
                         <span>Notifications</span>
                         <strong>{notificationCount > 0 ? `${notificationCount} waiting` : 'All caught up'}</strong>
                       </div>
-                      <button
-                        type="button"
-                        className="app-topbar__tray-close"
-                        onClick={() => setNotificationTrayOpen(false)}
-                        aria-label="Close notifications"
-                      >
-                        {Icons.close}
-                      </button>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        {unreadReleaseNotifications.length > 0 && (
+                          <button
+                            type="button"
+                            className="app-topbar__notification-action"
+                            style={{ padding: '4px 10px', fontSize: '0.75rem' }}
+                            onClick={markAllReleaseNotificationsAsRead}
+                          >
+                            Mark all read
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="app-topbar__tray-close"
+                          onClick={() => setNotificationTrayOpen(false)}
+                          aria-label="Close notifications"
+                        >
+                          {Icons.close}
+                        </button>
+                      </div>
                     </div>
 
                     <div className="app-topbar__notification-section">
@@ -8905,18 +8957,6 @@ export default function SpiceApp() {
                       {cloudUsername && (
                         <p style={{ margin: '-2px 0 8px 0', fontSize: '0.95rem', color: 'rgba(255,255,255,0.6)', fontWeight: 500 }}>
                           @{cloudUsername}
-                          {(() => {
-                            const parts = cloudUsername.split('#');
-                            if (parts.length === 2) {
-                              return (
-                                <>
-                                  @{parts[0]}
-                                  <span style={{ opacity: 0.5 }}>#{parts[1]}</span>
-                                </>
-                              );
-                            }
-                            return `@${cloudUsername}`;
-                          })()}
                         </p>
                       )}
                       <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', margin: '0 0 12px 0' }}>{activeProfile.bio}</p>
@@ -10968,43 +11008,66 @@ export default function SpiceApp() {
       {/* ═══ Now Playing Bar Panel ═══ */}
       <footer className="now-playing">
         {/* Left: playback controls */}
-        <div className="now-playing__left-controls">
+        <div className="now-playing__left-controls" style={{ opacity: listenTogetherHostSessionId ? 0.5 : 1 }}>
           <button
             className={`now-playing__btn now-playing__btn--wide-only ${isShuffle ? 'active' : ''}`}
             onClick={() => {
+              if (listenTogetherHostSessionId) return;
               setIsShuffle(!isShuffle);
               localStorage.setItem('spice_is_shuffle', (!isShuffle).toString());
             }}
-            title="Shuffle"
+            disabled={!!listenTogetherHostSessionId}
+            style={{ cursor: listenTogetherHostSessionId ? 'not-allowed' : 'pointer' }}
+            title={listenTogetherHostSessionId ? "Playback controlled by host" : "Shuffle"}
             aria-label="Shuffle"
           >
             {Icons.shuffle}
           </button>
 
-          <button className="now-playing__btn" onClick={handleReceiverPrev} aria-label="Previous">
+          <button
+            className="now-playing__btn"
+            onClick={handleReceiverPrev}
+            disabled={!!listenTogetherHostSessionId}
+            style={{ cursor: listenTogetherHostSessionId ? 'not-allowed' : 'pointer' }}
+            title={listenTogetherHostSessionId ? "Playback controlled by host" : "Previous"}
+            aria-label="Previous"
+          >
             {Icons.prev}
           </button>
 
           <button
             className="now-playing__btn now-playing__btn--play"
             onClick={toggleReceiverPlayPause}
+            disabled={!!listenTogetherHostSessionId}
+            style={{ cursor: listenTogetherHostSessionId ? 'not-allowed' : 'pointer' }}
+            title={listenTogetherHostSessionId ? "Playback controlled by host" : (playerIsPlaying ? 'Pause' : 'Play')}
             aria-label={playerIsPlaying ? 'Pause' : 'Play'}
           >
             {playerIsPlaying ? Icons.pause : Icons.play}
           </button>
 
-          <button className="now-playing__btn" onClick={handleReceiverNext} aria-label="Next">
+          <button
+            className="now-playing__btn"
+            onClick={handleReceiverNext}
+            disabled={!!listenTogetherHostSessionId}
+            style={{ cursor: listenTogetherHostSessionId ? 'not-allowed' : 'pointer' }}
+            title={listenTogetherHostSessionId ? "Playback controlled by host" : "Next"}
+            aria-label="Next"
+          >
             {Icons.next}
           </button>
 
           <button
             className={`now-playing__btn now-playing__btn--wide-only ${repeatMode !== 'none' ? 'active' : ''}`}
             onClick={() => {
+              if (listenTogetherHostSessionId) return;
               const nextMode = repeatMode === 'none' ? 'all' : repeatMode === 'all' ? 'one' : 'none';
               setRepeatMode(nextMode);
               localStorage.setItem('spice_repeat_mode', nextMode);
             }}
-            title={`Repeat Mode: ${repeatMode === 'none' ? 'Off' : repeatMode === 'all' ? 'Repeat All' : 'Repeat One'}`}
+            disabled={!!listenTogetherHostSessionId}
+            style={{ cursor: listenTogetherHostSessionId ? 'not-allowed' : 'pointer' }}
+            title={listenTogetherHostSessionId ? "Playback controlled by host" : `Repeat Mode: ${repeatMode === 'none' ? 'Off' : repeatMode === 'all' ? 'Repeat All' : 'Repeat One'}`}
           >
             {repeatMode === 'one' ? Icons.repeatOne : Icons.repeat}
           </button>
@@ -11053,9 +11116,13 @@ export default function SpiceApp() {
             {Icons.listenTogether}
           </button>
 
-          <div className="now-playing__seek">
+          <div className="now-playing__seek" style={{ opacity: listenTogetherHostSessionId ? 0.7 : 1 }}>
             <span>{formatTime(playerProgress)}</span>
-            <div className="now-playing__seek-track" onClick={handleReceiverSeek}>
+            <div
+              className="now-playing__seek-track"
+              onClick={listenTogetherHostSessionId ? undefined : handleReceiverSeek}
+              style={{ cursor: listenTogetherHostSessionId ? 'not-allowed' : 'pointer' }}
+            >
               <div
                 className="now-playing__progress-fill"
                 style={{ width: `${playerDuration > 0 ? (playerProgress / playerDuration) * 100 : 0}%` }}
@@ -11323,8 +11390,11 @@ export default function SpiceApp() {
                     </div>
 
                     {/* Progress seeker */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                      <div style={{ position: 'relative', height: '8px', width: '100%', background: 'rgba(255,255,255,0.1)', borderRadius: '4px', cursor: 'pointer' }} onClick={handleReceiverSeek}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', opacity: listenTogetherHostSessionId ? 0.7 : 1 }}>
+                      <div
+                        style={{ position: 'relative', height: '8px', width: '100%', background: 'rgba(255,255,255,0.1)', borderRadius: '4px', cursor: listenTogetherHostSessionId ? 'not-allowed' : 'pointer' }}
+                        onClick={listenTogetherHostSessionId ? undefined : handleReceiverSeek}
+                      >
                         <div
                           style={{
                             position: 'absolute',
@@ -11345,29 +11415,34 @@ export default function SpiceApp() {
                     </div>
 
                     {/* Huge transport buttons */}
-                    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '32px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '32px', opacity: listenTogetherHostSessionId ? 0.5 : 1 }}>
                       <button
                         onClick={() => {
+                          if (listenTogetherHostSessionId) return;
                           setIsShuffle(!isShuffle);
                           localStorage.setItem('spice_is_shuffle', (!isShuffle).toString());
                         }}
-                        style={{ background: 'none', border: 'none', color: isShuffle ? 'var(--accent-pink)' : '#fff', opacity: isShuffle ? 1 : 0.4, cursor: 'pointer', outline: 'none', transition: 'all 0.15s ease' }}
+                        disabled={!!listenTogetherHostSessionId}
+                        style={{ background: 'none', border: 'none', color: isShuffle ? 'var(--accent-pink)' : '#fff', opacity: isShuffle ? 1 : 0.4, cursor: listenTogetherHostSessionId ? 'not-allowed' : 'pointer', outline: 'none', transition: 'all 0.15s ease' }}
                         className="expanded-player__btn"
-                        title="Shuffle"
+                        title={listenTogetherHostSessionId ? "Playback controlled by host" : "Shuffle"}
                       >
                         <span style={{ transform: 'scale(1.4)', display: 'inline-block' }}>{Icons.shuffle}</span>
                       </button>
 
                       <button
                         onClick={handleReceiverPrev}
-                        style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', outline: 'none', transition: 'all 0.15s ease' }}
+                        disabled={!!listenTogetherHostSessionId}
+                        style={{ background: 'none', border: 'none', color: '#fff', cursor: listenTogetherHostSessionId ? 'not-allowed' : 'pointer', outline: 'none', transition: 'all 0.15s ease' }}
                         className="expanded-player__btn"
+                        title={listenTogetherHostSessionId ? "Playback controlled by host" : "Previous"}
                       >
                         <span style={{ transform: 'scale(1.5)', display: 'inline-block' }}>{Icons.prev}</span>
                       </button>
 
                       <button
                         onClick={toggleReceiverPlayPause}
+                        disabled={!!listenTogetherHostSessionId}
                         style={{
                           width: '80px',
                           height: '80px',
@@ -11375,15 +11450,17 @@ export default function SpiceApp() {
                           background: 'var(--accent-pink)',
                           border: 'none',
                           color: '#fff',
-                          cursor: 'pointer',
+                          cursor: listenTogetherHostSessionId ? 'not-allowed' : 'pointer',
                           outline: 'none',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
                           boxShadow: '0 8px 24px rgba(var(--accent-pink-rgb, 236, 72, 153), 0.4)',
-                          transition: 'all 0.15s ease'
+                          transition: 'all 0.15s ease',
+                          opacity: listenTogetherHostSessionId ? 0.5 : 1
                         }}
                         className="expanded-player__btn-play"
+                        title={listenTogetherHostSessionId ? "Playback controlled by host" : (playerIsPlaying ? 'Pause' : 'Play')}
                       >
                         <span style={{ transform: 'scale(2.0)', display: 'inline-block' }}>
                           {playerIsPlaying ? Icons.pause : Icons.play}
@@ -11392,21 +11469,25 @@ export default function SpiceApp() {
 
                       <button
                         onClick={handleReceiverNext}
-                        style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', outline: 'none', transition: 'all 0.15s ease' }}
+                        disabled={!!listenTogetherHostSessionId}
+                        style={{ background: 'none', border: 'none', color: '#fff', cursor: listenTogetherHostSessionId ? 'not-allowed' : 'pointer', outline: 'none', transition: 'all 0.15s ease' }}
                         className="expanded-player__btn"
+                        title={listenTogetherHostSessionId ? "Playback controlled by host" : "Next"}
                       >
                         <span style={{ transform: 'scale(1.5)', display: 'inline-block' }}>{Icons.next}</span>
                       </button>
 
                       <button
                         onClick={() => {
+                          if (listenTogetherHostSessionId) return;
                           const nextMode = repeatMode === 'none' ? 'all' : repeatMode === 'all' ? 'one' : 'none';
                           setRepeatMode(nextMode);
                           localStorage.setItem('spice_repeat_mode', nextMode);
                         }}
-                        style={{ background: 'none', border: 'none', color: repeatMode !== 'none' ? 'var(--accent-pink)' : '#fff', opacity: repeatMode !== 'none' ? 1 : 0.4, cursor: 'pointer', outline: 'none', transition: 'all 0.15s ease' }}
+                        disabled={!!listenTogetherHostSessionId}
+                        style={{ background: 'none', border: 'none', color: repeatMode !== 'none' ? 'var(--accent-pink)' : '#fff', opacity: repeatMode !== 'none' ? 1 : 0.4, cursor: listenTogetherHostSessionId ? 'not-allowed' : 'pointer', outline: 'none', transition: 'all 0.15s ease' }}
                         className="expanded-player__btn"
-                        title={`Repeat Mode: ${repeatMode === 'none' ? 'Off' : repeatMode === 'all' ? 'Repeat All' : 'Repeat One'}`}
+                        title={listenTogetherHostSessionId ? "Playback controlled by host" : `Repeat Mode: ${repeatMode === 'none' ? 'Off' : repeatMode === 'all' ? 'Repeat All' : 'Repeat One'}`}
                       >
                         <span style={{ transform: 'scale(1.4)', display: 'inline-block' }}>{repeatMode === 'one' ? Icons.repeatOne : Icons.repeat}</span>
                       </button>
@@ -11672,9 +11753,7 @@ export default function SpiceApp() {
           <div style={{ opacity: 0.3, fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
             <span>Spice Premium Audio Resolution Engine</span>
             <span>•</span>
-            <span>PWA v1.0.84</span>
-            <span>PWA v1.0.83</span>
-            <span>PWA v1.0.79</span>
+            <span>PWA v1.0.87</span>
           </div>
 
         </div>
@@ -11836,15 +11915,17 @@ export default function SpiceApp() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                   <button
                     onClick={handleReceiverPrev}
+                    disabled={!!listenTogetherHostSessionId}
                     style={{
                       background: 'none',
                       border: 'none',
                       color: 'rgba(255,255,255,0.6)',
-                      cursor: 'pointer',
+                      cursor: listenTogetherHostSessionId ? 'not-allowed' : 'pointer',
                       fontSize: '1rem',
                       padding: '4px',
                       outline: 'none',
-                      transition: 'color 0.15s'
+                      transition: 'color 0.15s',
+                      opacity: listenTogetherHostSessionId ? 0.35 : 1
                     }}
                     title="Previous"
                   >
@@ -11853,6 +11934,7 @@ export default function SpiceApp() {
 
                   <button
                     onClick={toggleReceiverPlayPause}
+                    disabled={!!listenTogetherHostSessionId}
                     style={{
                       width: '30px',
                       height: '30px',
@@ -11860,16 +11942,17 @@ export default function SpiceApp() {
                       background: 'var(--accent-pink)',
                       border: 'none',
                       color: '#fff',
-                      cursor: 'pointer',
+                      cursor: listenTogetherHostSessionId ? 'not-allowed' : 'pointer',
                       outline: 'none',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
                       boxShadow: '0 4px 12px rgba(var(--accent-pink-rgb, 236, 72, 153), 0.3)',
-                      transition: 'transform 0.15s ease'
+                      transition: 'transform 0.15s ease',
+                      opacity: listenTogetherHostSessionId ? 0.5 : 1
                     }}
-                    onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.1)'}
-                    onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
+                    onMouseEnter={(e) => !listenTogetherHostSessionId && (e.currentTarget.style.transform = 'scale(1.1)')}
+                    onMouseLeave={(e) => !listenTogetherHostSessionId && (e.currentTarget.style.transform = 'scale(1)')}
                   >
                     <span style={{ display: 'inline-flex' }}>
                       {playerIsPlaying ? Icons.pause : Icons.play}
@@ -11878,15 +11961,17 @@ export default function SpiceApp() {
 
                   <button
                     onClick={handleReceiverNext}
+                    disabled={!!listenTogetherHostSessionId}
                     style={{
                       background: 'none',
                       border: 'none',
                       color: 'rgba(255,255,255,0.6)',
-                      cursor: 'pointer',
+                      cursor: listenTogetherHostSessionId ? 'not-allowed' : 'pointer',
                       fontSize: '1rem',
                       padding: '4px',
                       outline: 'none',
-                      transition: 'color 0.15s'
+                      transition: 'color 0.15s',
+                      opacity: listenTogetherHostSessionId ? 0.35 : 1
                     }}
                     title="Next"
                   >

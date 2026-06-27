@@ -23,6 +23,9 @@ export async function POST(request: NextRequest) {
       return jsonResponse({ error: 'database_not_configured', message: 'DATABASE_URL is not configured.' }, { status: 500 });
     }
 
+    const body = await request.json().catch(() => ({}));
+    const profileId = typeof body.profileId === 'string' ? body.profileId.trim() : 'default';
+
     // Check if the user already has a session
     let existing = await db.query.listenTogetherSessions.findFirst({
       where: eq(listenTogetherSessions.hostUserId, session.userId),
@@ -31,13 +34,16 @@ export async function POST(request: NextRequest) {
     if (!existing) {
       const [newSession] = await db.insert(listenTogetherSessions).values({
         hostUserId: session.userId,
+        hostProfileId: profileId,
       }).returning();
       existing = newSession;
     } else {
-      // Update the updatedAt timestamp to keep it alive
-      await db.update(listenTogetherSessions)
-        .set({ updatedAt: new Date() })
-        .where(eq(listenTogetherSessions.id, existing.id));
+      // Update the updatedAt timestamp and hostProfileId to keep it alive and sync the active profile
+      const [updatedSession] = await db.update(listenTogetherSessions)
+        .set({ hostProfileId: profileId, updatedAt: new Date() })
+        .where(eq(listenTogetherSessions.id, existing.id))
+        .returning();
+      existing = updatedSession;
     }
 
     return jsonResponse({ success: true, session: existing });

@@ -229,6 +229,7 @@ export const listenTogetherSessions = pgTable('listen_together_sessions', {
   hostUserId: uuid('host_user_id')
     .notNull()
     .references(() => users.id, { onDelete: 'cascade' }),
+  hostProfileId: text('host_profile_id').notNull().default('default'),
   currentTrackJson: text('current_track_json'),
   queueJson: text('queue_json').notNull().default('[]'),
   queueIndex: integer('queue_index').notNull().default(0),

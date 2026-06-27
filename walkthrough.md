@@ -1,5 +1,20 @@
 # SPICE Walkthrough
 
+## v1.0.87
+
+- [Spice.Music main] Fixed duplicate Listen Together invites by matching on the host's active profile in the database and deduplicating session invites on the backend.
+- [Spice.Music main] Locked down playback controls for Listen Together listeners, styling buttons as grayed out with a `not-allowed` cursor and disabling manual seek, play/pause, prev, next, shuffle, and repeat actions.
+- [Spice.Music main] Fixed listener inactivity kick bugs by extending the host inactive threshold to 120 seconds and rewriting the listener sync loop to call playback functions via stable Refs to prevent interval restarts.
+- [Spice.Music main] Cleaned up listeners leaving sessions by implementing a DELETE invite endpoint, removing them from the host's invited listeners list.
+- [Spice.Music main] Bump the visible diagnostics version to `PWA v1.0.87`.
+
+## v1.0.86
+
+- [Spice.Music main] Fixed duplicate `@username` rendering in settings profile header by removing the duplicate fallback block under the settings account tab page.
+- [Spice.Music main] Fixed duplicate Listen Together invites by deduplicating session invites and pending invites lists in JavaScript by invite ID.
+- [Spice.Music main] Updated the target user invite lookup to query by `profiles.username` first to find target users when using profile-specific usernames.
+- [Spice.Music main] Bump the visible diagnostics version to `PWA v1.0.86`.
+
 ## v1.0.85
 
 - [Spice.Music main] Moved Spicer username logic from user account level to profile level, allowing independent unique spicer usernames for different local profiles under the same account.

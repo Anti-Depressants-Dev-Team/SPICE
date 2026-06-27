@@ -49,6 +49,7 @@ export async function GET(request: NextRequest) {
           invitedUserId: users.id,
           invitedUsername: users.username,
           invitedDisplayName: profiles.displayName,
+          invitedProfileUsername: profiles.username,
         })
         .from(listenTogetherInvites)
         .innerJoin(users, eq(listenTogetherInvites.invitedUserId, users.id))
@@ -56,7 +57,17 @@ export async function GET(request: NextRequest) {
         .where(eq(listenTogetherInvites.sessionId, sessionId))
         .orderBy(desc(listenTogetherInvites.createdAt));
 
-      return jsonResponse({ invites: sessionInvites });
+      // Deduplicate by inviteId
+      const uniqueSessionInvites = [];
+      const seen = new Set();
+      for (const inv of sessionInvites) {
+        if (!seen.has(inv.inviteId)) {
+          seen.add(inv.inviteId);
+          uniqueSessionInvites.push(inv);
+        }
+      }
+
+      return jsonResponse({ invites: uniqueSessionInvites });
     }
 
     // Get invites where invitedUserId = session.userId and status = 'pending'
@@ -67,13 +78,20 @@ export async function GET(request: NextRequest) {
         status: listenTogetherInvites.status,
         createdAt: listenTogetherInvites.createdAt,
         hostUserId: users.id,
-        hostUsername: users.username,
+        hostUserUsername: users.username,
+        hostProfileUsername: profiles.username,
         hostDisplayName: profiles.displayName,
       })
       .from(listenTogetherInvites)
       .innerJoin(listenTogetherSessions, eq(listenTogetherInvites.sessionId, listenTogetherSessions.id))
       .innerJoin(users, eq(listenTogetherSessions.hostUserId, users.id))
-      .leftJoin(profiles, eq(profiles.userId, users.id))
+      .leftJoin(
+        profiles,
+        and(
+          eq(profiles.userId, users.id),
+          eq(profiles.id, listenTogetherSessions.hostProfileId)
+        )
+      )
       .where(
         and(
           eq(listenTogetherInvites.invitedUserId, session.userId),
@@ -82,7 +100,24 @@ export async function GET(request: NextRequest) {
       )
       .orderBy(desc(listenTogetherInvites.createdAt));
 
-    return jsonResponse({ invites });
+    const deduplicatedInvites = [];
+    const seenPending = new Set();
+    for (const row of invites) {
+      if (!seenPending.has(row.inviteId)) {
+        seenPending.add(row.inviteId);
+        deduplicatedInvites.push({
+          inviteId: row.inviteId,
+          sessionId: row.sessionId,
+          status: row.status,
+          createdAt: row.createdAt,
+          hostUserId: row.hostUserId,
+          hostUsername: row.hostProfileUsername || row.hostUserUsername || 'unknown',
+          hostDisplayName: row.hostDisplayName || row.hostProfileUsername || row.hostUserUsername || 'Spice Listener',
+        });
+      }
+    }
+
+    return jsonResponse({ invites: deduplicatedInvites });
   } catch (error) {
     return jsonResponse({ error: 'fetch_invites_failed', message: error instanceof Error ? error.message : 'Failed to fetch invites.' }, { status: 500 });
   }
@@ -126,10 +161,14 @@ export async function POST(request: NextRequest) {
       return jsonResponse({ error: 'unauthorized_session', message: 'You are not the host of this session.' }, { status: 403 });
     }
 
-    // Find the target user
-    const targetUser = await db.query.users.findFirst({
-      where: eq(users.username, targetUsername),
+    // Find the target user via profiles username first, falling back to users table
+    const targetProfileRecord = await db.query.profiles.findFirst({
+      where: eq(profiles.username, targetUsername),
     });
+
+    const targetUser = targetProfileRecord
+      ? await db.query.users.findFirst({ where: eq(users.id, targetProfileRecord.userId) })
+      : await db.query.users.findFirst({ where: eq(users.username, targetUsername) });
 
     if (!targetUser) {
       return jsonResponse({ error: 'user_not_found', message: `User with username "${targetUsername}" not found.` }, { status: 404 });
@@ -219,5 +258,40 @@ export async function PUT(request: NextRequest) {
     }
   } catch (error) {
     return jsonResponse({ error: 'respond_invite_failed', message: error instanceof Error ? error.message : 'Failed to respond to invite.' }, { status: 500 });
+  }
+}
+
+// Listener leaves session (deletes the invite to remove them from list)
+export async function DELETE(request: NextRequest) {
+  try {
+    const auth = request.headers.get('Authorization');
+    if (!auth?.startsWith('Bearer ')) {
+      return jsonResponse({ error: 'unauthorized', message: 'Missing auth header.' }, { status: 401 });
+    }
+
+    const session = await verifySession(auth.substring(7));
+    if (!process.env.DATABASE_URL) {
+      return jsonResponse({ error: 'database_not_configured', message: 'DATABASE_URL is not configured.' }, { status: 500 });
+    }
+
+    const { searchParams } = new URL(request.url);
+    const sessionId = searchParams.get('sessionId');
+
+    if (!sessionId) {
+      return jsonResponse({ error: 'invalid_request', message: 'Session ID is required.' }, { status: 400 });
+    }
+
+    // Delete the invite where sessionId = sessionId and invitedUserId = session.userId
+    await db.delete(listenTogetherInvites)
+      .where(
+        and(
+          eq(listenTogetherInvites.sessionId, sessionId),
+          eq(listenTogetherInvites.invitedUserId, session.userId)
+        )
+      );
+
+    return jsonResponse({ success: true, message: 'Left session successfully.' });
+  } catch (error) {
+    return jsonResponse({ error: 'leave_session_failed', message: error instanceof Error ? error.message : 'Failed to leave session.' }, { status: 500 });
   }
 }
