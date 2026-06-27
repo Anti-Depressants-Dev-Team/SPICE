@@ -1713,6 +1713,9 @@ export default function SpiceApp() {
   const [searchResultsSource, setSearchResultsSource] = useState<'network' | 'cache' | null>(null);
   const [isSearching, setIsSearching] = useState(false);
   const [topbarSearchTrayOpen, setTopbarSearchTrayOpen] = useState(false);
+  const [quickSearchTab, setQuickSearchTab] = useState<'tracks' | 'users'>('tracks');
+  const [topbarUserSearchResults, setTopbarUserSearchResults] = useState<any[]>([]);
+  const [isSearchingTopbarUsers, setIsSearchingTopbarUsers] = useState(false);
   const [recentSearchEntries, setRecentSearchEntries] = useState<ReturnType<typeof getRecentCachedSearches>>([]);
   const [error, setError] = useState<string>();
 
@@ -3035,7 +3038,7 @@ export default function SpiceApp() {
             // Explicitly preserve credentials in case they are missing from serverProf
             cloudToken: mergedProfiles[existingIdx].cloudToken ?? null,
             cloudUser: mergedProfiles[existingIdx].cloudUser ?? null,
-            cloudUsername: mergedProfiles[existingIdx].cloudUsername ?? null,
+            cloudUsername: serverProf.username !== undefined ? serverProf.username : (mergedProfiles[existingIdx].cloudUsername ?? null),
           };
         } else {
           mergedProfiles.push({
@@ -3051,6 +3054,9 @@ export default function SpiceApp() {
             likedTrackDetails: {},
             customPlaylists: [],
             history: [],
+            cloudToken: token,
+            cloudUser: activeSessionUser,
+            cloudUsername: serverProf.username || null,
           });
         }
       });
@@ -4445,7 +4451,9 @@ export default function SpiceApp() {
     if (!query.trim()) {
       setSearchResults([]);
       setSearchResultsSource(null);
+      setTopbarUserSearchResults([]);
       setIsSearching(false);
+      setIsSearchingTopbarUsers(false);
       return;
     }
 
@@ -4457,14 +4465,32 @@ export default function SpiceApp() {
     }
 
     setIsSearching(true);
+    setIsSearchingTopbarUsers(true);
     searchTimeoutRef.current = setTimeout(async () => {
       try {
-        const tracks = await fetchSearchProviderResults(query, provider);
+        const [tracksRes, usersRes] = await Promise.allSettled([
+          fetchSearchProviderResults(query, provider),
+          fetch(`/api/users/search?q=${encodeURIComponent(query.trim())}`, {
+            headers: cloudToken ? { Authorization: `Bearer ${cloudToken}` } : {},
+          }).then((res) => (res.ok ? res.json() : { users: [] }))
+        ]);
+
         if (requestId !== searchRequestRef.current) return;
-        rememberSearchResults(query, tracks, provider);
+
+        if (tracksRes.status === 'fulfilled') {
+          const tracks = tracksRes.value;
+          rememberSearchResults(query, tracks, provider);
+          setSearchResults(tracks);
+          setSearchResultsSource('network');
+        } else {
+          throw tracksRes.reason;
+        }
+
+        if (usersRes.status === 'fulfilled') {
+          setTopbarUserSearchResults(usersRes.value.users || []);
+        }
+
         setRecentSearchEntries(getRecentCachedSearches());
-        setSearchResults(tracks);
-        setSearchResultsSource('network');
         setError(undefined);
       } catch (err: any) {
         console.error(err);
@@ -4474,6 +4500,7 @@ export default function SpiceApp() {
       } finally {
         if (requestId === searchRequestRef.current) {
           setIsSearching(false);
+          setIsSearchingTopbarUsers(false);
         }
       }
     }, 400);
@@ -6009,12 +6036,18 @@ export default function SpiceApp() {
           type="button"
           className="spice-connect-receiver__button"
           onClick={() => {
-            if (receiverSelectDisabled) return;
+            if (receiverSelectDisabled) {
+              if (!cloudToken) {
+                showSpiceNotice('Please sign in to choose other playback devices.', 'warning');
+              } else {
+                showSpiceNotice('Please enable Spice Connect in Account settings to choose other playback devices.', 'warning');
+              }
+              return;
+            }
             refreshSpiceConnectReceiverList();
             setReceiverMenuOpen((openVariant) => (openVariant === variant ? null : variant));
           }}
-          onFocus={refreshSpiceConnectReceiverList}
-          disabled={receiverSelectDisabled}
+          onFocus={receiverSelectDisabled ? undefined : refreshSpiceConnectReceiverList}
           aria-haspopup="listbox"
           aria-expanded={isMenuOpen}
           aria-controls={menuId}
@@ -6133,8 +6166,8 @@ const getMaskedEmail = (email: string) => {
     setActiveProfileId(profileId);
     localStorage.setItem('spice_active_profile_id', profileId);
 
-    const nextToken = target.cloudToken || null;
-    const nextUser = target.cloudUser || null;
+    const nextToken = target.cloudToken || (typeof window !== 'undefined' ? localStorage.getItem('spice_cloud_token') : null) || null;
+    const nextUser = target.cloudUser || (typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('spice_cloud_user') || 'null') : null) || null;
     const nextUsername = target.cloudUsername || null;
     setCloudToken(nextToken);
     setCloudUser(nextUser);
@@ -6889,7 +6922,7 @@ const getMaskedEmail = (email: string) => {
   const topbarTrayResults = searchResults.slice(0, 6);
   const shouldShowTopbarSearchTray =
     topbarSearchTrayOpen
-    && (Boolean(topbarSearchQuery.trim()) || topbarRecentSuggestions.length > 0 || topbarTrayResults.length > 0 || isSearching);
+    && (Boolean(topbarSearchQuery.trim()) || topbarRecentSuggestions.length > 0 || topbarTrayResults.length > 0 || topbarUserSearchResults.length > 0 || isSearching || isSearchingTopbarUsers);
   const unreadReleaseNotifications = releaseNotifications.filter((notification) => !readReleaseNotificationIds.includes(notification.id));
   const notificationCount = unreadReleaseNotifications.length + pendingInvites.length + pendingListenInvites.length;
   const notificationCountLabel = notificationCount > 99 ? '99+' : String(notificationCount);
@@ -7198,6 +7231,29 @@ const getMaskedEmail = (email: string) => {
                   onClick={handleLeaveListenTogetherSession}
                 >
                   Leave Session
+                </button>
+              </div>
+            ) : !cloudToken ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', alignItems: 'center', textAlign: 'center', padding: '10px 0' }}>
+                <div style={{ width: '56px', height: '56px', borderRadius: '50%', background: 'rgba(236,72,153,0.1)', border: '1px solid var(--accent-pink)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--accent-pink)', fontSize: '1.8rem' }}>
+                  🔑
+                </div>
+                <div>
+                  <h3 style={{ margin: '0 0 6px 0', fontSize: '1.15rem' }}>Cloud Account Required</h3>
+                  <p style={{ margin: 0, fontSize: '0.86rem', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
+                    You need to be signed in to a cloud account to host or join shared Listen Together sessions.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn--primary"
+                  style={{ width: '100%', marginTop: '10px', background: 'linear-gradient(135deg, var(--accent-pink), #ec4899)', border: 'none' }}
+                  onClick={() => {
+                    setListenTogetherDialogOpen(false);
+                    setCurrentPage('account');
+                  }}
+                >
+                  Go to Account Sign In
                 </button>
               </div>
             ) : (
@@ -7543,7 +7599,48 @@ const getMaskedEmail = (email: string) => {
                     </button>
                   </div>
 
-                  {topbarRecentSuggestions.length > 0 && (
+                  {topbarSearchQuery.trim() && (
+                    <div style={{ display: 'flex', gap: '8px', marginBottom: '14px', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '10px' }}>
+                      <button
+                        type="button"
+                        onClick={() => setQuickSearchTab('tracks')}
+                        style={{
+                          background: quickSearchTab === 'tracks' ? 'rgba(236, 72, 153, 0.15)' : 'none',
+                          border: quickSearchTab === 'tracks' ? '1px solid rgba(236, 72, 153, 0.3)' : '1px solid transparent',
+                          borderRadius: '8px',
+                          color: quickSearchTab === 'tracks' ? 'var(--accent-pink)' : 'var(--text-secondary)',
+                          fontSize: '0.78rem',
+                          fontWeight: 700,
+                          padding: '6px 14px',
+                          cursor: 'pointer',
+                          transition: 'all 0.2s',
+                          outline: 'none'
+                        }}
+                      >
+                        🎵 Songs
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setQuickSearchTab('users')}
+                        style={{
+                          background: quickSearchTab === 'users' ? 'rgba(236, 72, 153, 0.15)' : 'none',
+                          border: quickSearchTab === 'users' ? '1px solid rgba(236, 72, 153, 0.3)' : '1px solid transparent',
+                          borderRadius: '8px',
+                          color: quickSearchTab === 'users' ? 'var(--accent-pink)' : 'var(--text-secondary)',
+                          fontSize: '0.78rem',
+                          fontWeight: 700,
+                          padding: '6px 14px',
+                          cursor: 'pointer',
+                          transition: 'all 0.2s',
+                          outline: 'none'
+                        }}
+                      >
+                        👥 Listeners
+                      </button>
+                    </div>
+                  )}
+
+                  {topbarRecentSuggestions.length > 0 && !topbarSearchQuery.trim() && (
                     <div className="app-topbar__recent-searches">
                       <span style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
                         <span>Previous queries</span>
@@ -7642,46 +7739,105 @@ const getMaskedEmail = (email: string) => {
                   )}
 
                   <div className="app-topbar__tray-results">
-                    <div className="app-topbar__tray-section-title">
-                      <span>{isSearching ? 'Searching...' : topbarTrayResults.length > 0 ? 'Songs' : 'No songs yet'}</span>
-                      {searchResultsSource === 'cache' && <small>saved locally</small>}
-                    </div>
+                    {/* Songs Tab Results */}
+                    {(!topbarSearchQuery.trim() || quickSearchTab === 'tracks') && (
+                      <>
+                        <div className="app-topbar__tray-section-title">
+                          <span>{isSearching ? 'Searching...' : topbarTrayResults.length > 0 ? 'Songs' : 'No songs yet'}</span>
+                          {searchResultsSource === 'cache' && <small>saved locally</small>}
+                        </div>
 
-                    {topbarTrayResults.length > 0 ? (
-                      <div className="app-topbar__result-list">
-                        {topbarTrayResults.map((song) => (
-                          <div
-                            key={`${song.sourceId || 'music'}:${song.id}`}
-                            className="app-topbar__result-item"
-                          >
-                            <button
-                              type="button"
-                              className="app-topbar__result-main"
-                              onMouseDown={(event) => event.preventDefault()}
-                              onClick={() => {
-                                startTrackOnActiveReceiver(song, searchResults);
-                                setTopbarSearchTrayOpen(false);
-                              }}
-                            >
-                              <img src={song.artworkUrl || '/icon.svg'} alt="" />
-                              <span>
-                                <strong>{song.title}</strong>
-                                <small>
-                                  {song.artists.map((artist) => artist.name).join(', ')}
-                                  <em>{trackSourceLabel(song)}</em>
-                                </small>
-                              </span>
-                            </button>
-                            {renderSongShareButton(song, 'app-topbar__result-share')}
+                        {topbarTrayResults.length > 0 ? (
+                          <div className="app-topbar__result-list">
+                            {topbarTrayResults.map((song) => (
+                              <div
+                                key={`${song.sourceId || 'music'}:${song.id}`}
+                                className="app-topbar__result-item"
+                              >
+                                <button
+                                  type="button"
+                                  className="app-topbar__result-main"
+                                  onMouseDown={(event) => event.preventDefault()}
+                                  onClick={() => {
+                                    startTrackOnActiveReceiver(song, searchResults);
+                                    setTopbarSearchTrayOpen(false);
+                                  }}
+                                >
+                                  <img src={song.artworkUrl || '/icon.svg'} alt="" />
+                                  <span>
+                                    <strong>{song.title}</strong>
+                                    <small>
+                                      {song.artists.map((artist) => artist.name).join(', ')}
+                                      <em>{trackSourceLabel(song)}</em>
+                                    </small>
+                                  </span>
+                                </button>
+                                {renderSongShareButton(song, 'app-topbar__result-share')}
+                              </div>
+                            ))}
                           </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="app-topbar__tray-empty">
-                        {topbarSearchQuery.trim()
-                          ? 'Submit the search to fill this tray with playable songs.'
-                          : 'Pick a previous query or type a new search.'}
-                      </p>
+                        ) : (
+                          <p className="app-topbar__tray-empty">
+                            {topbarSearchQuery.trim()
+                              ? 'No songs found matching this query.'
+                              : 'Pick a previous query or type a new search.'}
+                          </p>
+                        )}
+                      </>
+                    )}
+
+                    {/* Users Tab Results */}
+                    {topbarSearchQuery.trim() && quickSearchTab === 'users' && (
+                      <>
+                        <div className="app-topbar__tray-section-title">
+                          <span>{isSearchingTopbarUsers ? 'Searching...' : topbarUserSearchResults.length > 0 ? 'Listeners' : 'No listeners yet'}</span>
+                        </div>
+
+                        {topbarUserSearchResults.length > 0 ? (
+                          <div className="app-topbar__result-list">
+                            {topbarUserSearchResults.slice(0, 8).map((user) => {
+                              const hasAvatar = !!user.avatarUrl;
+                              const isSelf = user.id === cloudUser?.id;
+                              return (
+                                <div
+                                  key={user.id}
+                                  className="app-topbar__result-item"
+                                >
+                                  <button
+                                    type="button"
+                                    className="app-topbar__result-main"
+                                    onMouseDown={(event) => event.preventDefault()}
+                                    onClick={() => {
+                                      handleSelectUser(user);
+                                      setTopbarSearchTrayOpen(false);
+                                    }}
+                                  >
+                                    {hasAvatar ? (
+                                      <img src={user.avatarUrl} alt="" style={{ borderRadius: '50%' }} />
+                                    ) : (
+                                      <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: user.gradient || 'var(--accent-gradient)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, color: '#fff', fontSize: '0.85rem', flexShrink: 0 }}>
+                                        {user.displayName.charAt(0).toUpperCase()}
+                                      </div>
+                                    )}
+                                    <span>
+                                      <strong>
+                                        {user.displayName} {isSelf && <span style={{ fontSize: '0.68rem', background: 'rgba(236, 72, 153, 0.12)', padding: '1px 4px', borderRadius: '3px', marginLeft: '4px', color: 'var(--accent-pink)' }}>You</span>}
+                                      </strong>
+                                      <small>
+                                        @{user.username}
+                                      </small>
+                                    </span>
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <p className="app-topbar__tray-empty">
+                            {isSearchingTopbarUsers ? 'Finding users...' : 'No users found matching this query.'}
+                          </p>
+                        )}
+                      </>
                     )}
                   </div>
                 </div>
@@ -11284,9 +11440,8 @@ const getMaskedEmail = (email: string) => {
 
           <button
             onClick={() => setListenTogetherDialogOpen(true)}
-            disabled={!cloudToken}
             className="now-playing__btn"
-            title={!cloudToken ? "Sign in to use Listen Together" : "Listen Together"}
+            title="Listen Together"
             aria-label="Listen Together"
             style={listenTogetherSession || listenTogetherHostSessionId ? { color: 'var(--accent-pink)', borderColor: 'var(--accent-pink)', background: 'rgba(236,72,153,0.1)' } : {}}
           >
@@ -11697,8 +11852,7 @@ const getMaskedEmail = (email: string) => {
                         <button
                           className="expanded-player__round-action"
                           onClick={() => setListenTogetherDialogOpen(true)}
-                          disabled={!cloudToken}
-                          title={!cloudToken ? "Sign in to use Listen Together" : "Listen Together"}
+                          title="Listen Together"
                           aria-label="Listen Together"
                           style={listenTogetherSession || listenTogetherHostSessionId ? { color: 'var(--accent-pink)', borderColor: 'var(--accent-pink)', background: 'rgba(236,72,153,0.1)' } : {}}
                         >
@@ -12174,9 +12328,8 @@ const getMaskedEmail = (email: string) => {
 
               <button
                 onClick={() => setListenTogetherDialogOpen(true)}
-                disabled={!cloudToken}
                 className="mini-player__action-btn"
-                title={!cloudToken ? "Sign in to use Listen Together" : "Listen Together"}
+                title="Listen Together"
                 aria-label="Listen Together"
                 style={{
                   width: '26px',

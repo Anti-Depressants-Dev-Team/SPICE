@@ -4372,3 +4372,10 @@ h4 { font-size: 1rem; }
   line-height: 1.5;
   font-size: 0.95rem;
 }
+
+/* Spice Connect Receiver Bar Custom Styling */
+.spice-connect-receiver--bar {
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}

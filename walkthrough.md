@@ -1,5 +1,14 @@
 # SPICE Walkthrough
 
+## v1.0.89
+
+- [Spice.Music main] Fixed the profile username merging and sync issue, ensuring unique usernames are preserved correctly when profile syncs run.
+- [Spice.Music main] Enabled credential sharing and fallback on profile switching to ensure local profiles stay logged in.
+- [Spice.Music main] Made the bottom player bar "Listen Together" and "Device Selector" buttons interactive when logged out, displaying a friendly prompt or notice instead of being disabled.
+- [Spice.Music main] Added user/listener search to the topbar quick search tray, complete with a beautiful tab switcher (Songs / Listeners).
+- [Spice.Music main] Cleaned up the device button container by removing the duplicate borders and backgrounds in the player bar.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.89`.
+
 ## v1.0.88
 
 - [Spice.Music main] Masked cloud account email in Settings panel with a toggleable show/hide eye icon to safeguard privacy.
