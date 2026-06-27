@@ -8357,7 +8357,7 @@ const getMaskedEmail = (email: string) => {
               {currentPage === 'home' && (
                 <>
                   {/* cover greetings header */}
-                  <section style={{ marginBottom: '32px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: activeProfile.gradient, border: '1px solid var(--border-color)', padding: '28px', borderRadius: '16px', backdropFilter: 'blur(10px)' }} className="home-greeting animate-in">
+                  <section style={{ marginBottom: '32px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255, 255, 255, 0.02)', border: '1px solid var(--border-color)', padding: '28px', borderRadius: '16px', backdropFilter: 'blur(10px)' }} className="home-greeting animate-in">
                     <div className="home-greeting__copy">
                       <h1 style={{
                         fontFamily: 'Outfit, sans-serif',
@@ -8365,6 +8365,10 @@ const getMaskedEmail = (email: string) => {
                         fontWeight: 800,
                         margin: '0 0 6px 0',
                         display: 'inline-block',
+                        background: 'var(--accent-gradient)',
+                        WebkitBackgroundClip: 'text',
+                        WebkitTextFillColor: 'transparent',
+                        backgroundClip: 'text',
                         color: '#fff'
                       }}>
                         Welcome back, {activeProfile.displayName}!
