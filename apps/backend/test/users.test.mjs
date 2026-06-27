@@ -176,20 +176,13 @@ test('User Profile, Privacy, Likes, and Search - Integration Tests', { skip: !ha
     const user1Email = `test-user1-${timestamp}@example.com`;
     const user2Email = `test-user2-${timestamp}@example.com`;
 
-    // 1. Simulate auto-generation on signup for User 1 using 'spice_listener' base
-    const baseName = 'spice_listener';
-    const digits1 = Math.floor(10000000 + Math.random() * 90000000).toString();
-    const username1 = `${baseName}#${digits1}`;
+    // 1. Simulate legacy username on signup for User 1 using legacy 'spice_listener#timestamp' format
+    const legacyUsername = `spice_listener#${timestamp}`;
 
     const [user1] = await db.insert(users).values({
       email: user1Email,
-      username: username1,
+      username: legacyUsername,
     }).returning();
-
-    // Verify format
-    assert.ok(username1.startsWith(baseName));
-    assert.ok(username1.includes('#'));
-    assert.equal(username1.split('#')[1].length, 8);
 
     // 2. Simulate older account (User 2) with NO username set (username is null)
     const [user2] = await db.insert(users).values({
@@ -208,35 +201,39 @@ test('User Profile, Privacy, Likes, and Search - Integration Tests', { skip: !ha
     });
 
     try {
-      // 3. Trigger backfill via getAccountSnapshotForUserId helper
       const accountsLib = await import('../lib/accounts.ts');
+
+      // 3. Trigger backfill / migration via getAccountSnapshotForUserId helper for User 1 (migrates legacy tag)
+      await accountsLib.getAccountSnapshotForUserId(user1.id);
+      
+      const checkUser1 = await db.query.users.findFirst({
+        where: eq(users.id, user1.id),
+      });
+      assert.ok(checkUser1);
+      assert.ok(checkUser1.username);
+      assert.ok(!checkUser1.username.includes('#'));
+      assert.equal(checkUser1.username, `spice_listener_${timestamp}`.toLowerCase().substring(0, 20));
+
+      // 4. Trigger backfill / migration via getAccountSnapshotForUserId helper for User 2 (generates clean display-name handle)
       await accountsLib.getAccountSnapshotForUserId(user2.id);
 
-      // Query the database directly to verify backfilled username
       const checkUser2 = await db.query.users.findFirst({
         where: eq(users.id, user2.id),
       });
 
       assert.ok(checkUser2);
       assert.ok(checkUser2.username);
-      assert.ok(checkUser2.username.includes('#'));
+      assert.ok(!checkUser2.username.includes('#'));
+      assert.equal(checkUser2.username, 'callmeryan_space_name'.substring(0, 15));
 
-      // The base username should be derived from the profile display name with spaces replaced by underscores
-      const [backfilledBase, backfilledTag] = checkUser2.username.split('#');
-      assert.equal(backfilledBase, 'callmeryan_space_name'.substring(0, 12));
-      assert.equal(backfilledTag.length, 8);
+      // 5. Update User 1 username to "newname"
+      const newUsername = 'newname';
+      await db.update(users).set({ username: newUsername }).where(eq(users.id, user1.id));
 
-      // 4. Simulate updating User 1 username to "newname"
-      const newBase = 'newname';
-      const digits3 = Math.floor(10000000 + Math.random() * 90000000).toString();
-      const updatedUsername = `${newBase}#${digits3}`;
-
-      await db.update(users).set({ username: updatedUsername }).where(eq(users.id, user1.id));
-
-      const checkUser1 = await db.query.users.findFirst({
+      const checkUser1Final = await db.query.users.findFirst({
         where: eq(users.id, user1.id),
       });
-      assert.equal(checkUser1.username, updatedUsername);
+      assert.equal(checkUser1Final.username, newUsername);
     } finally {
       await db.delete(profiles).where(eq(profiles.userId, user2.id));
       await db.delete(users).where(eq(users.id, user1.id));

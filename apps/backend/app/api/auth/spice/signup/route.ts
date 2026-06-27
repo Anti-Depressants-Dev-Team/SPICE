@@ -14,12 +14,12 @@ export function OPTIONS() {
 
 export async function POST(request: Request) {
   try {
-    const { email, password } = await request.json();
-    if (!email || !password) {
+    const { email, password, username } = await request.json().catch(() => ({}));
+    if (!email || !password || !username) {
       return jsonResponse(
         {
           error: 'invalid_inputs',
-          message: 'Both email and password are required to sign up.',
+          message: 'Email, password, and username are all required to sign up.',
         },
         { status: 400 }
       );
@@ -32,6 +32,18 @@ export async function POST(request: Request) {
         {
           error: 'weak_password',
           message: 'Password must be at least 8 characters long, and include at least one uppercase letter, one lowercase letter, one number, and one special character.',
+        },
+        { status: 400 }
+      );
+    }
+
+    const usernamePattern = /^[a-zA-Z0-9_]{3,20}$/;
+    const cleanUsername = username.trim().toLowerCase();
+    if (!usernamePattern.test(cleanUsername)) {
+      return jsonResponse(
+        {
+          error: 'invalid_username',
+          message: 'Username must be 3–20 characters, containing only letters, numbers, and underscores.',
         },
         { status: 400 }
       );
@@ -64,21 +76,19 @@ export async function POST(request: Request) {
       );
     }
 
-    // Generate a default unique username with an 8-digit suffix
-    const baseName = 'spice_listener';
-    let defaultUsername = '';
-    let isUnique = false;
-    let attempts = 0;
-    while (!isUnique && attempts < 10) {
-      const digits = Math.floor(10000000 + Math.random() * 90000000).toString();
-      defaultUsername = `${baseName}#${digits}`;
-      const existing = await db.query.users.findFirst({
-        where: eq(users.username, defaultUsername),
-      });
-      if (!existing) {
-        isUnique = true;
-      }
-      attempts++;
+    // Check if username already exists
+    const existingUsername = await db.query.users.findFirst({
+      where: eq(users.username, cleanUsername),
+    });
+
+    if (existingUsername) {
+      return jsonResponse(
+        {
+          error: 'username_taken',
+          message: 'This username is already taken.',
+        },
+        { status: 409 }
+      );
     }
 
     const passwordHash = hashPassword(password);
@@ -87,7 +97,7 @@ export async function POST(request: Request) {
       email: normEmail,
       passwordHash,
       accountRole,
-      username: defaultUsername,
+      username: cleanUsername,
     }).returning();
 
     const account = serializeAccount(newUser);

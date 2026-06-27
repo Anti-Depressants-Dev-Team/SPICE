@@ -1,5 +1,15 @@
 # SPICE Walkthrough
 
+## v1.0.83
+
+- [Spice.Music main] Removed username tag-suffixes (e.g. `#12345678`) and random numbers, transitioning Spicer usernames to clean globally unique handles.
+- [Spice.Music main] Required users to choose a unique Spicer username during new account signup.
+- [Spice.Music main] Integrated Spicer username updates directly into the Edit Profile settings card with backend uniqueness validation.
+- [Spice.Music main] Added automatic backward-compatible migration of legacy tag usernames to display-name-based handles (e.g. replacing `#` with `_` or appending incremental `_index` suffixes on name collisions) upon account load/synchronization.
+- [Spice.Music main] Updated UI header and profile views to directly render clean handles without splits, and changed Spicer invite placeholder to `e.g. @sound_lover`.
+- [Spice.Music main] Updated integration test cases for suffix-free handles and legacy tag migrations.
+- [Spice.Music main] Bump the visible diagnostics version to `PWA v1.0.83`.
+
 ## v1.0.82
 
 - [Spice.Music main] Fixed stream downloads failing on main (production Vercel deployments) by bypassing the 2MB streaming chunking logic when `download=true` is requested in the YouTube and SoundCloud stream proxy endpoints.

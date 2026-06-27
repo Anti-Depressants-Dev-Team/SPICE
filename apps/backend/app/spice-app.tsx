@@ -1539,6 +1539,9 @@ export default function SpiceApp() {
     return null;
   });
 
+  const [editUsername, setEditUsername] = useState(cloudUsername || '');
+  const [usernameError, setUsernameError] = useState<string | null>(null);
+
 
   const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([]);
   const [pendingInvitesLoading, setPendingInvitesLoading] = useState(false);
@@ -1670,6 +1673,7 @@ export default function SpiceApp() {
 
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
+  const [authUsername, setAuthUsername] = useState('');
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [authError, setAuthError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
@@ -3141,10 +3145,15 @@ export default function SpiceApp() {
 
     const url = authMode === 'login' ? '/api/auth/spice/signin' : '/api/auth/spice/signup';
     try {
+      const payload: any = { email: authEmail, password: authPassword };
+      if (authMode === 'register') {
+        payload.username = authUsername;
+      }
+
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: authEmail, password: authPassword })
+        body: JSON.stringify(payload)
       });
 
       const data = await res.json();
@@ -3175,6 +3184,7 @@ export default function SpiceApp() {
       });
       setAuthEmail('');
       setAuthPassword('');
+      setAuthUsername('');
       logDebug('auth', `User "${data.user.email}" authenticated successfully via ${authMode}. Token generated.`);
 
       // Auto sync after login
@@ -6190,7 +6200,7 @@ export default function SpiceApp() {
     showSpiceNotice('Passcode protection removed successfully.', 'success');
   };
 
-  const saveProfile = (e: React.FormEvent) => {
+  const saveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
 
     // Passcode validation
@@ -6198,6 +6208,39 @@ export default function SpiceApp() {
     if (passcodeVal && passcodeVal.length !== 4) {
       showSpiceNotice('Passcode must be exactly 4 digits.', 'warning');
       return;
+    }
+
+    // Spicer Username validation (if changed and logged in)
+    if (cloudToken) {
+      const cleanUsername = editUsername.trim().toLowerCase();
+      if (!cleanUsername) {
+        setUsernameError('Username cannot be empty.');
+        return;
+      }
+      if (cleanUsername !== (cloudUsername || '')) {
+        try {
+          const res = await fetch('/api/account/username', {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${cloudToken}`,
+            },
+            body: JSON.stringify({ username: cleanUsername }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            setUsernameError(data.message || 'Failed to update username.');
+            return;
+          }
+          setCloudUsername(cleanUsername);
+          cloudUsernameRef.current = cleanUsername;
+          updateProfileData(activeProfileId, { cloudUsername: cleanUsername });
+          showSpiceNotice('Spicer Username updated successfully!', 'success');
+        } catch (err: any) {
+          setUsernameError(err.message || 'Failed to update username.');
+          return;
+        }
+      }
     }
 
     const sanitizedUrl = sanitizePfpUrl(editAvatarUrl);
@@ -7823,7 +7866,7 @@ export default function SpiceApp() {
                           <div style={{ display: 'flex', gap: '8px' }}>
                             <input
                               type="text"
-                              placeholder="e.g. @username#000000"
+                              placeholder="e.g. @sound_lover"
                               value={inviteUsername}
                               onChange={(e) => setInviteUsername(e.target.value)}
                               style={{ flex: 1, background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border-color)', borderRadius: '6px', padding: '6px 12px', fontSize: '0.85rem', color: '#fff' }}
@@ -8013,18 +8056,7 @@ export default function SpiceApp() {
                           {selectedUserProfileData.profile.displayName}
                         </h1>
                         <p style={{ margin: '4px 0 12px 0', fontSize: '1rem', color: 'rgba(255,255,255,0.7)', fontWeight: 500 }}>
-                          {(() => {
-                            const parts = selectedUserProfileData.profile.username.split('#');
-                            if (parts.length === 2) {
-                              return (
-                                <>
-                                  @{parts[0]}
-                                  <span style={{ opacity: 0.5 }}>#{parts[1]}</span>
-                                </>
-                              );
-                            }
-                            return `@${selectedUserProfileData.profile.username}`;
-                          })()}
+                          @{selectedUserProfileData.profile.username}
                         </p>
                         {!selectedUserProfileData.profile.isPrivate && (
                           <p style={{ margin: '0 0 16px 0', fontSize: '1rem', color: '#e4e4e7', maxWidth: '500px', lineHeight: '1.4' }}>
@@ -8857,6 +8889,7 @@ export default function SpiceApp() {
                       </h2>
                       {cloudUsername && (
                         <p style={{ margin: '-2px 0 8px 0', fontSize: '0.95rem', color: 'rgba(255,255,255,0.6)', fontWeight: 500 }}>
+                          @{cloudUsername}
                           {(() => {
                             const parts = cloudUsername.split('#');
                             if (parts.length === 2) {
@@ -9105,6 +9138,16 @@ export default function SpiceApp() {
                             style={{ gridColumn: 'span 2', padding: '10px 14px', background: '#0a0a0a', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', outline: 'none', fontSize: '0.85rem' }}
                             required
                           />
+                          {authMode === 'register' && (
+                            <input
+                              type="text"
+                              placeholder="Spicer Username (3-20 chars, letters/numbers/underscores)"
+                              value={authUsername}
+                              onChange={(e) => setAuthUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))}
+                              style={{ gridColumn: 'span 2', padding: '10px 14px', background: '#0a0a0a', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', outline: 'none', fontSize: '0.85rem' }}
+                              required
+                            />
+                          )}
                           <input
                             type="password"
                             placeholder="Password (min 6 chars)"
@@ -9227,6 +9270,28 @@ export default function SpiceApp() {
                           required
                         />
                       </div>
+
+                      {cloudToken && (
+                        <div style={{ marginBottom: '16px' }}>
+                          <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>Spicer Username</label>
+                          <input
+                            type="text"
+                            value={editUsername}
+                            onChange={(e) => {
+                              setEditUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''));
+                              setUsernameError(null);
+                            }}
+                            placeholder="e.g. sound_lover"
+                            style={{ width: '100%', padding: '10px 14px', background: '#0a0a0a', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', outline: 'none' }}
+                            required
+                          />
+                          {usernameError && (
+                            <div style={{ color: '#f87171', fontSize: '0.75rem', marginTop: '6px' }}>
+                              {usernameError}
+                            </div>
+                          )}
+                        </div>
+                      )}
 
                       <div style={{ marginBottom: '16px' }}>
                         <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>Passcode Protection (4 digits - optional)</label>
@@ -9393,6 +9458,8 @@ export default function SpiceApp() {
                         setEditGradient(activeProfile.gradient);
                         setEditPasscode(activeProfile.passcode || '');
                         setEditAvatarUrl(activeProfile.avatarUrl || '');
+                        setEditUsername(cloudUsername || '');
+                        setUsernameError(null);
                         setIsEditingProfile(true);
                       }}>
                         Edit Profile Details
@@ -11590,6 +11657,7 @@ export default function SpiceApp() {
           <div style={{ opacity: 0.3, fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
             <span>Spice Premium Audio Resolution Engine</span>
             <span>•</span>
+            <span>PWA v1.0.83</span>
             <span>PWA v1.0.79</span>
           </div>
 

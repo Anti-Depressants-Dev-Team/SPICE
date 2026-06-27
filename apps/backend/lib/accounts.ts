@@ -30,24 +30,43 @@ export async function getAccountSnapshotForUserId(userId: string): Promise<Accou
     return null;
   }
 
-  if (!user.username || !user.username.includes('#')) {
+  if (!user.username || user.username.includes('#')) {
     const profile = await db.query.profiles.findFirst({
       where: eq(profiles.userId, userId),
     });
-    const baseName = profile?.displayName || 'Spice Listener';
-    const sanitizedBase = baseName.trim().replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_]/g, '').substring(0, 12) || 'listener';
+
+    let initialBase = 'listener';
+    if (user.username && user.username.includes('#')) {
+      initialBase = user.username.split('#')[0];
+    } else if (profile?.displayName) {
+      initialBase = profile.displayName;
+    }
+
+    const sanitizedBase = initialBase.trim().replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_]/g, '').substring(0, 15) || 'listener';
 
     let defaultUsername = '';
     let isUnique = false;
     let attempts = 0;
-    while (!isUnique && attempts < 10) {
-      const digits = Math.floor(10000000 + Math.random() * 90000000).toString();
-      defaultUsername = `${sanitizedBase.toLowerCase()}#${digits}`;
+
+    if (user.username && user.username.includes('#')) {
+      const legacyCleaned = user.username.replace('#', '_').toLowerCase().substring(0, 20);
+      const existing = await db.query.users.findFirst({
+        where: eq(users.username, legacyCleaned),
+      });
+      if (!existing || existing.id === userId) {
+        defaultUsername = legacyCleaned;
+        isUnique = true;
+      }
+    }
+
+    while (!isUnique && attempts < 100) {
+      const suffix = attempts === 0 ? '' : '_' + attempts;
+      defaultUsername = `${sanitizedBase.toLowerCase()}${suffix}`.substring(0, 20);
 
       const existing = await db.query.users.findFirst({
         where: eq(users.username, defaultUsername),
       });
-      if (!existing) {
+      if (!existing || existing.id === userId) {
         isUnique = true;
       }
       attempts++;
