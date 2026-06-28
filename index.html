@@ -222,7 +222,7 @@
                             <h2 class="text-base font-semibold tracking-wide">Spice Music</h2>
                             <span class="text-[9px] uppercase tracking-[0.18em] text-purple-300 bg-purple-500/15 border border-purple-500/25 rounded-full px-2 py-0.5">Preview</span>
                         </div>
-                        <span class="text-[11px] text-gray-600 mt-1">Wrapped web player</span>
+                        <span class="text-[11px] text-gray-600 mt-1">Local runtime on localhost</span>
                     </button>
                 </div>
 
@@ -265,9 +265,13 @@
             try {
                 var parsed = new URL(url);
                 var h = parsed.hostname.toLowerCase();
+                var isLocalSpiceRuntime = (h === '127.0.0.1' || h === 'localhost') &&
+                                          parsed.port === '3939';
                 var valid = h.includes('music.youtube.com') ||
                             h.includes('soundcloud.com') ||
-                            h === 'music.spice-app.xyz';
+                            h === 'music.spice-app.xyz' ||
+                            h === 'install.spice-app.xyz' ||
+                            isLocalSpiceRuntime;
                 if (!valid) {
                     if (errorRef.current) errorRef.current.textContent = 'Only supported service URLs are allowed.';
                     return;
