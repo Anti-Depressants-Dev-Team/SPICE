@@ -3,8 +3,8 @@
   min-height: 100vh;
   overflow-x: hidden;
   background:
-    radial-gradient(circle at 18% 0%, rgba(124, 58, 237, 0.2), transparent 26rem),
-    linear-gradient(135deg, #000 0%, #060509 62%, #100714 100%);
+    linear-gradient(180deg, rgba(20, 184, 166, 0.08), transparent 360px),
+    linear-gradient(135deg, #050509 0%, #0a0d11 58%, #08090b 100%);
   color: #f8fafc;
   padding: 26px 0 42px;
 }
@@ -23,7 +23,10 @@
 .header,
 .hero,
 .metricGrid,
+.costGrid,
 .dashboardGrid,
+.featureStatusPanel,
+.systemPanel,
 .accessTable {
   position: relative;
   z-index: 1;
@@ -51,9 +54,9 @@
   height: 42px;
   display: grid;
   place-items: center;
-  border-radius: 15px;
-  background: linear-gradient(135deg, #7c3aed, #c084fc);
-  box-shadow: 0 0 32px rgba(168, 85, 247, 0.38);
+  border-radius: 8px;
+  background: linear-gradient(135deg, #14b8a6, #f59e0b);
+  box-shadow: 0 0 32px rgba(20, 184, 166, 0.2);
 }
 
 .logoMark svg {
@@ -66,8 +69,10 @@
 .kicker,
 .accessPanel span,
 .metricCard span,
-.panelHeading span {
-  color: #d8b4fe;
+.costCard span,
+.panelHeading span,
+.featureStatusRow span {
+  color: #5eead4;
   font-size: 0.74rem;
   font-weight: 900;
   letter-spacing: 0.14em;
@@ -95,8 +100,8 @@
   display: grid;
   place-items: center;
   border-radius: 50%;
-  background: linear-gradient(135deg, #7c3aed, #c084fc);
-  color: #fff;
+  background: linear-gradient(135deg, #14b8a6, #f59e0b);
+  color: #041312;
   font-size: 0.8rem;
   font-weight: 900;
 }
@@ -152,14 +157,17 @@
 
 .accessPanel,
 .metricCard,
+.costCard,
 .servicePanel,
 .queuePanel,
+.featureStatusPanel,
+.systemPanel,
 .accessTable {
   border: 1px solid rgba(255, 255, 255, 0.11);
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.085), rgba(255, 255, 255, 0.025)),
     rgba(5, 5, 7, 0.84);
-  box-shadow: 0 22px 72px rgba(0, 0, 0, 0.34);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
 }
 
 .accessPanel {
@@ -168,7 +176,7 @@
   justify-content: flex-end;
   min-height: 280px;
   padding: 22px;
-  border-radius: 24px;
+  border-radius: 8px;
 }
 
 .accessPanel strong {
@@ -196,7 +204,7 @@
 .metricCard {
   min-height: 150px;
   padding: 18px;
-  border-radius: 20px;
+  border-radius: 8px;
 }
 
 .metricCard strong {
@@ -213,6 +221,32 @@
   color: #a1a1aa;
 }
 
+.costGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.costCard {
+  min-height: 136px;
+  padding: 18px;
+  border-radius: 8px;
+}
+
+.costCard strong {
+  display: block;
+  margin-top: 12px;
+  color: #f8fafc;
+  font-size: 1.55rem;
+}
+
+.costCard p {
+  margin: 10px 0 0;
+  color: #a1a1aa;
+  line-height: 1.5;
+}
+
 .dashboardGrid {
   display: grid;
   grid-template-columns: minmax(0, 1.6fr) minmax(300px, 0.72fr);
@@ -222,8 +256,9 @@
 
 .servicePanel,
 .queuePanel,
+.featureStatusPanel,
 .accessTable {
-  border-radius: 24px;
+  border-radius: 8px;
   padding: 20px;
 }
 
@@ -262,7 +297,7 @@
 .serviceRow {
   grid-template-columns: minmax(150px, 1fr) minmax(160px, 1fr) auto auto;
   padding: 14px;
-  border-radius: 18px;
+  border-radius: 8px;
 }
 
 .serviceRow strong,
@@ -312,8 +347,8 @@
 }
 
 .liveBadge {
-  color: #fff !important;
-  background: linear-gradient(135deg, #7c3aed, #c084fc);
+  color: #041312 !important;
+  background: #5eead4;
 }
 
 .plannedBadge {
@@ -325,7 +360,7 @@
   position: relative;
   padding: 12px 12px 12px 34px;
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 16px;
+  border-radius: 8px;
   background: rgba(255, 255, 255, 0.04);
   color: #d4d4dc;
   line-height: 1.45;
@@ -339,11 +374,12 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #c084fc;
-  box-shadow: 0 0 16px rgba(192, 132, 252, 0.46);
+  background: #5eead4;
+  box-shadow: 0 0 16px rgba(94, 234, 212, 0.3);
 }
 
-.queuePanel button {
+.queuePanel button,
+.activeFeedButton {
   width: 100%;
   min-height: 46px;
   margin-top: 16px;
@@ -353,12 +389,13 @@
   color: #a1a1aa;
   cursor: not-allowed;
   font-weight: 900;
+  text-decoration: none;
 }
 
 .tableRow {
   grid-template-columns: minmax(150px, 0.45fr) minmax(0, 1fr) auto;
   padding: 14px;
-  border-radius: 18px;
+  border-radius: 8px;
 }
 
 .tableRow span {
@@ -377,13 +414,21 @@
   .metricGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .costGrid,
+  .featureStatusRow {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 680px) {
   .header,
   .hero,
   .metricGrid,
+  .costGrid,
   .dashboardGrid,
+  .featureStatusPanel,
+  .systemPanel,
   .accessTable {
     width: min(100% - 28px, 1180px);
   }
@@ -403,6 +448,10 @@
   }
 
   .metricGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .costGrid {
     grid-template-columns: 1fr;
   }
 
@@ -430,8 +479,8 @@
 .spinner {
   width: 40px;
   height: 40px;
-  border: 3px solid rgba(168, 85, 247, 0.15);
-  border-top-color: #a855f7;
+  border: 3px solid rgba(20, 184, 166, 0.15);
+  border-top-color: #14b8a6;
   border-radius: 50%;
   animation: spin 1s linear infinite;
 }
@@ -441,9 +490,9 @@
 }
 
 .primaryLinkButton {
-  background: linear-gradient(135deg, #7c3aed, #c084fc);
-  color: #fff;
-  border-radius: 999px;
+  background: #5eead4;
+  color: #041312;
+  border-radius: 8px;
   padding: 12px 28px;
   font-weight: 800;
   text-decoration: none;
@@ -459,25 +508,28 @@
 .activeFeedButton {
   width: 100%;
   min-height: 46px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   margin-top: 16px;
-  border: 1px solid rgba(192, 132, 252, 0.32);
-  border-radius: 999px;
-  background: rgba(168, 85, 247, 0.12);
-  color: #e9d5ff;
+  border: 1px solid rgba(94, 234, 212, 0.32);
+  border-radius: 8px;
+  background: rgba(20, 184, 166, 0.12);
+  color: #ccfbf1;
   font-weight: 900;
   cursor: pointer;
   transition: background 0.2s;
 }
 
 .activeFeedButton:hover {
-  background: rgba(168, 85, 247, 0.2);
+  background: rgba(20, 184, 166, 0.2);
 }
 
 .tableResponsive {
   width: 100%;
   overflow-x: auto;
   margin-top: 16px;
-  border-radius: 18px;
+  border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.02);
 }
@@ -491,7 +543,7 @@
 .adminTable th {
   padding: 16px 20px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  color: #d8b4fe;
+  color: #5eead4;
   font-size: 0.74rem;
   font-weight: 900;
   letter-spacing: 0.14em;
@@ -547,8 +599,8 @@
 }
 
 .adminSelect:focus {
-  border-color: #c084fc;
-  box-shadow: 0 0 10px rgba(192, 132, 252, 0.2);
+  border-color: #5eead4;
+  box-shadow: 0 0 10px rgba(20, 184, 166, 0.18);
 }
 
 .adminSelect:disabled {
@@ -567,8 +619,8 @@
 .inlineSpinner {
   width: 16px;
   height: 16px;
-  border: 2px solid rgba(168, 85, 247, 0.15);
-  border-top-color: #a855f7;
+  border: 2px solid rgba(20, 184, 166, 0.15);
+  border-top-color: #14b8a6;
   border-radius: 50%;
   animation: spin 0.6s linear infinite;
 }
@@ -588,11 +640,42 @@
 
 /* System Settings */
 .systemPanel {
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
+  border-radius: 8px;
   padding: 24px;
-  margin-top: 24px;
+  margin-top: 14px;
+}
+
+.featureStatusPanel {
+  margin-bottom: 14px;
+}
+
+.featureStatusGrid {
+  display: grid;
+  gap: 10px;
+}
+
+.featureStatusRow {
+  display: grid;
+  grid-template-columns: minmax(210px, 0.48fr) minmax(0, 0.7fr) minmax(220px, 0.55fr);
+  gap: 14px;
+  align-items: start;
+  padding: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.featureStatusRow strong {
+  display: block;
+  margin-top: 8px;
+  color: #f8fafc;
+}
+
+.featureStatusRow p,
+.featureStatusRow small {
+  margin: 0;
+  color: #a1a1aa;
+  line-height: 1.5;
 }
 
 .systemControls {

@@ -1,77 +1,156 @@
-const LOCAL_RUNTIME_URL = 'http://127.0.0.1:3939';
+import {
+  CLOUD_ORIGIN,
+  INSTALL_ORIGIN,
+  LOCAL_RUNTIME_URL,
+  localModeFeatureStatus,
+  localModeLanes,
+  localModeOptionalFeatureStatus,
+} from '@/lib/local-mode-feature-status';
+
+import styles from './cloud-portal.module.css';
 
 export default function CloudPortal() {
   return (
-    <main
-      style={{
-        minHeight: '100vh',
-        background: '#050509',
-        color: '#f8fafc',
-        fontFamily: 'var(--font-geist-sans), Inter, sans-serif',
-        display: 'grid',
-        placeItems: 'center',
-        padding: '32px',
-      }}
-    >
-      <section style={{ width: 'min(720px, 100%)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '24px' }}>
-          <div
-            style={{
-              width: '48px',
-              height: '48px',
-              borderRadius: '12px',
-              background: 'linear-gradient(135deg, #ec4899, #8b5cf6)',
-              display: 'grid',
-              placeItems: 'center',
-              fontWeight: 900,
-              boxShadow: '0 18px 44px rgba(236, 72, 153, 0.24)',
-            }}
-          >
-            S
+    <main className={styles.shell}>
+      <section className={styles.hero} aria-label="SPICE local runtime portal">
+        <div className={styles.heroCopy}>
+          <div className={styles.brandLine}>
+            <span className={styles.logoMark}>S</span>
+            <div>
+              <span>SPICE local mode</span>
+              <strong>Cloud stays thin. Media runs on the PC.</strong>
+            </div>
           </div>
-          <div>
-            <p style={{ color: '#c084fc', fontSize: '0.78rem', fontWeight: 800, margin: 0, letterSpacing: '0.08em' }}>
-              SPICE CONNECT
-            </p>
-            <h1 style={{ fontSize: 'clamp(2rem, 5vw, 4rem)', lineHeight: 1, margin: '4px 0 0', letterSpacing: 0 }}>
-              Local runtime required.
-            </h1>
+
+          <h1>Install locally, keep the cloud for accounts and sync.</h1>
+          <p>
+            This Vercel page is now the public control plane for SPICE. It should stay cheap:
+            auth, metadata, feedback, setup, and update manifests remain here, while scraping,
+            stream extraction, lyrics, proxying, and playback run on localhost.
+          </p>
+
+          <div className={styles.actions} aria-label="Runtime actions">
+            <a className={styles.primaryAction} href={INSTALL_ORIGIN}>
+              Install local runtime
+            </a>
+            <a className={styles.secondaryAction} href={LOCAL_RUNTIME_URL}>
+              Open localhost:3939
+            </a>
+            <a className={styles.secondaryAction} href="/api/updates/local-windows">
+              Update manifest
+            </a>
+            <a className={styles.textAction} href="/api/runtime">
+              Runtime status
+            </a>
           </div>
+
+          <dl className={styles.quickStats} aria-label="Local mode guardrails">
+            <div>
+              <dt>Vercel role</dt>
+              <dd>Control plane only</dd>
+            </div>
+            <div>
+              <dt>Neon exposure</dt>
+              <dd>Cloud runtime only</dd>
+            </div>
+            <div>
+              <dt>Updater load</dt>
+              <dd>12h local throttle</dd>
+            </div>
+          </dl>
         </div>
 
-        <p style={{ color: '#cbd5e1', fontSize: '1rem', lineHeight: 1.7, maxWidth: '620px', marginBottom: '28px' }}>
-          This Vercel surface now keeps auth, sync, metadata routing, and update delivery online. Media scraping,
-          stream extraction, lyrics, and proxying run from the user PC on localhost.
-        </p>
+        <aside className={styles.topology} aria-label="SPICE runtime split map">
+          <div className={styles.topologyHeader}>
+            <span>Runtime map</span>
+            <strong>SPICE split mode</strong>
+          </div>
+          <div className={styles.nodeGrid}>
+            {localModeLanes.map((lane) => (
+              <article key={lane.name} className={styles.node}>
+                <span>{lane.status}</span>
+                <h2>{lane.name}</h2>
+                <p>{lane.scope}</p>
+                <small>{lane.owner}</small>
+              </article>
+            ))}
+          </div>
+          <div className={styles.routeStrip}>
+            <span>{LOCAL_RUNTIME_URL}</span>
+            <span>{CLOUD_ORIGIN}</span>
+            <span>{INSTALL_ORIGIN}</span>
+          </div>
+        </aside>
+      </section>
 
-        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-          <a
-            href={LOCAL_RUNTIME_URL}
-            style={{
-              color: '#fff',
-              background: 'linear-gradient(135deg, #ec4899, #8b5cf6)',
-              textDecoration: 'none',
-              borderRadius: '10px',
-              padding: '12px 18px',
-              fontWeight: 800,
-            }}
-          >
-            Open local SPICE
-          </a>
-          <a
-            href="/api/runtime"
-            style={{
-              color: '#e2e8f0',
-              background: 'rgba(255,255,255,0.06)',
-              border: '1px solid rgba(255,255,255,0.1)',
-              textDecoration: 'none',
-              borderRadius: '10px',
-              padding: '12px 18px',
-              fontWeight: 700,
-            }}
-          >
-            Runtime status
-          </a>
+      <section className={styles.operatingModel} aria-label="SPICE operating model">
+        <div className={styles.sectionHeading}>
+          <span>Operating model</span>
+          <h2>What stays online and what moved home</h2>
+        </div>
+        <div className={styles.modelGrid}>
+          <article>
+            <span>Local heavy lane</span>
+            <h3>Provider work happens on the user PC.</h3>
+            <p>
+              Search providers, stream extraction, lyrics, and proxying are local runtime responsibilities.
+              They should not create serverless function pressure on Vercel.
+            </p>
+          </article>
+          <article>
+            <span>Cloud light lane</span>
+            <h3>Vercel keeps public setup and account routing.</h3>
+            <p>
+              The cloud lane handles authentication, sync metadata, feedback, installer pages, and update
+              manifests. Public metadata is cacheable whenever possible.
+            </p>
+          </article>
+          <article>
+            <span>Database lane</span>
+            <h3>Neon never ships to local installs.</h3>
+            <p>
+              Neon connection strings and database code stay in the Vercel environment. Local ZIP scans
+              are part of the release path so secrets do not leak into packaged clients.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section className={styles.featureLedger} aria-label="Features changed by local mode">
+        <div className={styles.sectionHeading}>
+          <span>Feature ledger</span>
+          <h2>What had to change for local mode</h2>
+        </div>
+        <div className={styles.ledgerList}>
+          {localModeFeatureStatus.map((item) => (
+            <article key={item.feature} className={styles.ledgerItem}>
+              <div>
+                <span>{item.status}</span>
+                <h3>{item.feature}</h3>
+              </div>
+              <p>{item.reason}</p>
+              <small>{item.replacement}</small>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className={styles.featureLedger} aria-label="Optional features and integrations">
+        <div className={styles.sectionHeading}>
+          <span>QoL and integrations</span>
+          <h2>What stays, what gets throttled, and what stays removed</h2>
+        </div>
+        <div className={styles.ledgerList}>
+          {localModeOptionalFeatureStatus.map((item) => (
+            <article key={item.feature} className={styles.ledgerItem}>
+              <div>
+                <span>{item.status}</span>
+                <h3>{item.feature}</h3>
+              </div>
+              <p>{item.reason}</p>
+              <small>{item.operatingRule}</small>
+            </article>
+          ))}
         </div>
       </section>
     </main>

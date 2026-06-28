@@ -3,25 +3,48 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { localModeFeatureStatus, localModeOptionalFeatureStatus } from '@/lib/local-mode-feature-status';
 import styles from './admin-dashboard.module.css';
 
 const services = [
-  { name: 'SPICE Music', status: 'Live', owner: 'Music platform', health: '99.98%', access: 'All signed-in users' },
-  { name: 'Spice Anime', status: 'Starter', owner: 'Anime starter', health: 'Preview', access: 'All signed-in users' },
-  { name: 'Spice Movie', status: 'Starter', owner: 'Movie starter', health: 'Preview', access: 'All signed-in users' },
-  { name: 'SPICE Rooms', status: 'Planned', owner: 'Social listening', health: 'Design', access: 'Admins only preview' },
-  { name: 'SPICE Recap', status: 'Planned', owner: 'Profile intelligence', health: 'Prototype', access: 'Admins only preview' },
-  { name: 'SPICE Cloud', status: 'Planned', owner: 'Account services', health: 'Queued', access: 'Admins only preview' },
+  { name: 'SPICE Local Runtime', status: 'Local', owner: 'User PC', health: 'Port 3939', access: 'Localhost only' },
+  { name: 'SPICE Cloud APIs', status: 'Cloud', owner: 'Vercel', health: 'Auth / sync / metadata', access: 'Signed-in users' },
+  { name: 'Neon Postgres', status: 'Cloud', owner: 'Neon', health: 'Pooled serverless', access: 'Vercel env only' },
+  { name: 'Install + Updates', status: 'Cached', owner: 'Vercel edge', health: '15 min manifest cache', access: 'Public metadata' },
+  { name: 'Spice Anime', status: 'Shelved', owner: 'Frozen source', health: 'Placeholder route', access: 'Hidden from launch' },
+  { name: 'Spice Movie', status: 'Shelved', owner: 'Frozen source', health: 'Placeholder route', access: 'Hidden from launch' },
 ];
 
 const activity = [
-  'SPICE Music marked healthy after playback check',
-  'Spice Anime starter surface is ready for account entry',
-  'Spice Movie starter surface is ready for account entry',
-  'New account creation prompt added to home screen',
-  'Rooms invite limits waiting for admin policy',
-  'Cloud account tools queued for service rollout',
+  'Local runtime is the only lane for media scraping, streams, lyrics, and proxying',
+  'Vercel stays limited to auth, sync, metadata, feedback, install, and update manifests',
+  'Local Windows updater is throttled to one quiet manifest check every 12 hours by default',
+  'Neon credentials stay in Vercel and are excluded from local packages',
+  'Anime, Movie, and legacy Home surfaces are shelved until the local split stabilizes',
+  'Last.fm and ListenBrainz stay opt-in profile sync, not search providers',
+  'Listen Together is the first optional cloud QoL lane to pause if costs spike',
+  'Use pg_stat_statements first if Neon network transfer or row volume rises',
 ];
+
+const costGuardrails = [
+  {
+    label: 'Vercel free-tier posture',
+    value: 'Thin',
+    detail: 'No provider scraping or stream extraction should run in serverless functions.',
+  },
+  {
+    label: 'Update traffic',
+    value: 'Cached',
+    detail: 'Manifest responses use edge caching; packaged clients throttle quiet checks.',
+  },
+  {
+    label: 'Neon posture',
+    value: 'Cloud only',
+    detail: 'Local bundles must not include database secrets, Neon clients, or migrations.',
+  },
+] as const;
+
+const liveServiceStatuses = new Set(['Local', 'Cloud', 'Cached']);
 
 export default function AdminDashboardView() {
   const [token, setToken] = useState<string | null>(null);
@@ -189,7 +212,7 @@ export default function AdminDashboardView() {
   };
 
   const handleUpdateSettings = async (updates: any) => {
-    const savedToken = localStorage.getItem('spice_token');
+    const savedToken = token || localStorage.getItem('spice_cloud_token') || localStorage.getItem('spice_token');
     if (!savedToken) return;
 
     setSavingSettings(true);
@@ -236,9 +259,9 @@ export default function AdminDashboardView() {
 
   const displayMetrics = [
     { label: 'Accounts', value: loading ? '...' : accounts.length.toString(), detail: `${accounts.filter((a) => a.accountRole === 'admin').length} admin accounts` },
-    { label: 'Active devices', value: '346', detail: 'Spice Connect online' },
-    { label: 'Live services', value: '3 / 6', detail: 'Music, Anime, and Movie are public' },
-    { label: 'Review queue', value: '18', detail: 'Invites and reports' },
+    { label: 'Runtime split', value: 'Local', detail: 'Heavy media work on the user PC' },
+    { label: 'Cloud lane', value: '4 APIs', detail: 'Auth, sync, metadata, feedback' },
+    { label: 'Shelved surfaces', value: '3', detail: 'Home app, Anime, Movie are frozen' },
   ];
 
   if (loading) {
@@ -342,18 +365,18 @@ export default function AdminDashboardView() {
 
       <section className={styles.hero} aria-label="Admin dashboard overview">
         <div>
-          <span className={styles.kicker}>Wired Admin Engine</span>
-          <h1>Control SPICE accounts, services, and launch readiness from one dashboard.</h1>
+          <span className={styles.kicker}>Local Mode Operations</span>
+          <h1>Keep SPICE cheap, local-first, and leak-resistant.</h1>
           <p>
-            You are running in developer management mode. You can view all accounts below and instantly
-            change their access roles and billing subscription parameters in the live database.
+            This dashboard now tracks the split architecture: local media work on the user PC,
+            Vercel as a thin control plane, and Neon restricted to cloud-only account and sync data.
           </p>
         </div>
 
         <aside className={styles.accessPanel}>
-          <span>Access level</span>
+          <span>Operator scope</span>
           <strong>Admin account verified</strong>
-          <p>You have write permissions for user authentication states and subscription entitlement profiles.</p>
+          <p>You can manage account roles, subscriptions, emergency cloud controls, and local-mode launch readiness.</p>
         </aside>
       </section>
 
@@ -363,6 +386,16 @@ export default function AdminDashboardView() {
             <span>{metric.label}</span>
             <strong>{metric.value}</strong>
             <p>{metric.detail}</p>
+          </article>
+        ))}
+      </section>
+
+      <section className={styles.costGrid} aria-label="Runtime cost guardrails">
+        {costGuardrails.map((item) => (
+          <article key={item.label} className={styles.costCard}>
+            <span>{item.label}</span>
+            <strong>{item.value}</strong>
+            <p>{item.detail}</p>
           </article>
         ))}
       </section>
@@ -382,7 +415,7 @@ export default function AdminDashboardView() {
                   <span>{service.owner}</span>
                 </div>
                 <p>{service.access}</p>
-                <small className={service.status === 'Live' || service.status === 'Starter' ? styles.liveBadge : styles.plannedBadge}>
+                <small className={liveServiceStatuses.has(service.status) ? styles.liveBadge : styles.plannedBadge}>
                   {service.status}
                 </small>
                 <small>{service.health}</small>
@@ -401,10 +434,48 @@ export default function AdminDashboardView() {
               <li key={item}>{item}</li>
             ))}
           </ul>
-          <button type="button" className={styles.activeFeedButton}>
-            Developer Sync Enabled
-          </button>
+          <a href="/api/runtime" className={styles.activeFeedButton}>
+            View runtime endpoint
+          </a>
         </aside>
+      </section>
+
+      <section className={styles.featureStatusPanel} aria-label="Features changed for local mode">
+        <div className={styles.panelHeading}>
+          <span>Feature ledger</span>
+          <h2>What had to move, freeze, or be replaced</h2>
+        </div>
+        <div className={styles.featureStatusGrid}>
+          {localModeFeatureStatus.map((item) => (
+            <article key={item.feature} className={styles.featureStatusRow}>
+              <div>
+                <span>{item.status}</span>
+                <strong>{item.feature}</strong>
+              </div>
+              <p>{item.reason}</p>
+              <small>{item.replacement}</small>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className={styles.featureStatusPanel} aria-label="Optional feature operating posture">
+        <div className={styles.panelHeading}>
+          <span>QoL and integrations</span>
+          <h2>Keep, throttle, or leave removed</h2>
+        </div>
+        <div className={styles.featureStatusGrid}>
+          {localModeOptionalFeatureStatus.map((item) => (
+            <article key={item.feature} className={styles.featureStatusRow}>
+              <div>
+                <span>{item.status}</span>
+                <strong>{item.feature}</strong>
+              </div>
+              <p>{item.reason}</p>
+              <small>{item.operatingRule}</small>
+            </article>
+          ))}
+        </div>
       </section>
 
       <section className={styles.systemPanel} aria-label="System Operations">
@@ -469,7 +540,7 @@ export default function AdminDashboardView() {
           <div className={styles.controlRow} style={{ opacity: systemSettings.emergencyAusterity ? 1 : 0.5, pointerEvents: systemSettings.emergencyAusterity ? 'auto' : 'none' }}>
             <div>
               <strong>Disable Database Sync</strong>
-              <p>Block all Neon database sync operations (/api/sync) to save connections.</p>
+              <p>Block cloud Neon sync operations to save connections while keeping local playback available.</p>
             </div>
             <button
               onClick={() => handleUpdateSettings({ disableSync: !systemSettings.disableSync })}

@@ -1,5 +1,42 @@
 # SPICE Walkthrough
 
+## v1.0.95
+
+- [Spice.Home main] Add a local-mode QoL and integrations ledger to clarify which convenience features stay local-first, opt-in, cost-gated, or removed.
+- [Spice.Admin main] Surface the same QoL and integrations posture in the operations dashboard so Last.fm, ListenBrainz, Spice Connect, shared playlists, Listen Together, and Discord RPC have explicit operating rules.
+- [Spice.Music main] Document that Last.fm and ListenBrainz remain opt-in profile sync integrations rather than playable search providers.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.95`.
+
+## v1.0.94
+
+- [Spice.Home main] Revamp the Vercel-hosted homepage into a local runtime portal that points users to install, localhost launch, runtime status, update metadata, and the cloud/local/Neon split.
+- [Spice.Admin main] Revamp the admin dashboard around local-mode operations, Vercel free-tier guardrails, Neon cloud-only posture, and shelved service visibility.
+- [Spice.Admin main] Add a local mode feature ledger documenting the features that moved, froze, or were replaced for the architecture split.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.94`.
+
+## v1.0.93
+
+- [Spice.Music main] Cache the local Windows update manifest at Vercel's edge and remove client-side no-cache headers so update checks do not create unnecessary function invocations.
+- [Spice.Music main] Add a 12-hour packaged runtime update-check throttle via `SPICE_LOCAL_UPDATE_CHECK_MIN_HOURS`, keeping repeated launches from repeatedly hitting Vercel.
+- [Spice.Admin main] Document low-cost Vercel/Neon operating guidance, including `pg_stat_statements` queries for diagnosing Neon egress.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.93`.
+
+## v1.0.92
+
+- [Spice.Music main] Added the `install.spice-app.xyz` installer surface plus `/install` preview route for local Windows runtime setup, download metadata, and update manifest access.
+- [Spice.Admin main] Expanded Neon setup guidance with SQL Editor copy/paste steps for the feedback migration and Vercel-only database environment notes.
+- [Shared routing] Allowlisted `https://install.spice-app.xyz` for CORS and linked the cloud portal plus update release notes to the install page.
+- [Shared CI] Publish the main-branch Windows local runtime ZIP and SHA-256 file to GitHub Releases so `SPICE_LOCAL_WINDOWS_DOWNLOAD_URL` can use a stable public URL.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.92`.
+
+## v1.0.91
+
+- [Spice.Music main] Added a cloud-hosted local Windows update manifest at `/api/updates/local-windows` plus `/api/local/update` status checks for local installs.
+- [Spice.Music main] Included startup update checks and a `check-spice-local-update.ps1 -Download` helper in the Windows local runtime package.
+- [Spice.Admin main] Added Neon runtime-split setup notes for Vercel-only database credentials, feedback migration verification, and local package DB isolation.
+- [Shared CI] Added SHA-256 output for the Windows local package artifact so published update manifests can advertise a verifiable ZIP.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.91`.
+
 ## v1.0.90
 
 - [Spice.Music main] Split runtime targeting with `SPICE_RUNTIME_TARGET=local|vercel`, routing local media search, lyrics, stream extraction, and proxying through `/api/local/*` on `127.0.0.1:3939` while keeping cloud account, sync, metadata, and feedback traffic behind `/api/cloud/*`.

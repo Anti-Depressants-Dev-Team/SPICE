@@ -1,16 +1,31 @@
 import type { Metadata } from 'next';
+import { headers } from 'next/headers';
 
 import CloudPortal from './cloud-portal';
+import InstallGuide from './install-guide';
 import SpiceApp from './spice-app';
 import { getRuntimeTarget } from '@/lib/runtime-target';
 
 export const dynamic = 'force-dynamic';
 
-export function generateMetadata(): Metadata {
+const INSTALL_HOSTS = new Set(['install.spice-app.xyz']);
+
+const INSTALL_METADATA: Metadata = {
+  title: 'Install SPICE Local',
+  description: 'Download and set up the SPICE local Windows runtime with Vercel and Neon configuration notes.',
+};
+
+export async function generateMetadata(): Promise<Metadata> {
+  const host = normalizeHost((await headers()).get('host'));
+
+  if (INSTALL_HOSTS.has(host)) {
+    return INSTALL_METADATA;
+  }
+
   if (getRuntimeTarget() === 'vercel') {
     return {
-      title: 'SPICE Connect Portal',
-      description: 'The Vercel-hosted portal for SPICE auth, metadata, sync, and local runtime downloads.',
+      title: 'SPICE Local Runtime Portal',
+      description: 'The Vercel-hosted control plane for SPICE auth, sync, metadata, installs, and local runtime updates.',
     };
   }
 
@@ -20,6 +35,16 @@ export function generateMetadata(): Metadata {
   };
 }
 
-export default function Home() {
+export default async function Home() {
+  const host = normalizeHost((await headers()).get('host'));
+
+  if (INSTALL_HOSTS.has(host)) {
+    return <InstallGuide />;
+  }
+
   return getRuntimeTarget() === 'vercel' ? <CloudPortal /> : <SpiceApp />;
+}
+
+function normalizeHost(host: string | null) {
+  return (host ?? '').split(',')[0]?.split(':')[0]?.trim().toLowerCase() ?? '';
 }

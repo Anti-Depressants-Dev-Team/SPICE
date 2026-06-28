@@ -18,6 +18,7 @@ const CLOUD_API_ROOTS = new Set([
   'profile',
   'remote',
   'sync',
+  'updates',
   'users',
   'version',
 ]);

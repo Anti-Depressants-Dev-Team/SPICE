@@ -23,6 +23,7 @@ const cloudApiPrefixes = [
   '/api/profile',
   '/api/remote',
   '/api/sync',
+  '/api/updates',
   '/api/users',
   '/api/version',
 ];
@@ -33,6 +34,7 @@ const forbiddenDbMarkers = [
   /DATABASE_URL/,
   /neon\.tech/i,
 ];
+const localRuntimeVersion = await readLocalRuntimeVersion();
 
 await assertExists(standaloneDir, 'Run pnpm --filter @spice/backend build:local before packaging.');
 await assertExists(staticDir, 'The local Next build did not produce .next/static.');
@@ -78,6 +80,7 @@ async function pruneLocalPackage(root) {
     'apps/backend/.next/server/app/api/profile',
     'apps/backend/.next/server/app/api/remote',
     'apps/backend/.next/server/app/api/sync',
+    'apps/backend/.next/server/app/api/updates',
     'apps/backend/.next/server/app/api/users',
     'apps/backend/.next/server/app/api/version',
     'apps/backend/db',
@@ -112,9 +115,11 @@ async function sanitizeStandaloneMetadata(root) {
     },
     spice: {
       runtimeTarget: 'local',
+      version: process.env.SPICE_LOCAL_RUNTIME_VERSION || process.env.SPICE_LOCAL_WINDOWS_VERSION || localRuntimeVersion,
       localApiPrefix: '/api/local',
       cloudApiPrefix: '/api/cloud',
       cloudApiOrigin: 'https://music.spice-app.xyz',
+      updateManifestUrl: process.env.SPICE_LOCAL_UPDATE_MANIFEST_URL || 'https://music.spice-app.xyz/api/updates/local-windows',
     },
   };
 
@@ -276,6 +281,8 @@ async function writeLaunchers(root) {
     'HOSTNAME=127.0.0.1',
     'PORT=3939',
     'SPICE_CLOUD_API_ORIGIN=https://music.spice-app.xyz',
+    'SPICE_LOCAL_UPDATE_MANIFEST_URL=https://music.spice-app.xyz/api/updates/local-windows',
+    'SPICE_LOCAL_UPDATE_CHECK_MIN_HOURS=12',
     'SPICE_STREAM_HMAC_SECRET=replace-with-a-random-local-secret',
     '',
   ].join('\r\n');
@@ -286,6 +293,9 @@ async function writeLaunchers(root) {
     'set HOSTNAME=127.0.0.1',
     'set PORT=3939',
     'if "%SPICE_CLOUD_API_ORIGIN%"=="" set SPICE_CLOUD_API_ORIGIN=https://music.spice-app.xyz',
+    'if "%SPICE_LOCAL_UPDATE_MANIFEST_URL%"=="" set SPICE_LOCAL_UPDATE_MANIFEST_URL=https://music.spice-app.xyz/api/updates/local-windows',
+    'if "%SPICE_LOCAL_UPDATE_CHECK_MIN_HOURS%"=="" set SPICE_LOCAL_UPDATE_CHECK_MIN_HOURS=12',
+    'if exist "%~dp0check-spice-local-update.ps1" powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0check-spice-local-update.ps1" -Quiet',
     'node server.js',
     '',
   ].join('\r\n');
@@ -295,6 +305,10 @@ async function writeLaunchers(root) {
     '$env:HOSTNAME = "127.0.0.1"',
     '$env:PORT = "3939"',
     'if (-not $env:SPICE_CLOUD_API_ORIGIN) { $env:SPICE_CLOUD_API_ORIGIN = "https://music.spice-app.xyz" }',
+    'if (-not $env:SPICE_LOCAL_UPDATE_MANIFEST_URL) { $env:SPICE_LOCAL_UPDATE_MANIFEST_URL = "https://music.spice-app.xyz/api/updates/local-windows" }',
+    'if (-not $env:SPICE_LOCAL_UPDATE_CHECK_MIN_HOURS) { $env:SPICE_LOCAL_UPDATE_CHECK_MIN_HOURS = "12" }',
+    '$updateCheck = Join-Path $PSScriptRoot "check-spice-local-update.ps1"',
+    'if (Test-Path -LiteralPath $updateCheck) { & $updateCheck -Quiet }',
     'node "$PSScriptRoot\\server.js"',
     '',
   ].join('\r\n');
@@ -302,17 +316,143 @@ async function writeLaunchers(root) {
   const manifest = {
     name: 'SPICE Local PC Runtime',
     runtimeTarget: 'local',
+    version: process.env.SPICE_LOCAL_RUNTIME_VERSION || process.env.SPICE_LOCAL_WINDOWS_VERSION || localRuntimeVersion,
     host: '127.0.0.1',
     port: 3939,
     localApiPrefix: '/api/local',
     cloudApiPrefix: '/api/cloud',
     cloudApiOrigin: 'https://music.spice-app.xyz',
+    updateManifestUrl: process.env.SPICE_LOCAL_UPDATE_MANIFEST_URL || 'https://music.spice-app.xyz/api/updates/local-windows',
+    updateCheckScript: 'check-spice-local-update.ps1',
   };
 
   await writeFile(path.join(root, '.env.local.example'), envExample);
   await writeFile(path.join(root, 'start-spice-local.cmd'), cmd);
   await writeFile(path.join(root, 'start-spice-local.ps1'), ps1);
   await writeFile(path.join(root, 'spice-local-manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+  await writeFile(path.join(root, 'check-spice-local-update.ps1'), updateCheckScript());
+}
+
+async function readLocalRuntimeVersion() {
+  const releaseFile = path.join(appRoot, 'lib', 'release-notifications.ts');
+  const text = await readFile(releaseFile, 'utf8').catch(() => '');
+  return text.match(/SPICE_MEDIA_CORE_VERSION\s*=\s*'([^']+)'/)?.[1] || '0.0.0';
+}
+
+function updateCheckScript() {
+  return [
+    'param(',
+    '  [switch]$Download,',
+    '  [switch]$Quiet',
+    ')',
+    '',
+    '$ErrorActionPreference = "Stop"',
+    '$manifestPath = Join-Path $PSScriptRoot "spice-local-manifest.json"',
+    'if (-not (Test-Path -LiteralPath $manifestPath)) {',
+    '  if (-not $Quiet) { Write-Warning "SPICE local manifest not found." }',
+    '  exit 0',
+    '}',
+    '',
+    '$localManifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json',
+    '$currentVersion = [string]$localManifest.version',
+    '$manifestUrl = $env:SPICE_LOCAL_UPDATE_MANIFEST_URL',
+    'if ([string]::IsNullOrWhiteSpace($manifestUrl)) { $manifestUrl = [string]$localManifest.updateManifestUrl }',
+    'if ([string]::IsNullOrWhiteSpace($manifestUrl)) {',
+    '  if (-not $Quiet) { Write-Warning "SPICE update manifest URL is not configured." }',
+    '  exit 0',
+    '}',
+    '',
+    'if (-not $Download) {',
+    '  $minHours = 12.0',
+    '  if (-not [string]::IsNullOrWhiteSpace($env:SPICE_LOCAL_UPDATE_CHECK_MIN_HOURS)) {',
+    '    $parsedMinHours = 0.0',
+    '    if ([double]::TryParse($env:SPICE_LOCAL_UPDATE_CHECK_MIN_HOURS, [ref]$parsedMinHours) -and $parsedMinHours -ge 1) {',
+    '      $minHours = $parsedMinHours',
+    '    }',
+    '  }',
+    '',
+    '  $statePath = Join-Path $PSScriptRoot ".spice-update-check.json"',
+    '  if (Test-Path -LiteralPath $statePath) {',
+    '    try {',
+    '      $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json',
+    '      $lastCheckedAt = [datetime]$state.lastCheckedAt',
+    '      if (((Get-Date).ToUniversalTime() - $lastCheckedAt.ToUniversalTime()).TotalHours -lt $minHours) {',
+    '        exit 0',
+    '      }',
+    '    } catch {}',
+    '  }',
+    '}',
+    '',
+    'function Get-SpiceVersionParts([string]$Version) {',
+    '  $parts = @($Version -replace "^[^0-9]*", "" -split "[^0-9]+" | Where-Object { $_ })',
+    '  while ($parts.Count -lt 3) { $parts += "0" }',
+    '  return $parts | Select-Object -First 4 | ForEach-Object { [int]$_ }',
+    '}',
+    '',
+    'function Compare-SpiceVersion([string]$Left, [string]$Right) {',
+    '  $leftParts = @(Get-SpiceVersionParts $Left)',
+    '  $rightParts = @(Get-SpiceVersionParts $Right)',
+    '  $count = [Math]::Max($leftParts.Count, $rightParts.Count)',
+    '  for ($index = 0; $index -lt $count; $index++) {',
+    '    $leftValue = if ($index -lt $leftParts.Count) { $leftParts[$index] } else { 0 }',
+    '    $rightValue = if ($index -lt $rightParts.Count) { $rightParts[$index] } else { 0 }',
+    '    if ($leftValue -gt $rightValue) { return 1 }',
+    '    if ($leftValue -lt $rightValue) { return -1 }',
+    '  }',
+    '  return 0',
+    '}',
+    '',
+    'try {',
+    '  $remoteManifest = Invoke-RestMethod -Uri $manifestUrl -Headers @{ Accept = "application/json" }',
+    '  if (-not $Download) {',
+    '    $statePath = Join-Path $PSScriptRoot ".spice-update-check.json"',
+    '    @{ lastCheckedAt = (Get-Date).ToUniversalTime().ToString("o") } | ConvertTo-Json | Set-Content -LiteralPath $statePath',
+    '  }',
+    '} catch {',
+    '  if (-not $Quiet) { Write-Warning "Unable to check SPICE updates: $($_.Exception.Message)" }',
+    '  exit 0',
+    '}',
+    '',
+    '$latestVersion = [string]$remoteManifest.version',
+    'if ([string]::IsNullOrWhiteSpace($latestVersion)) { exit 0 }',
+    '$comparison = Compare-SpiceVersion $latestVersion $currentVersion',
+    'if ($comparison -le 0) {',
+    '  if (-not $Quiet) { Write-Host "SPICE local runtime is up to date ($currentVersion)." }',
+    '  exit 0',
+    '}',
+    '',
+    '$downloadUrl = [string]$remoteManifest.download.url',
+    'Write-Host "SPICE local runtime update available: $currentVersion -> $latestVersion"',
+    'if (-not $Download) {',
+    '  if (-not [string]::IsNullOrWhiteSpace($downloadUrl)) {',
+    '    Write-Host "Run .\\check-spice-local-update.ps1 -Download to download the update ZIP."',
+    '  } else {',
+    '    Write-Host "No update download URL is published yet. Check the release notes: $($remoteManifest.releaseNotesUrl)"',
+    '  }',
+    '  exit 0',
+    '}',
+    '',
+    'if ([string]::IsNullOrWhiteSpace($downloadUrl)) {',
+    '  Write-Error "The update manifest does not include a download URL."',
+    '}',
+    '',
+    '$updatesDir = Join-Path $PSScriptRoot "updates"',
+    'New-Item -ItemType Directory -Force -Path $updatesDir | Out-Null',
+    '$zipPath = Join-Path $updatesDir "spice-local-windows-$latestVersion.zip"',
+    'Invoke-WebRequest -Uri $downloadUrl -OutFile $zipPath',
+    '',
+    '$expectedHash = [string]$remoteManifest.download.sha256',
+    'if (-not [string]::IsNullOrWhiteSpace($expectedHash)) {',
+    '  $actualHash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()',
+    '  if ($actualHash -ne $expectedHash.ToLowerInvariant()) {',
+    '    Remove-Item -LiteralPath $zipPath -Force',
+    '    Write-Error "Downloaded update hash mismatch. Expected $expectedHash but got $actualHash."',
+    '  }',
+    '}',
+    '',
+    'Write-Host "Downloaded SPICE local update to $zipPath"',
+    '',
+  ].join('\r\n');
 }
 
 async function scanForForbiddenLocalPayload(root) {

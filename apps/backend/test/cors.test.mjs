@@ -25,6 +25,14 @@ test('optionsResponse omits wildcard CORS for untrusted origins', () => {
   assert.equal(response.headers.get('access-control-allow-origin'), null);
 });
 
+test('optionsResponse allows the install domain', () => {
+  const response = optionsResponse(new Request('https://music.spice-app.xyz/api/test', {
+    headers: { Origin: 'https://install.spice-app.xyz' },
+  }));
+
+  assert.equal(response.headers.get('access-control-allow-origin'), 'https://install.spice-app.xyz');
+});
+
 test('jsonResponse returns JSON with allowlisted CORS headers', async () => {
   const body = { success: true };
   const response = jsonResponse(body, {}, allowedRequest);

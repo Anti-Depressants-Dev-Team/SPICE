@@ -1,4 +1,5 @@
 import { jsonResponse } from '@/lib/cors';
+import { currentLocalRuntimeVersion, localUpdateManifestUrl } from '@/lib/local-updates';
 
 export type SpiceRuntimeTarget = 'local' | 'vercel';
 
@@ -75,16 +76,20 @@ export function requireLocalMediaNamespace(request: Request) {
 }
 
 export function runtimeConfigPayload() {
+  const cloudApiOrigin =
+    process.env.SPICE_CLOUD_API_ORIGIN ||
+    process.env.NEXT_PUBLIC_SPICE_CLOUD_API_ORIGIN ||
+    'https://music.spice-app.xyz';
+
   return {
     runtimeTarget: getRuntimeTarget(),
-    cloudApiOrigin:
-      process.env.SPICE_CLOUD_API_ORIGIN ||
-      process.env.NEXT_PUBLIC_SPICE_CLOUD_API_ORIGIN ||
-      'https://music.spice-app.xyz',
+    cloudApiOrigin,
     localApiOrigin:
       process.env.SPICE_LOCAL_API_ORIGIN ||
       process.env.NEXT_PUBLIC_SPICE_LOCAL_API_ORIGIN ||
       'http://127.0.0.1:3939',
+    localRuntimeVersion: currentLocalRuntimeVersion(),
+    updateManifestUrl: localUpdateManifestUrl(cloudApiOrigin),
   };
 }
 

@@ -1,6 +1,7 @@
 const DEFAULT_ALLOWED_ORIGINS = [
   'https://spice-app.xyz',
   'https://www.spice-app.xyz',
+  'https://install.spice-app.xyz',
   'https://music.spice-app.xyz',
   'https://anime.spice-app.xyz',
   'https://movie.spice-app.xyz',

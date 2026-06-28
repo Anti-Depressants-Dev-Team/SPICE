@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -36,6 +39,10 @@ jobs:
   local-windows-package:
     name: SPICE local Windows package
     runs-on: windows-latest
+    outputs:
+      version: ${{ steps.package-metadata.outputs.version }}
+      sha256: ${{ steps.package-metadata.outputs.sha256 }}
+      size_bytes: ${{ steps.package-metadata.outputs.size_bytes }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -52,11 +59,92 @@ jobs:
       - name: zip local runtime
         shell: pwsh
         run: tar.exe -a -cf apps/backend/dist/spice-local-windows.zip -C apps/backend/dist/spice-local-windows .
+      - name: hash local runtime artifact
+        id: package-metadata
+        shell: pwsh
+        run: |
+          $zipPath = 'apps/backend/dist/spice-local-windows.zip'
+          $shaPath = 'apps/backend/dist/spice-local-windows.sha256'
+          $manifestPath = 'apps/backend/dist/spice-local-windows/spice-local-manifest.json'
+          $hash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          $sizeBytes = (Get-Item -LiteralPath $zipPath).Length
+          $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+          Set-Content -LiteralPath $shaPath -Value "$hash  spice-local-windows.zip"
+          "sha256=$hash" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "size_bytes=$sizeBytes" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "version=$($manifest.version)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
       - name: upload local runtime
         uses: actions/upload-artifact@v4
         with:
           name: spice-local-windows
-          path: apps/backend/dist/spice-local-windows.zip
+          path: |
+            apps/backend/dist/spice-local-windows.zip
+            apps/backend/dist/spice-local-windows.sha256
+
+  publish-local-windows-release:
+    name: Publish local Windows release
+    runs-on: ubuntu-latest
+    needs: local-windows-package
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    steps:
+      - name: download local runtime artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: spice-local-windows
+          path: apps/backend/dist
+      - name: publish local runtime release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          VERSION: ${{ needs.local-windows-package.outputs.version }}
+          SHA256: ${{ needs.local-windows-package.outputs.sha256 }}
+          SIZE_BYTES: ${{ needs.local-windows-package.outputs.size_bytes }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:VERSION)) {
+            throw 'Package version output was empty.'
+          }
+
+          $tag = "spice-local-windows-v$env:VERSION"
+          $title = "SPICE Local Windows v$env:VERSION"
+          $downloadUrl = "https://github.com/$env:REPOSITORY/releases/latest/download/spice-local-windows.zip"
+          $hashUrl = "https://github.com/$env:REPOSITORY/releases/latest/download/spice-local-windows.sha256"
+          $notes = @"
+          SPICE Local Windows runtime package.
+
+          Download URL:
+          $downloadUrl
+
+          SHA-256 file:
+          $hashUrl
+
+          SHA-256:
+          $env:SHA256
+
+          Size bytes:
+          $env:SIZE_BYTES
+
+          Vercel setup:
+          - Set SPICE_LOCAL_WINDOWS_DOWNLOAD_URL to the download URL above.
+          - Set SPICE_LOCAL_WINDOWS_SHA256 to the SHA-256 above only when you will update it for each release.
+          - Set SPICE_LOCAL_WINDOWS_SIZE_BYTES to the byte size above only when you will update it for each release.
+          "@
+          $notesFile = New-TemporaryFile
+          Set-Content -LiteralPath $notesFile -Value $notes
+
+          if (gh release view $tag --repo $env:REPOSITORY *> $null) {
+            gh release upload $tag apps/backend/dist/spice-local-windows.zip apps/backend/dist/spice-local-windows.sha256 --clobber --repo $env:REPOSITORY
+            gh release edit $tag --title $title --notes-file $notesFile --latest --repo $env:REPOSITORY
+          } else {
+            gh release create $tag apps/backend/dist/spice-local-windows.zip apps/backend/dist/spice-local-windows.sha256 --title $title --notes-file $notesFile --latest --target $env:GITHUB_SHA --repo $env:REPOSITORY
+          }
+
+          "### SPICE local Windows release" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          "Download URL: $downloadUrl" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          "SHA-256: $env:SHA256" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          "Size bytes: $env:SIZE_BYTES" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
 
   vercel-deploy:
     name: Vercel prebuilt deploy
