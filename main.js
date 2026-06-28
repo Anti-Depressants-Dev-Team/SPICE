@@ -75,11 +75,18 @@ let lyricsWindow = null;
 let queueWindow = null;
 let currentVolume = 1.0; // Volume gain value (0.0 - 10.0), shared across scopes
 
+const SPICE_LOCAL_RUNTIME_URL = normalizeServiceUrl(
+  process.env.SPICE_LOCAL_RUNTIME_URL || "http://127.0.0.1:3939/",
+);
+const SPICE_INSTALL_URL = normalizeServiceUrl(
+  process.env.SPICE_INSTALL_URL || "https://install.spice-app.xyz/",
+);
+
 const SERVICES = {
   yt: "https://music.youtube.com",
   yt_vk: "https://music.youtube.com", // VK layout uses same URL, just injects VK player UI
   sc: "https://soundcloud.com",
-  spice_crazy: "https://music.spice-app.xyz/",
+  spice_crazy: SPICE_LOCAL_RUNTIME_URL,
 };
 const DEFAULT_STARTUP_SERVICE = "spice_crazy";
 const DEFAULT_TOOLBAR_BUTTONS = {
@@ -92,6 +99,61 @@ const DEFAULT_TOOLBAR_BUTTONS = {
   miniPlayer: true,
   queue: true,
 };
+
+function normalizeServiceUrl(url) {
+  const value = String(url || "").trim();
+  return value.endsWith("/") ? value : `${value}/`;
+}
+
+function isAllowedSpiceUrl(parsed) {
+  const host = parsed.hostname.toLowerCase();
+  const isLocalRuntime =
+    (host === "127.0.0.1" || host === "localhost") &&
+    parsed.port === "3939";
+
+  return (
+    isLocalRuntime ||
+    host === "music.spice-app.xyz" ||
+    host === "install.spice-app.xyz"
+  );
+}
+
+async function isLocalSpiceRuntimeReady() {
+  const fetchFn = fetch || global.fetch;
+  if (!fetchFn) return false;
+
+  const runtimeStatusUrl = new URL("/api/runtime", SPICE_LOCAL_RUNTIME_URL).toString();
+  const timeout = new Promise((resolve) => {
+    setTimeout(() => resolve(null), 1500);
+  });
+
+  const request = fetchFn(runtimeStatusUrl, {
+    headers: { Accept: "application/json" },
+  }).catch(() => null);
+
+  const response = await Promise.race([request, timeout]);
+  return Boolean(response && response.ok);
+}
+
+async function resolveServiceUrl(serviceKey) {
+  if (serviceKey !== "spice_crazy") return SERVICES[serviceKey];
+  if (await isLocalSpiceRuntimeReady()) return SPICE_LOCAL_RUNTIME_URL;
+
+  const result = await dialog.showMessageBox(mainWindow, {
+    type: "warning",
+    buttons: ["Open install guide", "Try localhost anyway", "Cancel"],
+    defaultId: 0,
+    cancelId: 2,
+    title: "SPICE local runtime is not running",
+    message: "SPICE Music now runs from the local PC runtime.",
+    detail:
+      "Start the SPICE local runtime on 127.0.0.1:3939, or open the install guide to download and set it up.",
+  });
+
+  if (result.response === 0) return SPICE_INSTALL_URL;
+  if (result.response === 1) return SPICE_LOCAL_RUNTIME_URL;
+  return null;
+}
 
 const AD_CSS = `
     .video-ads, .ytp-ad-module, .ytp-ad-image-overlay, .ytp-ad-text-overlay,
@@ -776,7 +838,7 @@ ipcMain.on("seek-playback", (event, time) => {
   seekPlayback(time);
 });
 
-function loadService(serviceKey) {
+async function loadService(serviceKey) {
   if (!SERVICES[serviceKey]) return;
 
   // VK layout uses the same YT Music URL, but force-enables VK player
@@ -790,6 +852,19 @@ function loadService(serviceKey) {
 
   // Resolve the track detection key
   const trackDetectionKey = serviceKey;
+  let serviceUrl;
+  try {
+    serviceUrl = await resolveServiceUrl(serviceKey);
+  } catch (error) {
+    console.error(`Failed to resolve ${serviceKey}: `, error);
+    sendActiveServiceState(false);
+    return;
+  }
+
+  if (!serviceUrl) {
+    sendActiveServiceState(false);
+    return;
+  }
 
   // Save state - DISABLE for now to favor explicit Default Setting
   // if (store) store.set('lastService', serviceKey);
@@ -832,16 +907,16 @@ function loadService(serviceKey) {
 
   // Check if already loading this URL to prevent duplicate calls
   const currentUrl = view.webContents.getURL();
-  if (currentUrl && currentUrl.startsWith(SERVICES[serviceKey])) {
+  if (currentUrl && currentUrl.startsWith(serviceUrl)) {
     console.log(
-      `[Main] Service URL already loaded or loading: ${SERVICES[serviceKey]}`,
+      `[Main] Service URL already loaded or loading: ${serviceUrl}`,
     );
     return;
   }
 
-  console.log(`Loading service URL: ${SERVICES[serviceKey]} `);
+  console.log(`Loading service URL: ${serviceUrl} `);
   view.webContents
-    .loadURL(SERVICES[serviceKey])
+    .loadURL(serviceUrl)
     .then(() => {
       console.log(`Successfully loaded ${serviceKey} `);
       updateViewBounds(); // Re-apply bounds just in case
@@ -2336,7 +2411,7 @@ app.whenReady().then(async () => {
         host === "soundcloud.com" ||
         host === "www.soundcloud.com" ||
         host === "m.soundcloud.com";
-      const isSpiceCrazy = host === "music.spice-app.xyz";
+      const isSpiceCrazy = isAllowedSpiceUrl(parsed);
 
       if (!isYtMusic && !isSoundCloud && !isSpiceCrazy) {
         console.log("Invalid URL rejected:", url);
