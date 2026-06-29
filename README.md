@@ -9,6 +9,7 @@
 
 *   **🚫 Ad-Free Experience**: Built-in ad-blocking for uninterupted listening on YouTube Music and SoundCloud.
 *   **🎵 Service Support**: Seamlessly switch between YouTube Music, SoundCloud, and the local SPICE runtime.
+*   **SPICE Local Runtime Manager**: The desktop app can download, verify, install, start, and stop the local SPICE runtime used by Spice Music.
 *   **🎮 Discord Rich Presence**: Show what you're listening to on your Discord profile with album art and track progress.
 *   **📊 Scrobbling**: Automatic scrobbling to **Last.fm** and **ListenBrainz**.
 *   **🎤 Synchronized Lyrics**:
@@ -55,7 +56,7 @@ Grab the latest installer from the [Releases](https://github.com/Anti-Depressant
 *   **Discord RPC**: Toggle on/off.
 *   **Scrobbling**: Log in to Last.fm or paste your ListenBrainz token.
 *   **Startup Service**: Choose whether to open YouTube Music or SoundCloud on launch.
-*   **SPICE Local Runtime**: The Spice Music card now expects the local runtime at `http://127.0.0.1:3939`. If it is not running, the app opens the public install guide at `https://install.spice-app.xyz`.
+*   **SPICE Local Runtime**: The Spice Music card checks `http://127.0.0.1:3939`. On Windows, the app can install or start the runtime for you; otherwise it opens the public install guide at `https://install.spice-app.xyz`.
 
 ## ⌨️ Shortcuts
 *   `Ctrl + R`: Reload current page.

@@ -89,6 +89,10 @@
                 case 'vkCommand':      return window.api.vkCommand(args[0]);
                 case 'checkForUpdates': return window.api.checkForUpdates();
                 case 'installUpdate':  return window.api.installUpdate();
+                case 'spiceRuntimeStatus': return window.api.spiceRuntime && window.api.spiceRuntime.getStatus();
+                case 'spiceRuntimeInstall': return window.api.spiceRuntime && window.api.spiceRuntime.install();
+                case 'spiceRuntimeStart': return window.api.spiceRuntime && window.api.spiceRuntime.start();
+                case 'spiceRuntimeStop': return window.api.spiceRuntime && window.api.spiceRuntime.stop();
                 case 'windowControls':
                     if (args[0] === 'minimize') return window.api.windowControls.minimize();
                     if (args[0] === 'maximize') return window.api.windowControls.maximize();
@@ -170,6 +174,62 @@
 
     function HomeScreen(props) {
         var onLoad = props.onLoad;
+        var runtimeManagerAvailable = !!(window.api && window.api.spiceRuntime);
+        var _runtimeStatus = useState(null);
+        var runtimeStatus = _runtimeStatus[0];
+        var setRuntimeStatus = _runtimeStatus[1];
+        var _runtimeBusy = useState(false);
+        var runtimeBusy = _runtimeBusy[0];
+        var setRuntimeBusy = _runtimeBusy[1];
+        var _runtimeMessage = useState('');
+        var runtimeMessage = _runtimeMessage[0];
+        var setRuntimeMessage = _runtimeMessage[1];
+
+        useEffect(function() {
+            if (!runtimeManagerAvailable) return;
+            refreshRuntimeStatus();
+            if (window.api.spiceRuntime.onStatus) {
+                return window.api.spiceRuntime.onStatus(function(status) {
+                    if (status) {
+                        setRuntimeStatus(status);
+                        if (status.message) setRuntimeMessage(status.message);
+                    }
+                });
+            }
+        }, []);
+
+        async function refreshRuntimeStatus() {
+            var status = await callApi('spiceRuntimeStatus');
+            if (status) {
+                setRuntimeStatus(status);
+                if (status.message) setRuntimeMessage(status.message);
+            }
+        }
+
+        async function runRuntimeAction(action) {
+            setRuntimeBusy(true);
+            setRuntimeMessage('Working...');
+            try {
+                var status = await callApi(action);
+                if (status) {
+                    setRuntimeStatus(status);
+                    setRuntimeMessage(status.message || 'Done');
+                }
+            } catch (err) {
+                setRuntimeMessage(err && err.message ? err.message : 'Runtime action failed.');
+            } finally {
+                setRuntimeBusy(false);
+                refreshRuntimeStatus();
+            }
+        }
+
+        function runtimeLabel() {
+            if (!runtimeStatus) return 'Checking local runtime';
+            if (!runtimeStatus.supported) return 'Managed install is Windows-only';
+            if (runtimeStatus.running) return 'Running on 127.0.0.1:3939';
+            if (runtimeStatus.installed) return 'Installed ' + (runtimeStatus.installedVersion || '');
+            return 'Not installed';
+        }
 
         return html`
             <div class="flex-1 relative flex flex-col items-center justify-center text-center px-6 animate-fade-in select-none"
@@ -225,6 +285,44 @@
                         <span class="text-[11px] text-gray-600 mt-1">Local runtime on localhost</span>
                     </button>
                 </div>
+
+                ${runtimeManagerAvailable && html`
+                    <div class="no-drag mt-5 w-[520px] max-w-[92vw] rounded-2xl border border-white/[0.07] bg-black/25 px-4 py-3 text-left">
+                        <div class="flex items-center justify-between gap-3 mb-3">
+                            <div>
+                                <div class="text-[10px] uppercase tracking-[0.24em] text-purple-300">SPICE local runtime</div>
+                                <div class="text-sm text-gray-300">${runtimeLabel()}</div>
+                            </div>
+                            <button class="rounded-full border border-white/10 px-3 py-1.5 text-[11px] text-gray-300 hover:bg-white/5 disabled:opacity-40"
+                                    disabled=${runtimeBusy}
+                                    onClick=${refreshRuntimeStatus}>
+                                Refresh
+                            </button>
+                        </div>
+                        <div class="flex flex-wrap gap-2">
+                            <button class="rounded-full bg-purple-500 px-4 py-2 text-[12px] font-semibold text-white hover:bg-purple-400 disabled:opacity-40"
+                                    disabled=${runtimeBusy || (runtimeStatus && (!runtimeStatus.supported || runtimeStatus.running))}
+                                    onClick=${function() { runRuntimeAction('spiceRuntimeInstall'); }}>
+                                Install / update
+                            </button>
+                            <button class="rounded-full border border-purple-500/30 px-4 py-2 text-[12px] font-semibold text-purple-200 hover:bg-purple-500/10 disabled:opacity-40"
+                                    disabled=${runtimeBusy || !runtimeStatus || !runtimeStatus.installed || runtimeStatus.running}
+                                    onClick=${function() { runRuntimeAction('spiceRuntimeStart'); }}>
+                                Start runtime
+                            </button>
+                            <button class="rounded-full border border-white/10 px-4 py-2 text-[12px] font-semibold text-gray-300 hover:bg-white/5 disabled:opacity-40"
+                                    disabled=${runtimeBusy || !runtimeStatus || !runtimeStatus.running}
+                                    onClick=${function() { runRuntimeAction('spiceRuntimeStop'); }}>
+                                Stop
+                            </button>
+                            <button class="rounded-full border border-white/10 px-4 py-2 text-[12px] font-semibold text-gray-300 hover:bg-white/5"
+                                    onClick=${function() { callApi('loadUrl', 'https://install.spice-app.xyz/'); }}>
+                                Install guide
+                            </button>
+                        </div>
+                        <div class="mt-2 min-h-[16px] text-[11px] text-gray-500">${runtimeMessage}</div>
+                    </div>
+                `}
 
                 <!-- Deprecated Services -->
                 <div class="absolute right-4 bottom-4 text-left no-drag opacity-35 hover:opacity-100 transition-opacity duration-300">

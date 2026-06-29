@@ -14,6 +14,17 @@ contextBridge.exposeInMainWorld("api", {
   installUpdate: () => ipcRenderer.send("install-update"),
   onUpdateStatus: (callback) =>
     ipcRenderer.on("update-status", (event, status) => callback(status)),
+  spiceRuntime: {
+    getStatus: () => ipcRenderer.invoke("spice-runtime-status"),
+    install: () => ipcRenderer.invoke("spice-runtime-install"),
+    start: () => ipcRenderer.invoke("spice-runtime-start"),
+    stop: () => ipcRenderer.invoke("spice-runtime-stop"),
+    onStatus: (callback) => {
+      const listener = (event, status) => callback(status);
+      ipcRenderer.on("spice-runtime-status", listener);
+      return () => ipcRenderer.removeListener("spice-runtime-status", listener);
+    },
+  },
   getSettings: () => ipcRenderer.invoke("get-settings"),
   setAdBlocker: (enabled) => ipcRenderer.send("set-adblocker", enabled),
   setVkPlayer: (enabled) => ipcRenderer.send("set-vk-player", enabled),
