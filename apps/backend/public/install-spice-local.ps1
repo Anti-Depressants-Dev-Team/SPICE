@@ -38,10 +38,25 @@ function Get-SpiceFallbackHash {
   }
 }
 
-$download = Get-SpiceDownloadInfo -Url $ManifestUrl
-if ([string]::IsNullOrWhiteSpace($download.DownloadUrl)) {
-  $download.DownloadUrl = $fallbackDownloadUrl
+function Resolve-SpiceDownloadUrl {
+  param([string]$Value)
+
+  if ([string]::IsNullOrWhiteSpace($Value)) {
+    return $fallbackDownloadUrl
+  }
+
+  $parsed = [System.Uri]$null
+  if ([System.Uri]::TryCreate($Value.Trim(), [System.UriKind]::Absolute, [ref]$parsed) -and
+    ($parsed.Scheme -eq "http" -or $parsed.Scheme -eq "https")) {
+    return $parsed.AbsoluteUri
+  }
+
+  Write-Warning "The update manifest download URL is invalid. Falling back to the latest GitHub release."
+  return $fallbackDownloadUrl
 }
+
+$download = Get-SpiceDownloadInfo -Url $ManifestUrl
+$download.DownloadUrl = Resolve-SpiceDownloadUrl $download.DownloadUrl
 if ([string]::IsNullOrWhiteSpace($download.Sha256) -and $download.DownloadUrl -eq $fallbackDownloadUrl) {
   $download.Sha256 = Get-SpiceFallbackHash
 }

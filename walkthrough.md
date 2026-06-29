@@ -1,5 +1,11 @@
 # SPICE Walkthrough
 
+## v1.0.101
+
+- [Spice.Home main] Validate the local Windows runtime download URL before publishing the update manifest so a typo like `ttps://` falls back to the latest public GitHub release instead of breaking installers.
+- [Spice.Home main] Harden the Windows local manager, install script, and portable script to recover from invalid manifest download URLs before calling `Invoke-WebRequest`.
+- [Spice.Home main] Bump the visible diagnostics version to `Spice Media Core v1.0.101`.
+
 ## v1.0.100
 
 - [Spice.Home main] Add a Desktop app button to the install page that points users to the latest `Anti-Depressants-Dev-Team/spice` release next to the local manager, scripts, ZIP, and account portal.

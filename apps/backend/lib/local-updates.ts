@@ -43,7 +43,9 @@ export function localUpdateManifestUrl(cloudApiOrigin = defaultCloudApiOrigin())
 }
 
 export function localWindowsDownloadUrl() {
-  return process.env.SPICE_LOCAL_WINDOWS_DOWNLOAD_URL?.trim() || DEFAULT_LOCAL_WINDOWS_DOWNLOAD_URL;
+  const configured = process.env.SPICE_LOCAL_WINDOWS_DOWNLOAD_URL?.trim();
+  if (!configured) return DEFAULT_LOCAL_WINDOWS_DOWNLOAD_URL;
+  return isHttpUrl(configured) ? configured : DEFAULT_LOCAL_WINDOWS_DOWNLOAD_URL;
 }
 
 export function buildLocalWindowsUpdateManifest(): LocalRuntimeUpdateManifest {
@@ -130,6 +132,15 @@ function defaultCloudApiOrigin() {
 
 function normalizeVersion(version: string) {
   return version.trim().replace(/^v/i, '');
+}
+
+function isHttpUrl(value: string) {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
 }
 
 function versionParts(version: string) {

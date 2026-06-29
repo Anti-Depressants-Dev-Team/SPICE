@@ -68,14 +68,28 @@ function Get-SpiceFallbackHash {
   }
 }
 
+function Resolve-SpiceDownloadUrl {
+  param([string]$Value)
+
+  if ([string]::IsNullOrWhiteSpace($Value)) {
+    return $fallbackDownloadUrl
+  }
+
+  $parsed = [System.Uri]$null
+  if ([System.Uri]::TryCreate($Value.Trim(), [System.UriKind]::Absolute, [ref]$parsed) -and
+    ($parsed.Scheme -eq "http" -or $parsed.Scheme -eq "https")) {
+    return $parsed.AbsoluteUri
+  }
+
+  Write-SpiceStatus "Manifest download URL is invalid. Using latest GitHub release."
+  return $fallbackDownloadUrl
+}
+
 function Get-SpiceDownloadInfo {
   try {
     $manifest = Invoke-RestMethod -Uri $script:ManifestUrl -Headers @{ Accept = "application/json" }
-    $downloadUrl = [string]$manifest.download.url
+    $downloadUrl = Resolve-SpiceDownloadUrl ([string]$manifest.download.url)
     $sha256 = [string]$manifest.download.sha256
-    if ([string]::IsNullOrWhiteSpace($downloadUrl)) {
-      $downloadUrl = $fallbackDownloadUrl
-    }
     if ([string]::IsNullOrWhiteSpace($sha256) -and $downloadUrl -eq $fallbackDownloadUrl) {
       $sha256 = Get-SpiceFallbackHash
     }

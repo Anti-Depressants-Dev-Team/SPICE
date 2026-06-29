@@ -40,6 +40,18 @@ test('localWindowsDownloadUrl falls back to the latest public GitHub release', (
   restoreEnv('SPICE_LOCAL_WINDOWS_DOWNLOAD_URL', originalUrl);
 });
 
+test('localWindowsDownloadUrl rejects non-http configured URLs', () => {
+  const originalUrl = process.env.SPICE_LOCAL_WINDOWS_DOWNLOAD_URL;
+  process.env.SPICE_LOCAL_WINDOWS_DOWNLOAD_URL = 'ttps://github.com/example/broken.zip';
+
+  assert.equal(
+    localWindowsDownloadUrl(),
+    'https://github.com/Anti-Depressants-Dev-Team/SPICE-but-its-crazier-cuz-yes-/releases/latest/download/spice-local-windows.zip',
+  );
+
+  restoreEnv('SPICE_LOCAL_WINDOWS_DOWNLOAD_URL', originalUrl);
+});
+
 test('buildLocalWindowsUpdateManifest uses configured artifact metadata without requiring a database', () => {
   const originalUrl = process.env.SPICE_LOCAL_WINDOWS_DOWNLOAD_URL;
   const originalHash = process.env.SPICE_LOCAL_WINDOWS_SHA256;
