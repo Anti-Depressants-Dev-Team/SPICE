@@ -9,6 +9,7 @@ const staticDir = path.join(appRoot, '.next', 'static');
 const publicDir = path.join(appRoot, 'public');
 const distRoot = path.join(appRoot, 'dist');
 const packageDir = path.join(distRoot, 'spice-local-windows');
+const packagedBackendDir = path.join(packageDir, 'apps', 'backend');
 const cloudApiPrefixes = [
   '/api/account',
   '/api/admin',
@@ -45,10 +46,10 @@ await mkdir(packageDir, { recursive: true });
 await cp(standaloneDir, packageDir, { recursive: true });
 
 if (existsSync(publicDir)) {
-  await cp(publicDir, path.join(packageDir, 'public'), { recursive: true });
+  await cp(publicDir, path.join(packagedBackendDir, 'public'), { recursive: true });
 }
-await mkdir(path.join(packageDir, '.next'), { recursive: true });
-await cp(staticDir, path.join(packageDir, '.next', 'static'), { recursive: true });
+await mkdir(path.join(packagedBackendDir, '.next'), { recursive: true });
+await cp(staticDir, path.join(packagedBackendDir, '.next', 'static'), { recursive: true });
 
 await materializePackageSymlinks(packageDir);
 await flattenStandaloneNodeModules(packageDir);
@@ -57,6 +58,7 @@ await sanitizeNextManifests(packageDir);
 await pruneUnreferencedForbiddenChunks(packageDir);
 await sanitizeStandaloneMetadata(packageDir);
 await writeLaunchers(packageDir);
+await assertPackagedAssets(packageDir);
 await scanForForbiddenLocalPayload(packageDir);
 
 console.log(`Packaged SPICE local runtime at ${packageDir}`);
@@ -64,6 +66,28 @@ console.log(`Packaged SPICE local runtime at ${packageDir}`);
 async function assertExists(target, message) {
   if (!existsSync(target)) {
     throw new Error(message);
+  }
+}
+
+async function assertPackagedAssets(root) {
+  const backendRoot = path.join(root, 'apps', 'backend');
+  const staticRoot = path.join(backendRoot, '.next', 'static');
+  const staticFiles = [];
+
+  await assertExists(staticRoot, 'The local runtime package is missing apps/backend/.next/static.');
+  await walk(staticRoot, async (file) => {
+    if (staticFiles.length < 1) staticFiles.push(file);
+  });
+
+  if (staticFiles.length === 0) {
+    throw new Error('The local runtime package copied apps/backend/.next/static, but it is empty.');
+  }
+
+  if (existsSync(publicDir)) {
+    await assertExists(
+      path.join(backendRoot, 'public'),
+      'The local runtime package is missing apps/backend/public.',
+    );
   }
 }
 

@@ -1,5 +1,11 @@
 # SPICE Walkthrough
 
+## v1.0.102
+
+- [Spice.Home main] Copy local runtime static assets and public files into `apps/backend/.next/static` and `apps/backend/public` inside the Windows package so the standalone server can load the styled SPICE UI from localhost.
+- [Spice.Home main] Add a package-time asset assertion so the local Windows release fails before upload if the standalone static asset folder is missing or empty.
+- [Spice.Home main] Bump the visible diagnostics version to `Spice Media Core v1.0.102`.
+
 ## v1.0.101
 
 - [Spice.Home main] Validate the local Windows runtime download URL before publishing the update manifest so a typo like `ttps://` falls back to the latest public GitHub release instead of breaking installers.
