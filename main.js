@@ -10,6 +10,7 @@ const {
 const path = require("path");
 const fs = require("fs");
 const { autoUpdater } = require("electron-updater");
+const { SpiceLocalRuntimeManager } = require("./spice-local-runtime-manager");
 
 // Simple File Logger for Production Debugging - INITIALIZE FIRST
 const logFile = path.join(app.getPath("userData"), "debug.log");
@@ -74,6 +75,7 @@ let lastTrack = null; // Store last track to send to lyrics on open
 let lyricsWindow = null;
 let queueWindow = null;
 let currentVolume = 1.0; // Volume gain value (0.0 - 10.0), shared across scopes
+let spiceRuntimeManager = null;
 
 const SPICE_LOCAL_RUNTIME_URL = normalizeServiceUrl(
   process.env.SPICE_LOCAL_RUNTIME_URL || "http://127.0.0.1:3939/",
@@ -81,6 +83,9 @@ const SPICE_LOCAL_RUNTIME_URL = normalizeServiceUrl(
 const SPICE_INSTALL_URL = normalizeServiceUrl(
   process.env.SPICE_INSTALL_URL || "https://install.spice-app.xyz/",
 );
+const SPICE_LOCAL_MANIFEST_URL =
+  process.env.SPICE_LOCAL_UPDATE_MANIFEST_URL ||
+  "https://music.spice-app.xyz/api/updates/local-windows";
 
 const SERVICES = {
   yt: "https://music.youtube.com",
@@ -105,6 +110,12 @@ function normalizeServiceUrl(url) {
   return value.endsWith("/") ? value : `${value}/`;
 }
 
+function getFetchImplementation() {
+  if (typeof fetch === "function") return fetch;
+  if (typeof global.fetch === "function") return global.fetch;
+  return null;
+}
+
 function isAllowedSpiceUrl(parsed) {
   const host = parsed.hostname.toLowerCase();
   const isLocalRuntime =
@@ -119,7 +130,7 @@ function isAllowedSpiceUrl(parsed) {
 }
 
 async function isLocalSpiceRuntimeReady() {
-  const fetchFn = fetch || global.fetch;
+  const fetchFn = getFetchImplementation();
   if (!fetchFn) return false;
 
   const runtimeStatusUrl = new URL("/api/runtime", SPICE_LOCAL_RUNTIME_URL).toString();
@@ -138,6 +149,57 @@ async function isLocalSpiceRuntimeReady() {
 async function resolveServiceUrl(serviceKey) {
   if (serviceKey !== "spice_crazy") return SERVICES[serviceKey];
   if (await isLocalSpiceRuntimeReady()) return SPICE_LOCAL_RUNTIME_URL;
+
+  if (spiceRuntimeManager) {
+    const status = await spiceRuntimeManager.getStatus();
+
+    if (status.supported && status.installed) {
+      const result = await dialog.showMessageBox(mainWindow, {
+        type: "warning",
+        buttons: ["Start runtime", "Install / update", "Open install guide", "Cancel"],
+        defaultId: 0,
+        cancelId: 3,
+        title: "SPICE local runtime is not running",
+        message: "SPICE Music runs from the local PC runtime.",
+        detail:
+          "The runtime is installed, but it is not answering on 127.0.0.1:3939. Start it from Spice or update it before opening the player.",
+      });
+
+      if (result.response === 0) {
+        await spiceRuntimeManager.start();
+        return SPICE_LOCAL_RUNTIME_URL;
+      }
+      if (result.response === 1) {
+        await spiceRuntimeManager.installOrUpdate();
+        await spiceRuntimeManager.start();
+        return SPICE_LOCAL_RUNTIME_URL;
+      }
+      if (result.response === 2) return SPICE_INSTALL_URL;
+      return null;
+    }
+
+    if (status.supported && !status.installed) {
+      const result = await dialog.showMessageBox(mainWindow, {
+        type: "question",
+        buttons: ["Install runtime", "Open install guide", "Try localhost anyway", "Cancel"],
+        defaultId: 0,
+        cancelId: 3,
+        title: "Install SPICE local runtime",
+        message: "SPICE Music now runs from a local runtime package.",
+        detail:
+          "Spice can download, verify, install, and start the local runtime for you. The hosted install guide remains available if you want the manual scripts or ZIP.",
+      });
+
+      if (result.response === 0) {
+        await spiceRuntimeManager.installOrUpdate();
+        await spiceRuntimeManager.start();
+        return SPICE_LOCAL_RUNTIME_URL;
+      }
+      if (result.response === 1) return SPICE_INSTALL_URL;
+      if (result.response === 2) return SPICE_LOCAL_RUNTIME_URL;
+      return null;
+    }
+  }
 
   const result = await dialog.showMessageBox(mainWindow, {
     type: "warning",
@@ -292,6 +354,9 @@ function createWindow() {
     if (miniPlayerWindow) {
       miniPlayerWindow.close();
     }
+    if (spiceRuntimeManager) {
+      spiceRuntimeManager.stop().catch(() => {});
+    }
     // Properly disconnect Discord RPC before quitting
     if (discordRpc) {
       discordRpc.disconnect();
@@ -404,6 +469,11 @@ function applyCustomCssEverywhere() {
   if (view && !view.webContents.isDestroyed()) {
     applyCustomCssToWebContents(view.webContents);
   }
+}
+
+function sendSpiceRuntimeStatus(status) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send("spice-runtime-status", status);
 }
 
 const AD_SKIP_SCRIPT = `
@@ -857,6 +927,12 @@ async function loadService(serviceKey) {
     serviceUrl = await resolveServiceUrl(serviceKey);
   } catch (error) {
     console.error(`Failed to resolve ${serviceKey}: `, error);
+    if (serviceKey === "spice_crazy") {
+      dialog.showErrorBox(
+        "SPICE local runtime",
+        error instanceof Error ? error.message : "Failed to prepare the SPICE local runtime.",
+      );
+    }
     sendActiveServiceState(false);
     return;
   }
@@ -1968,6 +2044,14 @@ app.on("activate", () => {
 });
 
 app.whenReady().then(async () => {
+  spiceRuntimeManager = new SpiceLocalRuntimeManager({
+    app,
+    fetch: getFetchImplementation(),
+    localUrl: SPICE_LOCAL_RUNTIME_URL,
+    manifestUrl: SPICE_LOCAL_MANIFEST_URL,
+    onStatus: sendSpiceRuntimeStatus,
+  });
+
   try {
     await miniPlayerServer.startServer((action) => {
       console.log("[Server] Remote Action received:", action);
@@ -2530,6 +2614,26 @@ app.whenReady().then(async () => {
 
   ipcMain.on("install-update", () => {
     autoUpdater.quitAndInstall(false, true);
+  });
+
+  ipcMain.handle("spice-runtime-status", async () => {
+    if (!spiceRuntimeManager) return null;
+    return spiceRuntimeManager.getStatus();
+  });
+
+  ipcMain.handle("spice-runtime-install", async () => {
+    if (!spiceRuntimeManager) return null;
+    return spiceRuntimeManager.installOrUpdate();
+  });
+
+  ipcMain.handle("spice-runtime-start", async () => {
+    if (!spiceRuntimeManager) return null;
+    return spiceRuntimeManager.start();
+  });
+
+  ipcMain.handle("spice-runtime-stop", async () => {
+    if (!spiceRuntimeManager) return null;
+    return spiceRuntimeManager.stop();
   });
 
   // Hide/Show BrowserView (for modals)
