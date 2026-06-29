@@ -8,8 +8,8 @@ import { getAccountSnapshotForUserId } from '@/lib/accounts';
 
 export const runtime = 'nodejs';
 
-export function OPTIONS() {
-  return optionsResponse();
+export function OPTIONS(request: Request) {
+  return optionsResponse(request);
 }
 
 export async function POST(request: Request) {
@@ -21,7 +21,8 @@ export async function POST(request: Request) {
           error: 'invalid_inputs',
           message: 'Both email and password are required to sign in.',
         },
-        { status: 400 }
+        { status: 400 },
+        request,
       );
     }
 
@@ -33,7 +34,8 @@ export async function POST(request: Request) {
           error: 'database_not_configured',
           message: 'Backend DATABASE_URL environment variable is not configured. Please configure it in your Vercel settings.',
         },
-        { status: 500 }
+        { status: 500 },
+        request,
       );
     }
 
@@ -47,7 +49,8 @@ export async function POST(request: Request) {
           error: 'invalid_credentials',
           message: 'Incorrect email or password. Please try again.',
         },
-        { status: 401 }
+        { status: 401 },
+        request,
       );
     }
 
@@ -58,7 +61,8 @@ export async function POST(request: Request) {
           error: 'account_not_found',
           message: 'The account for these credentials no longer exists.',
         },
-        { status: 401 }
+        { status: 401 },
+        request,
       );
     }
 
@@ -68,7 +72,8 @@ export async function POST(request: Request) {
           error: 'account_banned',
           message: 'This account has been banned.',
         },
-        { status: 403 }
+        { status: 403 },
+        request,
       );
     }
 
@@ -82,14 +87,15 @@ export async function POST(request: Request) {
       token,
       user: account,
       account,
-    });
+    }, {}, request);
   } catch (error) {
     return jsonResponse(
       {
         error: 'signin_failed',
         message: error instanceof Error ? error.message : 'Sign in failed.',
       },
-      { status: 500 }
+      { status: 500 },
+      request,
     );
   }
 }

@@ -8,8 +8,8 @@ import { getInitialAccountRoleForEmail, serializeAccount } from '@/lib/account';
 
 export const runtime = 'nodejs';
 
-export function OPTIONS() {
-  return optionsResponse();
+export function OPTIONS(request: Request) {
+  return optionsResponse(request);
 }
 
 export async function POST(request: Request) {
@@ -21,7 +21,8 @@ export async function POST(request: Request) {
           error: 'invalid_inputs',
           message: 'Email, password, and username are all required to sign up.',
         },
-        { status: 400 }
+        { status: 400 },
+        request,
       );
     }
 
@@ -33,7 +34,8 @@ export async function POST(request: Request) {
           error: 'weak_password',
           message: 'Password must be at least 8 characters long, and include at least one uppercase letter, one lowercase letter, one number, and one special character.',
         },
-        { status: 400 }
+        { status: 400 },
+        request,
       );
     }
 
@@ -45,7 +47,8 @@ export async function POST(request: Request) {
           error: 'invalid_username',
           message: 'Username must be 3–20 characters, containing only letters, numbers, and underscores.',
         },
-        { status: 400 }
+        { status: 400 },
+        request,
       );
     }
 
@@ -57,7 +60,8 @@ export async function POST(request: Request) {
           error: 'database_not_configured',
           message: 'Backend DATABASE_URL environment variable is not configured. Please configure it in your Vercel settings.',
         },
-        { status: 500 }
+        { status: 500 },
+        request,
       );
     }
 
@@ -72,7 +76,8 @@ export async function POST(request: Request) {
           error: 'email_exists',
           message: 'An account with this email address already exists.',
         },
-        { status: 409 }
+        { status: 409 },
+        request,
       );
     }
 
@@ -88,7 +93,8 @@ export async function POST(request: Request) {
           error: 'username_taken',
           message: 'This username is already taken.',
         },
-        { status: 409 }
+        { status: 409 },
+        request,
       );
     }
 
@@ -112,14 +118,15 @@ export async function POST(request: Request) {
       token,
       user: account,
       account,
-    });
+    }, {}, request);
   } catch (error) {
     return jsonResponse(
       {
         error: 'signup_failed',
         message: error instanceof Error ? error.message : 'User registration failed.',
       },
-      { status: 500 }
+      { status: 500 },
+      request,
     );
   }
 }

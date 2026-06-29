@@ -18,6 +18,7 @@ export async function proxyToLegacyApi(
   path: string[],
   allowedRoots: Set<string>,
   namespace: 'local' | 'cloud',
+  targetOrigin?: string,
 ) {
   const root = path[0] ?? '';
   if (!allowedRoots.has(root)) {
@@ -32,7 +33,8 @@ export async function proxyToLegacyApi(
   }
 
   const incomingUrl = new URL(request.url);
-  const targetUrl = new URL(`/api/${path.map(encodeURIComponent).join('/')}`, incomingUrl.origin);
+  const origin = targetOrigin || incomingUrl.origin;
+  const targetUrl = new URL(`/api/${path.map(encodeURIComponent).join('/')}`, origin);
   targetUrl.search = incomingUrl.search;
 
   const headers = new Headers(request.headers);

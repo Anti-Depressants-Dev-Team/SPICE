@@ -1,5 +1,13 @@
 # SPICE Walkthrough
 
+## v1.0.103
+
+- [Spice.Music main] Route local-mode cloud requests through the same-origin `/api/cloud/*` namespace so login, sync, and account calls proxy through the local runtime to Vercel instead of relying on fragile browser cross-origin fetches.
+- [Spice.Music main] Keep the `/api/cloud/*` proxy inside the Windows local runtime package while continuing to prune direct DB-backed cloud routes from the client-installable zip.
+- [Spice.Music main] Generate a process-local stream signing secret for packaged local runtimes so playback works without asking normal users to configure `STREAM_HMAC_SECRET`.
+- [Spice.Music main] Keep auth sign-in and sign-up responses CORS-aware on every success and error path so direct cloud requests return readable JSON instead of browser-level fetch failures.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.103`.
+
 ## v1.0.102
 
 - [Spice.Home main] Copy local runtime static assets and public files into `apps/backend/.next/static` and `apps/backend/public` inside the Windows package so the standalone server can load the styled SPICE UI from localhost.

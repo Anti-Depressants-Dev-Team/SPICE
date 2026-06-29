@@ -9,12 +9,16 @@ test('STREAM_HMAC_SECRET required in production', () => {
   const originalStream = process.env.STREAM_HMAC_SECRET;
   const originalAuth = process.env.AUTH_SECRET;
   const originalNext = process.env.NEXTAUTH_SECRET;
+  const originalRuntimeTarget = process.env.SPICE_RUNTIME_TARGET;
+  const originalGeneratedLocal = process.env.SPICE_GENERATED_LOCAL_STREAM_HMAC_SECRET;
 
   process.env.NODE_ENV = 'production';
+  delete process.env.SPICE_RUNTIME_TARGET;
   delete process.env.SPICE_STREAM_HMAC_SECRET;
   delete process.env.STREAM_HMAC_SECRET;
   delete process.env.AUTH_SECRET;
   delete process.env.NEXTAUTH_SECRET;
+  delete process.env.SPICE_GENERATED_LOCAL_STREAM_HMAC_SECRET;
 
   try {
     buildSignedStreamUrl('https://example.com', { id: 'test', itag: 1, expiresAt: 0, upstreamUrl: 'test' });
@@ -23,11 +27,67 @@ test('STREAM_HMAC_SECRET required in production', () => {
     assert.match(err.message, /STREAM_HMAC_SECRET is required in production/);
   }
 
-  process.env.NODE_ENV = originalEnv;
+  if (originalEnv !== undefined) process.env.NODE_ENV = originalEnv;
+  else delete process.env.NODE_ENV;
   if (originalSpice !== undefined) process.env.SPICE_STREAM_HMAC_SECRET = originalSpice;
+  else delete process.env.SPICE_STREAM_HMAC_SECRET;
   if (originalStream !== undefined) process.env.STREAM_HMAC_SECRET = originalStream;
+  else delete process.env.STREAM_HMAC_SECRET;
   if (originalAuth !== undefined) process.env.AUTH_SECRET = originalAuth;
+  else delete process.env.AUTH_SECRET;
   if (originalNext !== undefined) process.env.NEXTAUTH_SECRET = originalNext;
+  else delete process.env.NEXTAUTH_SECRET;
+  if (originalRuntimeTarget !== undefined) process.env.SPICE_RUNTIME_TARGET = originalRuntimeTarget;
+  else delete process.env.SPICE_RUNTIME_TARGET;
+  if (originalGeneratedLocal !== undefined) process.env.SPICE_GENERATED_LOCAL_STREAM_HMAC_SECRET = originalGeneratedLocal;
+  else delete process.env.SPICE_GENERATED_LOCAL_STREAM_HMAC_SECRET;
+});
+
+
+test('local production runtime generates a process-local stream secret', () => {
+  const originalEnv = process.env.NODE_ENV;
+  const originalRuntimeTarget = process.env.SPICE_RUNTIME_TARGET;
+  const originalSpice = process.env.SPICE_STREAM_HMAC_SECRET;
+  const originalStream = process.env.STREAM_HMAC_SECRET;
+  const originalAuth = process.env.AUTH_SECRET;
+  const originalNext = process.env.NEXTAUTH_SECRET;
+  const originalGeneratedLocal = process.env.SPICE_GENERATED_LOCAL_STREAM_HMAC_SECRET;
+
+  process.env.NODE_ENV = 'production';
+  process.env.SPICE_RUNTIME_TARGET = 'local';
+  delete process.env.SPICE_STREAM_HMAC_SECRET;
+  delete process.env.STREAM_HMAC_SECRET;
+  delete process.env.AUTH_SECRET;
+  delete process.env.NEXTAUTH_SECRET;
+  delete process.env.SPICE_GENERATED_LOCAL_STREAM_HMAC_SECRET;
+
+  const input = {
+    id: 'local-track',
+    itag: 251,
+    upstreamUrl: 'https://example.com/local-audio',
+    expiresAt: Date.now() + 1000 * 60 * 10,
+  };
+
+  const signedUrl = new URL(buildSignedStreamUrl('http://127.0.0.1:3939', input));
+  const sig = signedUrl.searchParams.get('sig');
+
+  assert.ok(process.env.SPICE_GENERATED_LOCAL_STREAM_HMAC_SECRET);
+  assert.ok(verifySignedStream(input, sig));
+
+  if (originalEnv !== undefined) process.env.NODE_ENV = originalEnv;
+  else delete process.env.NODE_ENV;
+  if (originalRuntimeTarget !== undefined) process.env.SPICE_RUNTIME_TARGET = originalRuntimeTarget;
+  else delete process.env.SPICE_RUNTIME_TARGET;
+  if (originalSpice !== undefined) process.env.SPICE_STREAM_HMAC_SECRET = originalSpice;
+  else delete process.env.SPICE_STREAM_HMAC_SECRET;
+  if (originalStream !== undefined) process.env.STREAM_HMAC_SECRET = originalStream;
+  else delete process.env.STREAM_HMAC_SECRET;
+  if (originalAuth !== undefined) process.env.AUTH_SECRET = originalAuth;
+  else delete process.env.AUTH_SECRET;
+  if (originalNext !== undefined) process.env.NEXTAUTH_SECRET = originalNext;
+  else delete process.env.NEXTAUTH_SECRET;
+  if (originalGeneratedLocal !== undefined) process.env.SPICE_GENERATED_LOCAL_STREAM_HMAC_SECRET = originalGeneratedLocal;
+  else delete process.env.SPICE_GENERATED_LOCAL_STREAM_HMAC_SECRET;
 });
 
 

@@ -36,9 +36,6 @@ const SPICE_MEDIA_CORE_LABEL = `Spice Media Core v${SPICE_MEDIA_CORE_VERSION}`;
 
 type SpiceApiLane = 'local' | 'cloud';
 const SPICE_RUNTIME_TARGET = process.env.NEXT_PUBLIC_SPICE_RUNTIME_TARGET === 'vercel' ? 'vercel' : 'local';
-const SPICE_CLOUD_API_ORIGIN = normalizeApiOrigin(
-  process.env.NEXT_PUBLIC_SPICE_CLOUD_API_ORIGIN || 'https://music.spice-app.xyz',
-);
 const SPICE_LOCAL_API_ORIGIN = normalizeApiOrigin(
   process.env.NEXT_PUBLIC_SPICE_LOCAL_API_ORIGIN || 'http://127.0.0.1:3939',
 );
@@ -87,7 +84,7 @@ function spiceApiResponseUrl(lane: SpiceApiLane, url: string) {
 
 function spiceApiOrigin(lane: SpiceApiLane) {
   if (lane === 'cloud') {
-    return SPICE_RUNTIME_TARGET === 'local' ? SPICE_CLOUD_API_ORIGIN : '';
+    return '';
   }
 
   return SPICE_RUNTIME_TARGET === 'vercel' ? SPICE_LOCAL_API_ORIGIN : '';

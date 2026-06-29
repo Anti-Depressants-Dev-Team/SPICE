@@ -1,6 +1,7 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 
 const localDevSecret = 'spice-local-dev-stream-secret';
+const generatedLocalSecretEnvKey = 'SPICE_GENERATED_LOCAL_STREAM_HMAC_SECRET';
 
 export interface SignedStreamInput {
   id: string;
@@ -52,6 +53,11 @@ function streamSecret() {
     process.env.AUTH_SECRET ??
     process.env.NEXTAUTH_SECRET;
   if (secret) return secret;
+  if (process.env.SPICE_RUNTIME_TARGET === 'local') {
+    const generatedSecret = process.env[generatedLocalSecretEnvKey] ?? randomBytes(32).toString('base64url');
+    process.env[generatedLocalSecretEnvKey] = generatedSecret;
+    return generatedSecret;
+  }
   if (process.env.NODE_ENV === 'production') {
     throw new Error('STREAM_HMAC_SECRET is required in production');
   }

@@ -1,7 +1,7 @@
 import type { NextRequest } from 'next/server';
 
 import { proxyToLegacyApi, namespaceOptionsResponse } from '@/lib/api-namespace-proxy';
-import { requireCloudRuntime } from '@/lib/runtime-target';
+import { isCloudRuntime } from '@/lib/runtime-target';
 
 export const runtime = 'nodejs';
 
@@ -33,36 +33,39 @@ export function OPTIONS(request: NextRequest) {
 }
 
 export async function GET(request: NextRequest, { params }: RouteParams) {
-  const blocked = requireCloudRuntime(request);
-  if (blocked) return blocked;
-
-  return proxyToLegacyApi(request, (await params).path ?? [], CLOUD_API_ROOTS, 'cloud');
+  return proxyCloudRequest(request, (await params).path ?? []);
 }
 
 export async function POST(request: NextRequest, { params }: RouteParams) {
-  const blocked = requireCloudRuntime(request);
-  if (blocked) return blocked;
-
-  return proxyToLegacyApi(request, (await params).path ?? [], CLOUD_API_ROOTS, 'cloud');
+  return proxyCloudRequest(request, (await params).path ?? []);
 }
 
 export async function PUT(request: NextRequest, { params }: RouteParams) {
-  const blocked = requireCloudRuntime(request);
-  if (blocked) return blocked;
-
-  return proxyToLegacyApi(request, (await params).path ?? [], CLOUD_API_ROOTS, 'cloud');
+  return proxyCloudRequest(request, (await params).path ?? []);
 }
 
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
-  const blocked = requireCloudRuntime(request);
-  if (blocked) return blocked;
-
-  return proxyToLegacyApi(request, (await params).path ?? [], CLOUD_API_ROOTS, 'cloud');
+  return proxyCloudRequest(request, (await params).path ?? []);
 }
 
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
-  const blocked = requireCloudRuntime(request);
-  if (blocked) return blocked;
+  return proxyCloudRequest(request, (await params).path ?? []);
+}
 
-  return proxyToLegacyApi(request, (await params).path ?? [], CLOUD_API_ROOTS, 'cloud');
+function proxyCloudRequest(request: NextRequest, path: string[]) {
+  return proxyToLegacyApi(
+    request,
+    path,
+    CLOUD_API_ROOTS,
+    'cloud',
+    isCloudRuntime() ? undefined : cloudApiOrigin(),
+  );
+}
+
+function cloudApiOrigin() {
+  return (
+    process.env.SPICE_CLOUD_API_ORIGIN ||
+    process.env.NEXT_PUBLIC_SPICE_CLOUD_API_ORIGIN ||
+    'https://music.spice-app.xyz'
+  );
 }

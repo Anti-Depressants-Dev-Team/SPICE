@@ -15,7 +15,6 @@ const cloudApiPrefixes = [
   '/api/admin',
   '/api/auth',
   '/api/changelog',
-  '/api/cloud',
   '/api/downloads',
   '/api/feedback',
   '/api/lastfm',
@@ -93,8 +92,6 @@ async function assertPackagedAssets(root) {
 
 async function pruneLocalPackage(root) {
   const deleteTargets = [
-    'apps/backend/app/api/cloud',
-    'apps/backend/.next/server/app/api/cloud',
     'apps/backend/.next/server/app/api/account',
     'apps/backend/.next/server/app/api/admin',
     'apps/backend/.next/server/app/api/auth',
