@@ -33,3 +33,7 @@ debug_dump_9.txt
 debug_dump_10.txt
 launch_output.txt
 launch_output_2.txt
+
+# Native SPICE runtime bundle staging
+native-runtime/spice-local-windows/**
+!native-runtime/spice-local-windows/.gitkeep

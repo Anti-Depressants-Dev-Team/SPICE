@@ -77,6 +77,10 @@ let queueWindow = null;
 let currentVolume = 1.0; // Volume gain value (0.0 - 10.0), shared across scopes
 let spiceRuntimeManager = null;
 
+const APP_NATIVE_MODE =
+  process.env.SPICE_NATIVE_APP === "1" ||
+  process.env.SPICE_APP_MODE === "native" ||
+  (app.isPackaged && hasBundledNativeRuntime());
 const SPICE_LOCAL_RUNTIME_URL = normalizeServiceUrl(
   process.env.SPICE_LOCAL_RUNTIME_URL || "http://127.0.0.1:3939/",
 );
@@ -94,6 +98,7 @@ const SERVICES = {
   spice_crazy: SPICE_LOCAL_RUNTIME_URL,
 };
 const DEFAULT_STARTUP_SERVICE = "spice_crazy";
+const DEFAULT_NATIVE_STARTUP_SERVICE = "home";
 const DEFAULT_TOOLBAR_BUTTONS = {
   back: true,
   reload: true,
@@ -108,6 +113,127 @@ const DEFAULT_TOOLBAR_BUTTONS = {
 function normalizeServiceUrl(url) {
   const value = String(url || "").trim();
   return value.endsWith("/") ? value : `${value}/`;
+}
+
+function bundledNativeRuntimeDir() {
+  const candidates = [];
+  if (process.resourcesPath) {
+    candidates.push(path.join(process.resourcesPath, "native-runtime", "spice-local-windows"));
+  }
+  candidates.push(path.join(__dirname, "native-runtime", "spice-local-windows"));
+
+  return candidates.find((candidate) =>
+    fs.existsSync(path.join(candidate, "start-spice-local.ps1")),
+  ) || candidates[0];
+}
+
+function hasBundledNativeRuntime() {
+  return fs.existsSync(path.join(bundledNativeRuntimeDir(), "start-spice-local.ps1"));
+}
+
+function nativeModeSettings() {
+  return {
+    nativeMode: APP_NATIVE_MODE,
+    bundledRuntimeAvailable: hasBundledNativeRuntime(),
+  };
+}
+
+function getNativeAccountSnapshot() {
+  if (!store) return null;
+  const saved = store.get("nativeAccount", null);
+  if (!saved || typeof saved !== "object" || typeof saved.token !== "string") {
+    return null;
+  }
+  return {
+    token: saved.token,
+    user: saved.user && typeof saved.user === "object" ? saved.user : null,
+    signedInAt: saved.signedInAt || null,
+  };
+}
+
+function getNativeAccountSummary() {
+  const snapshot = getNativeAccountSnapshot();
+  if (!snapshot) return null;
+  return {
+    user: snapshot.user,
+    signedInAt: snapshot.signedInAt,
+  };
+}
+
+function saveNativeAccount(token, user) {
+  if (!store || !token) return null;
+  const snapshot = {
+    token,
+    user: user && typeof user === "object" ? user : null,
+    signedInAt: new Date().toISOString(),
+  };
+  store.set("nativeAccount", snapshot);
+  store.set("nativeOnboarded", true);
+  return getNativeAccountSummary();
+}
+
+function clearNativeAccount() {
+  if (!store) return;
+  store.delete("nativeAccount");
+}
+
+async function ensureNativeRuntimeReady() {
+  if (!spiceRuntimeManager) {
+    throw new Error("SPICE local runtime manager is not ready yet.");
+  }
+  await spiceRuntimeManager.ensureBundledRuntimeInstalled();
+  const status = await spiceRuntimeManager.getStatus();
+  if (!status.installed && !status.running) {
+    await spiceRuntimeManager.installOrUpdate();
+  }
+  await spiceRuntimeManager.start();
+  return spiceRuntimeManager.getStatus();
+}
+
+async function nativeCloudAuth(payload) {
+  if (!payload || typeof payload !== "object") {
+    throw new Error("Missing sign-in payload.");
+  }
+
+  await ensureNativeRuntimeReady();
+
+  const mode = payload.mode === "register" ? "signup" : "signin";
+  const body = {
+    email: String(payload.email || "").trim(),
+    password: String(payload.password || ""),
+  };
+  if (mode === "signup") {
+    body.username = String(payload.username || "").trim();
+  }
+
+  const response = await fetch(new URL(`/api/cloud/auth/spice/${mode}`, SPICE_LOCAL_RUNTIME_URL).toString(), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Origin: SPICE_LOCAL_RUNTIME_URL.replace(/\/$/, ""),
+    },
+    body: JSON.stringify(body),
+  });
+
+  const text = await response.text();
+  let data = {};
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { message: text };
+  }
+
+  if (!response.ok) {
+    throw new Error(data.message || data.error || "SPICE account request failed.");
+  }
+
+  const token = data.token || data.sessionToken || data.accessToken;
+  const user = data.user || data.account || data.accountSnapshot || null;
+  if (!token) {
+    throw new Error("SPICE account service did not return a session token.");
+  }
+
+  return saveNativeAccount(token, user);
 }
 
 function getFetchImplementation() {
@@ -314,15 +440,15 @@ function createWindow() {
   });
 
   // Initial load via local server
-  mainWindow.loadURL("http://localhost:6969/").then(() => {
+  mainWindow.loadURL(APP_NATIVE_MODE ? "http://localhost:6969/?native=1" : "http://localhost:6969/").then(() => {
     mainWindow.show();
     applyCustomCssToWebContents(mainWindow.webContents);
     // mainWindow.webContents.openDevTools({ mode: "detach" }); // Disabled to stop DevTools console from popping up automatically
 
     // Check for Default Service Startup.
-    const startupService = store
-      ? store.get("defaultService", DEFAULT_STARTUP_SERVICE)
-      : DEFAULT_STARTUP_SERVICE;
+    const startupService = APP_NATIVE_MODE
+      ? (store && store.get("nativeOnboarded", false) ? "spice_crazy" : DEFAULT_NATIVE_STARTUP_SERVICE)
+      : (store ? store.get("defaultService", DEFAULT_STARTUP_SERVICE) : DEFAULT_STARTUP_SERVICE);
 
     if (
       startupService &&
@@ -782,7 +908,7 @@ ipcMain.on("vk-player-command", (event, cmd) => {
       if (findAndClick('#play-pause-button')) return;
 
       // Fallback to video element
-      const v = document.querySelector('video');
+      const v = document.querySelector('video, audio');
       if (v) {
           v.paused ? v.play() : v.pause();
       }
@@ -913,6 +1039,10 @@ ipcMain.on("seek-playback", (event, time) => {
 });
 
 async function loadService(serviceKey) {
+  if (APP_NATIVE_MODE && serviceKey !== "spice_crazy") {
+    console.log(`Native mode rejected legacy service: ${serviceKey}`);
+    return;
+  }
   if (!SERVICES[serviceKey]) return;
 
   // VK layout uses the same YT Music URL, but force-enables VK player
@@ -1003,11 +1133,11 @@ async function loadService(serviceKey) {
       applyCustomCssToWebContents(view.webContents);
 
       if (supportsInjectedPlayback(trackDetectionKey)) {
-        // Inject CSS for Cosmetic Blocking
-        view.webContents.insertCSS(AD_CSS);
-
-        // Inject Ad-Skip Script
-        injectAdSkipper(view);
+        if (trackDetectionKey !== "spice_crazy") {
+          // Inject CSS for cosmetic blocking on legacy web services.
+          view.webContents.insertCSS(AD_CSS);
+          injectAdSkipper(view);
+        }
 
         // Inject Track Detection Script based on service
         injectTrackDetection(trackDetectionKey);
@@ -2053,6 +2183,7 @@ app.whenReady().then(async () => {
     fetch: getFetchImplementation(),
     localUrl: SPICE_LOCAL_RUNTIME_URL,
     manifestUrl: SPICE_LOCAL_MANIFEST_URL,
+    bundledRuntimeDir: bundledNativeRuntimeDir(),
     onStatus: sendSpiceRuntimeStatus,
   });
 
@@ -2129,7 +2260,7 @@ app.whenReady().then(async () => {
                    if (!findAndClick('ytmusic-player-bar #play-pause-button')) {
                        if (!findAndClick('ytmusic-player-bar tp-yt-paper-icon-button.play-pause-button')) {
                            if (!findAndClick('#play-pause-button')) {
-                               const v = document.querySelector('video');
+                               const v = document.querySelector('video, audio');
                                if (v) {
                                    v.paused ? v.play() : v.pause();
                                } else {
@@ -2341,6 +2472,9 @@ app.whenReady().then(async () => {
     // Persist migration
     if (store) store.set("adBlockerType", adBlockerType);
   }
+  if (APP_NATIVE_MODE) {
+    adBlockerType = "none";
+  }
 
   console.log(`AdBlocker System: Mode is[${adBlockerType}]`);
 
@@ -2501,6 +2635,11 @@ app.whenReady().then(async () => {
         host === "m.soundcloud.com";
       const isSpiceCrazy = isAllowedSpiceUrl(parsed);
 
+      if (APP_NATIVE_MODE && !isSpiceCrazy) {
+        console.log("Native mode rejected legacy URL:", url);
+        return;
+      }
+
       if (!isYtMusic && !isSoundCloud && !isSpiceCrazy) {
         console.log("Invalid URL rejected:", url);
         return;
@@ -2562,10 +2701,10 @@ app.whenReady().then(async () => {
           // view.webContents.openDevTools({ mode: 'detach' });
 
           if (supportsInjectedPlayback(serviceKey)) {
-            view.webContents.insertCSS(AD_CSS);
-
-            // Inject Ad-Skip Script (AdBlock Fix)
-            injectAdSkipper(view);
+            if (serviceKey !== "spice_crazy") {
+              view.webContents.insertCSS(AD_CSS);
+              injectAdSkipper(view);
+            }
 
             injectTrackDetection(serviceKey);
 
@@ -2638,6 +2777,54 @@ app.whenReady().then(async () => {
   ipcMain.handle("spice-runtime-stop", async () => {
     if (!spiceRuntimeManager) return null;
     return spiceRuntimeManager.stop();
+  });
+
+  ipcMain.handle("native-app-status", async () => {
+    return {
+      ...nativeModeSettings(),
+      onboarded: store ? store.get("nativeOnboarded", false) : false,
+      account: getNativeAccountSummary(),
+      runtime: spiceRuntimeManager ? await spiceRuntimeManager.getStatus() : null,
+      updatesEnabled: app.isPackaged,
+      version: app.getVersion(),
+    };
+  });
+
+  ipcMain.handle("native-runtime-prepare", async () => {
+    if (!spiceRuntimeManager) return null;
+    await ensureNativeRuntimeReady();
+    return spiceRuntimeManager.getStatus();
+  });
+
+  ipcMain.handle("native-auth", async (event, payload) => {
+    return nativeCloudAuth(payload);
+  });
+
+  ipcMain.handle("native-continue-offline", async () => {
+    if (store) store.set("nativeOnboarded", true);
+    await ensureNativeRuntimeReady();
+    return {
+      account: null,
+      runtime: spiceRuntimeManager ? await spiceRuntimeManager.getStatus() : null,
+    };
+  });
+
+  ipcMain.handle("native-sign-out", async () => {
+    clearNativeAccount();
+    if (view && !view.webContents.isDestroyed()) {
+      view.webContents
+        .executeJavaScript(`
+          localStorage.removeItem('spice_cloud_token');
+          localStorage.removeItem('spice_token');
+          localStorage.removeItem('spice_cloud_user');
+        `)
+        .catch(() => {});
+    }
+    return { account: null };
+  });
+
+  ipcMain.on("native-account-snapshot-sync", (event) => {
+    event.returnValue = getNativeAccountSnapshot();
   });
 
   // Hide/Show BrowserView (for modals)
@@ -3086,6 +3273,9 @@ app.whenReady().then(async () => {
   // Settings IPC
   ipcMain.handle("get-settings", () => {
     return {
+      ...nativeModeSettings(),
+      nativeAccount: getNativeAccountSummary(),
+      nativeOnboarded: store ? store.get("nativeOnboarded", false) : false,
       adBlockerEnabled: store ? store.get("adBlockerEnabled", true) : true,
       // Return type explicitly so UI can show correct state
       adBlockerType: store ? store.get("adBlockerType", "spice") : "spice",
