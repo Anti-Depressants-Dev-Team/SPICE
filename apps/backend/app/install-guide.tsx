@@ -1,5 +1,6 @@
 import { SPICE_MEDIA_CORE_VERSION } from '@/lib/release-notifications';
 
+import InstallCommandCard from './install-command-card';
 import styles from './install-guide.module.css';
 
 const INSTALL_ORIGIN = process.env.SPICE_INSTALL_ORIGIN?.trim() || 'https://install.spice-app.xyz';
@@ -12,6 +13,7 @@ const LOCAL_ORIGIN = process.env.NEXT_PUBLIC_SPICE_LOCAL_API_ORIGIN?.trim()
 const MANIFEST_URL = `${trimTrailingSlash(CLOUD_ORIGIN)}/api/updates/local-windows`;
 const INSTALL_URL = trimTrailingSlash(INSTALL_ORIGIN);
 const ZIP_URL = '/api/downloads/local-windows';
+const DESKTOP_APP_URL = 'https://github.com/Anti-Depressants-Dev-Team/spice/releases/latest';
 const MANAGER_SCRIPT_URL = `${INSTALL_URL}/spice-local-manager.ps1`;
 const INSTALL_SCRIPT_URL = `${INSTALL_URL}/install-spice-local.ps1`;
 const PORTABLE_SCRIPT_URL = `${INSTALL_URL}/spice-local-portable.ps1`;
@@ -47,6 +49,9 @@ export default function InstallGuide() {
           </a>
           <a className={styles.secondaryButton} href={PORTABLE_SCRIPT_URL}>
             Portable script
+          </a>
+          <a className={styles.secondaryButton} href={DESKTOP_APP_URL}>
+            Desktop app
           </a>
           <a className={styles.secondaryButton} href={CLOUD_ORIGIN}>
             Account portal
@@ -128,18 +133,9 @@ export default function InstallGuide() {
           <span>No admin rights required</span>
         </div>
         <div className={styles.commandGrid}>
-          <div>
-            <span>Local manager</span>
-            <pre className={styles.codeBlock}><code>{MANAGER_COMMAND}</code></pre>
-          </div>
-          <div>
-            <span>Install script</span>
-            <pre className={styles.codeBlock}><code>{INSTALL_COMMAND}</code></pre>
-          </div>
-          <div>
-            <span>Portable script</span>
-            <pre className={styles.codeBlock}><code>{PORTABLE_COMMAND}</code></pre>
-          </div>
+          <InstallCommandCard label="Local manager" command={MANAGER_COMMAND} />
+          <InstallCommandCard label="Install script" command={INSTALL_COMMAND} />
+          <InstallCommandCard label="Portable script" command={PORTABLE_COMMAND} />
         </div>
       </section>
     </main>

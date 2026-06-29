@@ -32,3 +32,15 @@ This note ranks additional features that could move from the hosted cloud lane t
 ## Current Recommendation
 
 Keep the current local runtime split, add the lightweight manager first, then move sync-related traffic into local queues before attempting a full Electron desktop manager. The expensive work is already off Vercel; the next meaningful savings are fewer cloud polls, fewer per-track writes, and clearer opt-in boundaries for collaboration features.
+
+## Electron Wrapper Fit
+
+The existing `Anti-Depressants-Dev-Team/spice` desktop app can house the local SPICE runtime, but it should do it as a runtime manager instead of copying the backend source directly into the Electron UI. The practical path is:
+
+1. Keep Electron as the shell, tray, updater, and native-integration host.
+2. Download or bundle the signed `spice-local-windows.zip` runtime.
+3. Verify the manifest hash, expand it under the app user data folder, and start `start-spice-local.ps1` on `127.0.0.1:3939`.
+4. Load `http://127.0.0.1:3939` in the Electron window after the runtime health endpoint responds.
+5. Expose local actions for install, update, start, stop, open logs, and reset runtime state.
+
+This keeps the app user-friendly while preserving the local/cloud split: Electron owns install and desktop features, the local Next runtime owns playback and media APIs, and Vercel/Neon keep account state. A fully embedded runtime is possible later, but download-on-first-run plus cached updates is the lower-risk bridge because it avoids rebuilding the desktop app for every backend patch.

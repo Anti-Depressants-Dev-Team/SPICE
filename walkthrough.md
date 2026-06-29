@@ -1,5 +1,19 @@
 # SPICE Walkthrough
 
+## v1.0.100
+
+- [Spice.Home main] Add a Desktop app button to the install page that points users to the latest `Anti-Depressants-Dev-Team/spice` release next to the local manager, scripts, ZIP, and account portal.
+- [Spice.Home main] Bump the visible diagnostics version to `Spice Media Core v1.0.100`.
+
+## v1.0.99
+
+- [Spice.Home main] Harden the Windows local manager so manifest and localhost URLs are normalized before update checks, runtime checks, or browser launch actions run.
+- [Spice.Home main] Fix hosted account sign-in resilience by routing account calls through the cloud API helper and accepting compatible account snapshot response shapes after auth.
+- [Spice.Home main] Remove the hosted setup checklist and duplicate portal tab row so normal users see one clear set of local-mode actions.
+- [Spice.Home main] Add compact copy buttons for the install-page PowerShell commands.
+- [Spice.Home main] Document how the Electron `spice` wrapper can house the local runtime as an install/update/start manager without merging backend source into the desktop UI.
+- [Spice.Home main] Bump the visible diagnostics version to `Spice Media Core v1.0.99`.
+
 ## v1.0.98
 
 - [Spice.Home main] Clean up the hosted cloud portal so normal users see install, open-local, account, and changelog actions first while runtime maps and feature ledgers move behind a collapsed technical details section.

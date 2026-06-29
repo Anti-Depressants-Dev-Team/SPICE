@@ -15,6 +15,42 @@ $script:RuntimeLabel = $null
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
+function Normalize-SpiceUrl {
+  param(
+    [string]$Value,
+    [string]$Fallback
+  )
+
+  $candidate = if ([string]::IsNullOrWhiteSpace($Value)) { $Fallback } else { $Value.Trim() }
+  if ($candidate -notmatch "^[a-zA-Z][a-zA-Z0-9+.-]*://") {
+    $scheme = if ($candidate -match "^(localhost|127\.0\.0\.1|\[?::1\]?)(:|/|$)") { "http" } else { "https" }
+    $candidate = "${scheme}://$candidate"
+  }
+
+  $parsed = [System.Uri]$null
+  if (-not [System.Uri]::TryCreate($candidate, [System.UriKind]::Absolute, [ref]$parsed)) {
+    throw "Invalid SPICE URL: $candidate"
+  }
+
+  if ($parsed.Scheme -ne "http" -and $parsed.Scheme -ne "https") {
+    throw "SPICE only supports http or https URLs. Got: $($parsed.Scheme)"
+  }
+
+  return $parsed.AbsoluteUri.TrimEnd("/")
+}
+
+function Join-SpiceUrl {
+  param(
+    [string]$BaseUrl,
+    [string]$Path
+  )
+
+  return "$($BaseUrl.TrimEnd("/"))/$($Path.TrimStart("/"))"
+}
+
+$script:ManifestUrl = Normalize-SpiceUrl $ManifestUrl "https://music.spice-app.xyz/api/updates/local-windows"
+$script:LocalUrl = Normalize-SpiceUrl $LocalUrl "http://127.0.0.1:3939"
+
 function Write-SpiceStatus {
   param([string]$Message)
 
@@ -34,7 +70,7 @@ function Get-SpiceFallbackHash {
 
 function Get-SpiceDownloadInfo {
   try {
-    $manifest = Invoke-RestMethod -Uri $ManifestUrl -Headers @{ Accept = "application/json" }
+    $manifest = Invoke-RestMethod -Uri $script:ManifestUrl -Headers @{ Accept = "application/json" }
     $downloadUrl = [string]$manifest.download.url
     $sha256 = [string]$manifest.download.sha256
     if ([string]::IsNullOrWhiteSpace($downloadUrl)) {
@@ -134,7 +170,7 @@ function Start-SpiceRuntime {
 
 function Test-SpiceRuntime {
   try {
-    $runtime = Invoke-RestMethod -Uri "$LocalUrl/api/runtime" -TimeoutSec 2
+    $runtime = Invoke-RestMethod -Uri (Join-SpiceUrl $script:LocalUrl "api/runtime") -TimeoutSec 2
     return "running ($($runtime.localRuntimeVersion))"
   } catch {
     return "not running"
@@ -221,7 +257,14 @@ $openButton = New-Object System.Windows.Forms.Button
 $openButton.Text = "Open local SPICE"
 $openButton.Location = New-Object System.Drawing.Point(286, 205)
 $openButton.Size = New-Object System.Drawing.Size(130, 38)
-$openButton.Add_Click({ Start-Process $LocalUrl })
+$openButton.Add_Click({
+  try {
+    Start-Process -FilePath $script:LocalUrl
+  } catch {
+    Write-SpiceStatus $_.Exception.Message
+    [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, "SPICE Local Manager", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null
+  }
+})
 $form.Controls.Add($openButton)
 
 $refreshButton = New-Object System.Windows.Forms.Button

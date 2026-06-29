@@ -30,6 +30,8 @@ interface CloudAccountPanelProps {
 
 const TOKEN_KEY = 'spice_cloud_token';
 const LEGACY_TOKEN_KEY = 'spice_token';
+const SPICE_RUNTIME_TARGET = process.env.NEXT_PUBLIC_SPICE_RUNTIME_TARGET === 'vercel' ? 'vercel' : 'local';
+const SPICE_CLOUD_API_ORIGIN = normalizeApiOrigin(process.env.NEXT_PUBLIC_SPICE_CLOUD_API_ORIGIN || 'https://music.spice-app.xyz');
 
 export default function CloudAccountPanel({ localRuntimeUrl }: CloudAccountPanelProps) {
   const [mode, setMode] = useState<AuthMode>('signin');
@@ -55,7 +57,7 @@ export default function CloudAccountPanel({ localRuntimeUrl }: CloudAccountPanel
 
   const loadUsername = useCallback(async (savedToken: string) => {
     try {
-      const response = await fetch('/api/cloud/account/username', {
+      const response = await fetch(cloudApiUrl('/account/username'), {
         headers: { Authorization: `Bearer ${savedToken}` },
       });
       const payload = await readJson(response);
@@ -68,10 +70,10 @@ export default function CloudAccountPanel({ localRuntimeUrl }: CloudAccountPanel
     }
   }, []);
 
-  const loadAccount = useCallback(async (savedToken: string) => {
+  const loadAccount = useCallback(async (savedToken: string, fallbackAccount: AccountSnapshot | null = null) => {
     setLoading(true);
     try {
-      const response = await fetch('/api/cloud/account/me', {
+      const response = await fetch(cloudApiUrl('/account/me'), {
         headers: { Authorization: `Bearer ${savedToken}` },
       });
       const payload = await readJson(response);
@@ -86,9 +88,17 @@ export default function CloudAccountPanel({ localRuntimeUrl }: CloudAccountPanel
         return;
       }
 
-      const nextAccount = (payload.account || payload.user) as AccountSnapshot | undefined;
+      const nextAccount = normalizeAccountSnapshot(payload);
       if (!nextAccount) {
-        setMessage('The cloud account service did not return an account snapshot.');
+        if (fallbackAccount) {
+          localStorage.setItem(TOKEN_KEY, savedToken);
+          setAccount(fallbackAccount);
+          setToken(savedToken);
+          setMessage('Cloud account connected. Account details will refresh on the next check.');
+          void loadUsername(savedToken);
+          return;
+        }
+        setMessage('Cloud account connected, but the account snapshot was empty. Sign out and try again if this repeats.');
         return;
       }
 
@@ -121,7 +131,7 @@ export default function CloudAccountPanel({ localRuntimeUrl }: CloudAccountPanel
     setMessage(mode === 'signin' ? 'Signing in...' : 'Creating account...');
 
     try {
-      const response = await fetch(`/api/cloud/auth/spice/${mode === 'signin' ? 'signin' : 'signup'}`, {
+      const response = await fetch(cloudApiUrl(`/auth/spice/${mode === 'signin' ? 'signin' : 'signup'}`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -132,20 +142,22 @@ export default function CloudAccountPanel({ localRuntimeUrl }: CloudAccountPanel
       });
       const payload = await readJson(response);
 
-      if (!response.ok || typeof payload.token !== 'string') {
+      const nextToken = readString(payload.token) || readString(payload.sessionToken) || readString(payload.accessToken);
+
+      if (!response.ok || !nextToken) {
         setMessage(friendlyAccountError(payload));
         return;
       }
 
-      localStorage.setItem(TOKEN_KEY, payload.token);
-      localStorage.setItem(LEGACY_TOKEN_KEY, payload.token);
+      localStorage.setItem(TOKEN_KEY, nextToken);
+      localStorage.setItem(LEGACY_TOKEN_KEY, nextToken);
       setPassword('');
-      setToken(payload.token);
-      const nextAccount = (payload.account || payload.user) as AccountSnapshot | undefined;
+      setToken(nextToken);
+      const nextAccount = normalizeAccountSnapshot(payload);
       if (nextAccount) {
         setAccount(nextAccount);
       }
-      await loadAccount(payload.token);
+      await loadAccount(nextToken, nextAccount);
     } catch {
       setMessage('Cloud account service is currently unavailable.');
     } finally {
@@ -161,7 +173,7 @@ export default function CloudAccountPanel({ localRuntimeUrl }: CloudAccountPanel
     setMessage('Saving username...');
 
     try {
-      const response = await fetch('/api/cloud/account/username', {
+      const response = await fetch(cloudApiUrl('/account/username'), {
         method: 'PUT',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -195,11 +207,6 @@ export default function CloudAccountPanel({ localRuntimeUrl }: CloudAccountPanel
   if (loading) {
     return (
       <div className={styles.accountCard}>
-        <div className={styles.accountTabs} aria-label="Hosted account management tabs">
-          <span className={styles.accountTabActive}>Account</span>
-          <a href="/changelog">Changelog</a>
-          <a href={localRuntimeUrl}>Local runtime</a>
-        </div>
         <p className={styles.statusNote}>{message}</p>
       </div>
     );
@@ -207,13 +214,6 @@ export default function CloudAccountPanel({ localRuntimeUrl }: CloudAccountPanel
 
   return (
     <div className={styles.accountCard}>
-      <div className={styles.accountTabs} aria-label="Hosted account management tabs">
-        <span className={styles.accountTabActive}>Account</span>
-        <a href="/changelog">Changelog</a>
-        <a href="/admin-dashboard">Admin</a>
-        <a href={localRuntimeUrl}>Local runtime</a>
-      </div>
-
       {account ? (
         <div className={styles.accountGrid}>
           <section className={styles.accountSummary} aria-label="Cloud account summary">
@@ -321,6 +321,74 @@ export default function CloudAccountPanel({ localRuntimeUrl }: CloudAccountPanel
 
 async function readJson(response: Response): Promise<Record<string, unknown>> {
   return response.json().catch(() => ({}));
+}
+
+function cloudApiUrl(path: string) {
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  if (SPICE_RUNTIME_TARGET === 'local') {
+    return `${SPICE_CLOUD_API_ORIGIN}/api/cloud${normalizedPath}`;
+  }
+
+  return `/api/cloud${normalizedPath}`;
+}
+
+function normalizeApiOrigin(origin: string) {
+  return origin.replace(/\/+$/, '');
+}
+
+function normalizeAccountSnapshot(payload: Record<string, unknown>): AccountSnapshot | null {
+  const nestedSession = isRecord(payload.session) ? payload.session : null;
+  const candidates = [
+    payload.account,
+    payload.user,
+    payload.accountSnapshot,
+    isRecord(nestedSession?.account) ? nestedSession.account : null,
+    isRecord(nestedSession?.user) ? nestedSession.user : null,
+  ];
+
+  for (const candidate of candidates) {
+    if (!isRecord(candidate)) continue;
+
+    const id = readString(candidate.id) || readString(candidate.userId);
+    const email = readString(candidate.email);
+    if (!id || !email) continue;
+
+    const accountRole = readString(candidate.accountRole) || readString(candidate.role) || 'user';
+    const subscription = normalizeSubscription(candidate.subscription);
+
+    return {
+      id,
+      email,
+      accountRole,
+      isAdmin: typeof candidate.isAdmin === 'boolean' ? candidate.isAdmin : accountRole === 'admin',
+      subscription,
+    };
+  }
+
+  return null;
+}
+
+function normalizeSubscription(value: unknown): AccountSubscription {
+  const subscription = isRecord(value) ? value : {};
+  const status = readString(subscription.status) || 'inactive';
+  const currentPeriodEnd = readString(subscription.currentPeriodEnd);
+
+  return {
+    tier: readString(subscription.tier) || 'free',
+    status,
+    provider: readString(subscription.provider),
+    currentPeriodEnd,
+    cancelAtPeriodEnd: typeof subscription.cancelAtPeriodEnd === 'boolean' ? subscription.cancelAtPeriodEnd : false,
+    isActive: typeof subscription.isActive === 'boolean' ? subscription.isActive : status === 'active' || status === 'trialing',
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function readString(value: unknown) {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
 function friendlyAccountError(payload: Record<string, unknown>) {

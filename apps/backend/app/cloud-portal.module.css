@@ -17,14 +17,10 @@
 }
 
 .hero {
-  display: grid;
-  grid-template-columns: minmax(0, 1.08fr) minmax(340px, 0.72fr);
-  gap: 18px;
-  align-items: stretch;
+  display: block;
 }
 
 .heroCopy,
-.topology,
 .modelGrid article,
 .ledgerItem,
 .accountCard,
@@ -38,11 +34,11 @@
 }
 
 .heroCopy {
-  min-height: 560px;
+  min-height: auto;
   display: flex;
   flex-direction: column;
   justify-content: center;
-  padding: clamp(24px, 5vw, 54px);
+  padding: clamp(24px, 5vw, 48px);
 }
 
 .brandLine {
@@ -64,11 +60,9 @@
 }
 
 .brandLine span,
-.topologyHeader span,
 .sectionHeading span,
 .modelGrid span,
 .ledgerItem span,
-.accountTabs span,
 .accountSummary span,
 .accountForm span,
 .quickStats dt {
@@ -80,7 +74,7 @@
 }
 
 .brandLine strong,
-.topologyHeader strong {
+.brandLine strong {
   display: block;
   margin-top: 3px;
   color: #f8fafc;
@@ -89,7 +83,7 @@
 .hero h1 {
   max-width: 780px;
   margin: 0;
-  font-size: clamp(2.5rem, 7vw, 5.7rem);
+  font-size: clamp(2.35rem, 6vw, 4.6rem);
   line-height: 0.98;
   letter-spacing: 0;
 }
@@ -112,28 +106,6 @@
   flex-wrap: wrap;
   gap: 10px;
   margin-top: 30px;
-}
-
-.portalTabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 26px;
-}
-
-.portalTabs a {
-  min-height: 38px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid rgba(94, 234, 212, 0.22);
-  border-radius: 8px;
-  background: rgba(20, 184, 166, 0.08);
-  color: #ccfbf1;
-  padding: 0 12px;
-  font-size: 0.82rem;
-  font-weight: 850;
-  text-decoration: none;
 }
 
 .primaryAction,
@@ -192,58 +164,6 @@
   font-weight: 850;
 }
 
-.topology {
-  padding: 18px;
-}
-
-.topologyHeader {
-  display: flex;
-  justify-content: space-between;
-  gap: 14px;
-  margin-bottom: 14px;
-}
-
-.nodeGrid {
-  display: grid;
-  gap: 10px;
-}
-
-.node {
-  padding: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.22);
-}
-
-.node:nth-child(2) span {
-  color: #facc15;
-}
-
-.node:nth-child(3) span {
-  color: #fb7185;
-}
-
-.node h2 {
-  margin: 10px 0 8px;
-  color: #f8fafc;
-  font-size: 1.25rem;
-}
-
-.node p {
-  margin: 0;
-  color: #cbd5e1;
-  font-size: 0.92rem;
-  line-height: 1.5;
-}
-
-.node small {
-  display: block;
-  margin-top: 14px;
-  color: #94a3b8;
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
-  font-size: 0.78rem;
-}
-
 .routeStrip {
   display: grid;
   gap: 8px;
@@ -297,7 +217,7 @@
   max-width: 740px;
   margin: 0;
   color: #f8fafc;
-  font-size: clamp(1.7rem, 4vw, 3rem);
+  font-size: clamp(1.45rem, 3vw, 2.35rem);
   line-height: 1.08;
 }
 
@@ -345,37 +265,6 @@
 
 .accountCard {
   padding: 18px;
-}
-
-.accountTabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 14px;
-}
-
-.accountTabs a,
-.accountTabActive {
-  min-height: 38px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 8px;
-  padding: 0 12px;
-  font-size: 0.82rem;
-  font-weight: 850;
-  text-decoration: none;
-}
-
-.accountTabs a {
-  border: 1px solid rgba(255, 255, 255, 0.11);
-  background: rgba(255, 255, 255, 0.055);
-  color: #f8fafc;
-}
-
-.accountTabActive {
-  background: #5eead4;
-  color: #031211 !important;
 }
 
 .accountGrid {
@@ -523,7 +412,6 @@
 }
 
 @media (max-width: 920px) {
-  .hero,
   .modelGrid,
   .ledgerItem,
   .accountGrid {
@@ -553,10 +441,7 @@
 
   .primaryAction,
   .secondaryAction,
-  .textAction,
-  .portalTabs a,
-  .accountTabs a,
-  .accountTabActive {
+  .textAction {
     width: 100%;
   }
 

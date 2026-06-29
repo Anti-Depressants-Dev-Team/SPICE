@@ -125,7 +125,7 @@
 
 .statusGrid span,
 .commandHeader span,
-.commandGrid span {
+.commandTitleRow span {
   display: block;
   color: #94a3b8;
   font-size: 0.75rem;
@@ -204,6 +204,35 @@
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
+}
+
+.commandCard {
+  min-width: 0;
+}
+
+.commandTitleRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.commandTitleRow button {
+  min-height: 28px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(125, 211, 252, 0.26);
+  border-radius: 6px;
+  background: rgba(14, 165, 233, 0.12);
+  color: #e0f2fe;
+  padding: 0 10px;
+  font-size: 0.75rem;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.commandTitleRow button:hover {
+  border-color: rgba(125, 211, 252, 0.5);
+  background: rgba(14, 165, 233, 0.2);
 }
 
 .codeBlock {

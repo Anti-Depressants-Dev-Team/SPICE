@@ -25,25 +25,19 @@ export default function CloudPortal() {
 
           <h1>Install locally, keep the cloud for accounts and sync.</h1>
           <p>
-            This page helps you install SPICE, manage your account, and open the local player.
-            Media search, stream extraction, lyrics, proxying, and playback run on your PC.
+            This is the thin cloud portal for the new local mode. Use it for accounts, setup,
+            and changelog access while the SPICE player and media services run on your PC.
           </p>
-
-          <nav className={styles.portalTabs} aria-label="Hosted SPICE portal tabs">
-            <a href="#account">Account</a>
-            <a href="/changelog">Changelog</a>
-            <a href={INSTALL_ORIGIN}>Install</a>
-          </nav>
 
           <div className={styles.actions} aria-label="Runtime actions">
             <a className={styles.primaryAction} href={INSTALL_ORIGIN}>
               Install local runtime
             </a>
             <a className={styles.secondaryAction} href={LOCAL_RUNTIME_URL}>
-              Open localhost:3939
+              Open local SPICE
             </a>
             <a className={styles.secondaryAction} href="/changelog">
-              Walkthrough changelog
+              Changelog
             </a>
           </div>
 
@@ -62,33 +56,6 @@ export default function CloudPortal() {
             </div>
           </dl>
         </div>
-
-        <aside className={styles.topology} aria-label="SPICE setup checklist">
-          <div className={styles.topologyHeader}>
-            <span>Setup checklist</span>
-            <strong>Use SPICE on this PC</strong>
-          </div>
-          <div className={styles.nodeGrid}>
-            <article className={styles.node}>
-              <span>Step 1</span>
-              <h2>Download the manager</h2>
-              <p>Use the install page to get the small Windows manager, installer script, portable script, or ZIP.</p>
-              <small>{INSTALL_ORIGIN}</small>
-            </article>
-            <article className={styles.node}>
-              <span>Step 2</span>
-              <h2>Start the local runtime</h2>
-              <p>The local runtime hosts the player and media routes on your PC.</p>
-              <small>{LOCAL_RUNTIME_URL}</small>
-            </article>
-            <article className={styles.node}>
-              <span>Step 3</span>
-              <h2>Use account sync only if needed</h2>
-              <p>Local playback works without sign-in. Sign in when you want sync, shared playlists, or profile features.</p>
-              <small>{CLOUD_ORIGIN}</small>
-            </article>
-          </div>
-        </aside>
       </section>
 
       <section id="account" className={styles.accountSection} aria-label="Hosted account management">
