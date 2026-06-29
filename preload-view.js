@@ -5,6 +5,28 @@
 
 const { ipcRenderer, webFrame } = require('electron');
 
+const IS_SPICE_LOCAL_RUNTIME =
+    (window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost') &&
+    window.location.port === '3939';
+
+function installNativeSessionSnapshot() {
+    if (!IS_SPICE_LOCAL_RUNTIME) return;
+    try {
+        const snapshot = ipcRenderer.sendSync('native-account-snapshot-sync');
+        if (snapshot && snapshot.token) {
+            window.localStorage.setItem('spice_cloud_token', snapshot.token);
+            window.localStorage.setItem('spice_token', snapshot.token);
+            if (snapshot.user) {
+                window.localStorage.setItem('spice_cloud_user', JSON.stringify(snapshot.user));
+            }
+        }
+    } catch (error) {
+        console.warn('[Preload] Native account snapshot unavailable:', error && error.message);
+    }
+}
+
+installNativeSessionSnapshot();
+
 let spicePolicy;
 if (window.trustedTypes && window.trustedTypes.createPolicy) {
     try {
@@ -97,16 +119,18 @@ const AD_CSS = `
     }
 `;
 
-try {
-    webFrame.insertCSS(AD_CSS);
-    console.log('[Preload] Aggressive CSS Injected (via webFrame)');
-} catch (e) {
-    console.error('[Preload] Failed to inject CSS:', e);
+if (!IS_SPICE_LOCAL_RUNTIME) {
+    try {
+        webFrame.insertCSS(AD_CSS);
+        console.log('[Preload] Aggressive CSS Injected (via webFrame)');
+    } catch (e) {
+        console.error('[Preload] Failed to inject CSS:', e);
+    }
 }
 
 // NUCLEAR OPTION 2: MutationObserver for INSTANT Reaction
 // This watches the DOM for changes and kills ads the millisecond they appear.
-window.addEventListener('DOMContentLoaded', () => {
+if (!IS_SPICE_LOCAL_RUNTIME) window.addEventListener('DOMContentLoaded', () => {
     const observer = new MutationObserver(() => {
         const video = document.querySelector('video');
 
@@ -198,6 +222,7 @@ function buildVkPlayer() {
 
 
 ipcRenderer.on('vk-player-config', (event, enabled) => {
+    if (IS_SPICE_LOCAL_RUNTIME) return;
     console.log('[Preload] Received vk-player-config IPC event. Enabled status:', enabled);
     if (enabled) {
         console.log('[Preload] VK Player is enabled. Checking document readyState:', document.readyState);
@@ -214,6 +239,10 @@ ipcRenderer.on('vk-player-config', (event, enabled) => {
 
 // IPC handler to fetch Innertube keys from the actual renderer environment
 ipcRenderer.on('get-yt-keys', () => {
+    if (IS_SPICE_LOCAL_RUNTIME) {
+        ipcRenderer.send('yt-keys-reply', { apiKey: null, context: null });
+        return;
+    }
     console.log('[Preload] Main process requested ytcfg keys');
 
     // Attempt 1: Window object
@@ -318,10 +347,12 @@ function injectScript() {
     }
 }
 
-injectScript();
+if (!IS_SPICE_LOCAL_RUNTIME) {
+    injectScript();
+}
 
 // Listen for the stolen credentials and send them to the main process
-window.addEventListener('message', (event) => {
+if (!IS_SPICE_LOCAL_RUNTIME) window.addEventListener('message', (event) => {
     if (event.source !== window || !event.data || !event.data.type) return;
 
     if (event.data.type === 'SPICE_API_KEY') {

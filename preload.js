@@ -25,6 +25,13 @@ contextBridge.exposeInMainWorld("api", {
       return () => ipcRenderer.removeListener("spice-runtime-status", listener);
     },
   },
+  native: {
+    getStatus: () => ipcRenderer.invoke("native-app-status"),
+    prepareRuntime: () => ipcRenderer.invoke("native-runtime-prepare"),
+    auth: (payload) => ipcRenderer.invoke("native-auth", payload),
+    continueOffline: () => ipcRenderer.invoke("native-continue-offline"),
+    signOut: () => ipcRenderer.invoke("native-sign-out"),
+  },
   getSettings: () => ipcRenderer.invoke("get-settings"),
   setAdBlocker: (enabled) => ipcRenderer.send("set-adblocker", enabled),
   setVkPlayer: (enabled) => ipcRenderer.send("set-vk-player", enabled),

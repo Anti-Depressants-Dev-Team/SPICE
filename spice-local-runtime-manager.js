@@ -18,6 +18,7 @@ class SpiceLocalRuntimeManager {
     this.rootDir = options.rootDir || path.join(this.app.getPath("userData"), "spice-local-runtime");
     this.runtimeDir = path.join(this.rootDir, "runtime");
     this.tempDir = path.join(this.rootDir, "tmp");
+    this.bundledRuntimeDir = options.bundledRuntimeDir || null;
     this.child = null;
     this.busy = false;
     this.message = "Ready";
@@ -30,19 +31,71 @@ class SpiceLocalRuntimeManager {
 
   async getStatus() {
     const installedVersion = this.getInstalledVersion();
+    const bundledVersion = this.getBundledVersion();
     const running = await this.isRunning();
 
     return {
       supported: this.supported,
       installed: Boolean(installedVersion),
       installedVersion,
+      bundled: Boolean(bundledVersion),
+      bundledVersion,
       running,
       busy: this.busy,
       message: this.message,
       installDir: this.runtimeDir,
+      bundledDir: this.bundledRuntimeDir,
       localUrl: this.localUrl,
       manifestUrl: this.manifestUrl,
     };
+  }
+
+  async ensureBundledRuntimeInstalled() {
+    if (!this.supported) {
+      throw new Error("The managed SPICE local runtime installer is currently Windows-only.");
+    }
+    if (!this.hasBundledRuntime()) {
+      return this.getStatus();
+    }
+
+    const installedVersion = this.getInstalledVersion();
+    const bundledVersion = this.getBundledVersion();
+    if (installedVersion && bundledVersion && compareVersions(installedVersion, bundledVersion) >= 0) {
+      return this.getStatus();
+    }
+
+    if ((await this.isRunning()) && !this.child) {
+      throw new Error("SPICE local runtime is already running. Close the external runtime before replacing it with the bundled runtime.");
+    }
+
+    if (this.busy) {
+      throw new Error("SPICE local runtime is already busy.");
+    }
+
+    this.busy = true;
+    this.message = `Installing bundled SPICE local runtime ${bundledVersion || "included"}...`;
+    this.emitStatus();
+
+    const scratchDir = path.join(this.tempDir, `bundled-${Date.now()}`);
+    const stagingDir = path.join(scratchDir, "runtime");
+
+    try {
+      fs.mkdirSync(stagingDir, { recursive: true });
+      copyDirectory(this.bundledRuntimeDir, stagingDir);
+
+      await this.stop();
+      fs.mkdirSync(this.rootDir, { recursive: true });
+      fs.rmSync(this.runtimeDir, { recursive: true, force: true });
+      fs.renameSync(stagingDir, this.runtimeDir);
+
+      this.message = `Bundled SPICE local runtime ${bundledVersion || "included"} installed.`;
+      this.emitStatus();
+      return this.getStatus();
+    } finally {
+      fs.rmSync(scratchDir, { recursive: true, force: true });
+      this.busy = false;
+      this.emitStatus();
+    }
   }
 
   async fetchManifest() {
@@ -135,7 +188,11 @@ class SpiceLocalRuntimeManager {
 
     const startScript = path.join(this.runtimeDir, "start-spice-local.ps1");
     if (!fs.existsSync(startScript)) {
-      throw new Error("SPICE local runtime is not installed yet.");
+      if (this.hasBundledRuntime()) {
+        await this.ensureBundledRuntimeInstalled();
+      } else {
+        throw new Error("SPICE local runtime is not installed yet.");
+      }
     }
 
     this.child = spawn(
@@ -216,15 +273,15 @@ class SpiceLocalRuntimeManager {
   }
 
   getInstalledVersion() {
-    const manifestPath = path.join(this.runtimeDir, "spice-local-manifest.json");
-    if (!fs.existsSync(manifestPath)) return null;
+    return readRuntimeVersion(this.runtimeDir);
+  }
 
-    try {
-      const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-      return typeof manifest.version === "string" ? manifest.version : "unknown";
-    } catch {
-      return "unknown";
-    }
+  getBundledVersion() {
+    return readRuntimeVersion(this.bundledRuntimeDir);
+  }
+
+  hasBundledRuntime() {
+    return Boolean(this.bundledRuntimeDir && fs.existsSync(path.join(this.bundledRuntimeDir, "start-spice-local.ps1")));
   }
 
   async downloadFile(url, targetPath) {
@@ -268,6 +325,47 @@ function resolveRuntimeDownloadUrl(value, manifestUrl) {
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function readRuntimeVersion(runtimeDir) {
+  if (!runtimeDir) return null;
+  const manifestPath = path.join(runtimeDir, "spice-local-manifest.json");
+  if (!fs.existsSync(manifestPath)) return null;
+
+  try {
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    return typeof manifest.version === "string" ? manifest.version : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+function compareVersions(left, right) {
+  const leftParts = String(left || "").split(".").map((part) => Number(part) || 0);
+  const rightParts = String(right || "").split(".").map((part) => Number(part) || 0);
+  const length = Math.max(leftParts.length, rightParts.length);
+  for (let index = 0; index < length; index += 1) {
+    const delta = (leftParts[index] || 0) - (rightParts[index] || 0);
+    if (delta !== 0) return delta;
+  }
+  return 0;
+}
+
+function copyDirectory(sourceDir, destinationDir) {
+  if (!sourceDir || !fs.existsSync(sourceDir)) {
+    throw new Error("Bundled SPICE local runtime is missing.");
+  }
+
+  fs.mkdirSync(destinationDir, { recursive: true });
+  for (const entry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
+    const sourcePath = path.join(sourceDir, entry.name);
+    const destinationPath = path.join(destinationDir, entry.name);
+    if (entry.isDirectory()) {
+      copyDirectory(sourcePath, destinationPath);
+    } else if (entry.isFile()) {
+      fs.copyFileSync(sourcePath, destinationPath);
+    }
+  }
 }
 
 function sha256File(filePath) {

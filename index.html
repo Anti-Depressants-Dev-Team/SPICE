@@ -93,6 +93,11 @@
                 case 'spiceRuntimeInstall': return window.api.spiceRuntime && window.api.spiceRuntime.install();
                 case 'spiceRuntimeStart': return window.api.spiceRuntime && window.api.spiceRuntime.start();
                 case 'spiceRuntimeStop': return window.api.spiceRuntime && window.api.spiceRuntime.stop();
+                case 'nativeAppStatus': return window.api.native && window.api.native.getStatus();
+                case 'nativePrepareRuntime': return window.api.native && window.api.native.prepareRuntime();
+                case 'nativeAuth': return window.api.native && window.api.native.auth(args[0]);
+                case 'nativeContinueOffline': return window.api.native && window.api.native.continueOffline();
+                case 'nativeSignOut': return window.api.native && window.api.native.signOut();
                 case 'windowControls':
                     if (args[0] === 'minimize') return window.api.windowControls.minimize();
                     if (args[0] === 'maximize') return window.api.windowControls.maximize();
@@ -174,6 +179,7 @@
 
     function HomeScreen(props) {
         var onLoad = props.onLoad;
+        var nativeMode = !!props.nativeMode;
         var runtimeManagerAvailable = !!(window.api && window.api.spiceRuntime);
         var _runtimeStatus = useState(null);
         var runtimeStatus = _runtimeStatus[0];
@@ -184,6 +190,27 @@
         var _runtimeMessage = useState('');
         var runtimeMessage = _runtimeMessage[0];
         var setRuntimeMessage = _runtimeMessage[1];
+        var _nativeStatus = useState(null);
+        var nativeStatus = _nativeStatus[0];
+        var setNativeStatus = _nativeStatus[1];
+        var _nativeBusy = useState(false);
+        var nativeBusy = _nativeBusy[0];
+        var setNativeBusy = _nativeBusy[1];
+        var _nativeMessage = useState('');
+        var nativeMessage = _nativeMessage[0];
+        var setNativeMessage = _nativeMessage[1];
+        var _authMode = useState('signin');
+        var authMode = _authMode[0];
+        var setAuthMode = _authMode[1];
+        var _authEmail = useState('');
+        var authEmail = _authEmail[0];
+        var setAuthEmail = _authEmail[1];
+        var _authPassword = useState('');
+        var authPassword = _authPassword[0];
+        var setAuthPassword = _authPassword[1];
+        var _authUsername = useState('');
+        var authUsername = _authUsername[0];
+        var setAuthUsername = _authUsername[1];
 
         useEffect(function() {
             if (!runtimeManagerAvailable) return;
@@ -197,6 +224,11 @@
                 });
             }
         }, []);
+
+        useEffect(function() {
+            if (!nativeMode) return;
+            refreshNativeStatus();
+        }, [nativeMode]);
 
         async function refreshRuntimeStatus() {
             var status = await callApi('spiceRuntimeStatus');
@@ -229,6 +261,195 @@
             if (runtimeStatus.running) return 'Running on 127.0.0.1:3939';
             if (runtimeStatus.installed) return 'Installed ' + (runtimeStatus.installedVersion || '');
             return 'Not installed';
+        }
+
+        async function refreshNativeStatus() {
+            var status = await callApi('nativeAppStatus');
+            if (status) {
+                setNativeStatus(status);
+                if (status.runtime && status.runtime.message) setNativeMessage(status.runtime.message);
+            }
+        }
+
+        async function prepareNativeRuntime() {
+            setNativeBusy(true);
+            setNativeMessage('Starting local runtime...');
+            try {
+                var status = await callApi('nativePrepareRuntime');
+                if (status) {
+                    setRuntimeStatus(status);
+                    setNativeMessage(status.message || 'Local runtime is ready.');
+                }
+                await refreshNativeStatus();
+                return true;
+            } catch (err) {
+                setNativeMessage(err && err.message ? err.message : 'Local runtime setup failed.');
+                return false;
+            } finally {
+                setNativeBusy(false);
+            }
+        }
+
+        async function handleNativeAuth(e) {
+            e.preventDefault();
+            setNativeBusy(true);
+            setNativeMessage(authMode === 'register' ? 'Creating SPICE account...' : 'Signing in...');
+            try {
+                var runtimeReady = await prepareNativeRuntime();
+                if (!runtimeReady) return;
+                await callApi('nativeAuth', {
+                    mode: authMode,
+                    email: authEmail,
+                    password: authPassword,
+                    username: authUsername,
+                });
+                setNativeMessage('Account connected. Opening SPICE Music...');
+                await refreshNativeStatus();
+                onLoad('spice_crazy');
+            } catch (err) {
+                setNativeMessage(err && err.message ? err.message : 'SPICE account setup failed.');
+            } finally {
+                setNativeBusy(false);
+            }
+        }
+
+        async function continueNativeOffline() {
+            setNativeBusy(true);
+            setNativeMessage('Preparing local-only SPICE...');
+            try {
+                await callApi('nativeContinueOffline');
+                await refreshNativeStatus();
+                onLoad('spice_crazy');
+            } catch (err) {
+                setNativeMessage(err && err.message ? err.message : 'Could not start local SPICE.');
+            } finally {
+                setNativeBusy(false);
+            }
+        }
+
+        async function launchNativeSpice() {
+            setNativeBusy(true);
+            setNativeMessage('Opening SPICE Music...');
+            try {
+                var runtimeReady = await prepareNativeRuntime();
+                if (!runtimeReady) return;
+                onLoad('spice_crazy');
+            } finally {
+                setNativeBusy(false);
+            }
+        }
+
+        if (nativeMode) {
+            var account = nativeStatus && nativeStatus.account;
+            var runtime = nativeStatus && nativeStatus.runtime;
+            var runtimeText = runtime
+                ? (runtime.running ? 'Runtime running on 127.0.0.1:3939' : runtime.installed ? 'Runtime installed' : runtime.bundled ? 'Bundled runtime ready' : 'Runtime not prepared')
+                : 'Checking runtime';
+
+            return html`
+                <div class="flex-1 relative grid grid-cols-1 lg:grid-cols-[minmax(0,0.92fr)_minmax(380px,520px)] gap-8 px-8 py-8 overflow-auto"
+                     style=${{ background: 'radial-gradient(circle at 32% 24%, rgba(168,85,247,0.13), transparent 34%), #0a0a0c' }}>
+                    <section class="flex flex-col justify-center min-h-[520px]">
+                        <div class="max-w-[680px]">
+                            <div class="inline-flex items-center gap-2 rounded-full border border-purple-400/20 bg-purple-500/10 px-3 py-1 text-[11px] uppercase tracking-[0.22em] text-purple-200 mb-5">
+                                ${icon(IC.cloud, 15)} Native SPICE
+                            </div>
+                            <h1 class="text-5xl font-semibold tracking-normal leading-tight mb-4">
+                                SPICE Music, local from the first launch.
+                            </h1>
+                            <p class="text-gray-400 text-base leading-7 max-w-[620px]">
+                                The desktop app starts the bundled local runtime, keeps media extraction on this PC, and only uses the cloud account service for sign-in and sync.
+                            </p>
+
+                            <div class="grid sm:grid-cols-3 gap-3 mt-8">
+                                <div class="rounded-xl border border-white/[0.07] bg-white/[0.035] p-4">
+                                    <div class="text-[10px] uppercase tracking-[0.2em] text-gray-500 mb-2">Runtime</div>
+                                    <div class="text-sm text-gray-100">${runtimeText}</div>
+                                </div>
+                                <div class="rounded-xl border border-white/[0.07] bg-white/[0.035] p-4">
+                                    <div class="text-[10px] uppercase tracking-[0.2em] text-gray-500 mb-2">Account</div>
+                                    <div class="text-sm text-gray-100">${account && account.user ? (account.user.email || 'Connected') : 'Optional'}</div>
+                                </div>
+                                <div class="rounded-xl border border-white/[0.07] bg-white/[0.035] p-4">
+                                    <div class="text-[10px] uppercase tracking-[0.2em] text-gray-500 mb-2">Updates</div>
+                                    <div class="text-sm text-gray-100">${nativeStatus && nativeStatus.updatesEnabled ? 'Automatic' : 'Available in packaged builds'}</div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="self-center rounded-2xl border border-white/[0.08] bg-black/35 p-5 shadow-[0_24px_80px_rgba(0,0,0,0.35)]">
+                        ${account ? html`
+                            <div>
+                                <div class="text-[11px] uppercase tracking-[0.22em] text-purple-300 mb-2">Signed in</div>
+                                <h2 class="text-2xl font-semibold mb-2">${account.user && account.user.email ? account.user.email : 'SPICE account connected'}</h2>
+                                <p class="text-sm text-gray-400 mb-5">Your session will be injected into the local SPICE runtime when the player opens.</p>
+                                <div class="flex flex-wrap gap-2">
+                                    <button class="rounded-lg bg-purple-500 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-400 disabled:opacity-40"
+                                            disabled=${nativeBusy}
+                                            onClick=${launchNativeSpice}>
+                                        Open SPICE Music
+                                    </button>
+                                    <button class="rounded-lg border border-white/10 px-4 py-2 text-sm font-semibold text-gray-300 hover:bg-white/5 disabled:opacity-40"
+                                            disabled=${nativeBusy}
+                                            onClick=${async function() { await callApi('nativeSignOut'); await refreshNativeStatus(); }}>
+                                        Sign out
+                                    </button>
+                                </div>
+                            </div>
+                        ` : html`
+                            <form onSubmit=${handleNativeAuth}>
+                                <div class="text-[11px] uppercase tracking-[0.22em] text-purple-300 mb-2">First launch</div>
+                                <h2 class="text-2xl font-semibold mb-2">Connect your SPICE account</h2>
+                                <p class="text-sm text-gray-400 mb-5">Sign in for sync and account features, or continue local-only.</p>
+
+                                <div class="grid grid-cols-2 gap-2 mb-4 rounded-xl bg-white/[0.04] p-1">
+                                    <button type="button" class=${'rounded-lg px-3 py-2 text-sm font-semibold ' + (authMode === 'signin' ? 'bg-purple-500 text-white' : 'text-gray-400 hover:text-white')}
+                                            onClick=${function() { setAuthMode('signin'); }}>
+                                        Sign in
+                                    </button>
+                                    <button type="button" class=${'rounded-lg px-3 py-2 text-sm font-semibold ' + (authMode === 'register' ? 'bg-purple-500 text-white' : 'text-gray-400 hover:text-white')}
+                                            onClick=${function() { setAuthMode('register'); }}>
+                                        Register
+                                    </button>
+                                </div>
+
+                                <label class="block text-xs font-semibold text-gray-300 mb-1">Email</label>
+                                <input class="mb-3 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2.5 text-sm text-white outline-none focus:border-purple-400"
+                                       type="email" autoComplete="email" required
+                                       value=${authEmail}
+                                       onInput=${function(e) { setAuthEmail(e.target.value); }} />
+
+                                ${authMode === 'register' && html`
+                                    <label class="block text-xs font-semibold text-gray-300 mb-1">Username</label>
+                                    <input class="mb-3 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2.5 text-sm text-white outline-none focus:border-purple-400"
+                                           type="text" autoComplete="username" required
+                                           value=${authUsername}
+                                           onInput=${function(e) { setAuthUsername(e.target.value); }} />
+                                `}
+
+                                <label class="block text-xs font-semibold text-gray-300 mb-1">Password</label>
+                                <input class="mb-4 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2.5 text-sm text-white outline-none focus:border-purple-400"
+                                       type="password" autoComplete=${authMode === 'signin' ? 'current-password' : 'new-password'} required
+                                       value=${authPassword}
+                                       onInput=${function(e) { setAuthPassword(e.target.value); }} />
+
+                                <button class="w-full rounded-lg bg-purple-500 px-4 py-2.5 text-sm font-semibold text-white hover:bg-purple-400 disabled:opacity-40"
+                                        disabled=${nativeBusy}>
+                                    ${nativeBusy ? 'Working...' : authMode === 'register' ? 'Create account and open SPICE' : 'Sign in and open SPICE'}
+                                </button>
+                                <button type="button" class="mt-2 w-full rounded-lg border border-white/10 px-4 py-2.5 text-sm font-semibold text-gray-300 hover:bg-white/5 disabled:opacity-40"
+                                        disabled=${nativeBusy}
+                                        onClick=${continueNativeOffline}>
+                                    Continue local-only
+                                </button>
+                            </form>
+                        `}
+
+                        <div class="mt-4 min-h-[18px] text-xs text-gray-500">${nativeMessage}</div>
+                    </section>
+                </div>
+            `;
         }
 
         return html`
@@ -511,11 +732,13 @@
         var setShowVolumePopup = props.setShowVolumePopup;
         var topSearchVisible = props.topSearchVisible;
         var toolbarButtons = props.toolbarButtons || {};
+        var nativeMode = !!props.nativeMode;
         var activeService = props.activeService;
         var onOpenUrlModal = props.onOpenUrlModal;
-        var showServiceTools = activeService === 'yt';
-        var showYoutubeTools = showServiceTools;
+        var showServiceTools = activeService === 'yt' || activeService === 'spice_crazy';
+        var showYoutubeTools = activeService === 'yt';
         function toolbarVisible(key) {
+            if (nativeMode && key === 'openUrl') return false;
             return toolbarButtons[key] !== false;
         }
 
@@ -736,6 +959,7 @@
         var _url   = useState(false);            var showUrlModal = _url[0];  var setShowUrlModal = _url[1];
         var _ts    = useState(false);            var topSearchVisible = _ts[0]; var setTopSearchVisible = _ts[1];
         var _tb    = useState({});               var toolbarButtons = _tb[0]; var setToolbarButtons = _tb[1];
+        var _nm    = useState(new URLSearchParams(window.location.search).get('native') === '1'); var nativeMode = _nm[0]; var setNativeMode = _nm[1];
         var _drag  = useState(false);            var isDragging = _drag[0];   var setIsDragging = _drag[1];
         var _dragT = useState(0);                var dragTime = _dragT[0];    var setDragTime = _dragT[1];
 
@@ -837,6 +1061,7 @@
                 if (window.api && window.api.getSettings) {
                     var settings = await window.api.getSettings();
                     setToolbarButtons((settings && settings.toolbarButtons) || {});
+                    setNativeMode(!!(settings && settings.nativeMode));
                 }
             })();
         }, []);
@@ -949,6 +1174,7 @@
                     setShowVolumePopup=${setShowVolumePopup}
                     topSearchVisible=${topSearchVisible}
                     toolbarButtons=${toolbarButtons}
+                    nativeMode=${nativeMode}
                     activeService=${activeService}
                     onOpenUrlModal=${openUrlModal}
                 />
@@ -963,7 +1189,7 @@
                 `}
 
                 ${!serviceActive && html`
-                    <${HomeScreen} onLoad=${handleLoadService} />
+                    <${HomeScreen} onLoad=${handleLoadService} nativeMode=${nativeMode} />
                 `}
 
                 ${showUrlModal && html`

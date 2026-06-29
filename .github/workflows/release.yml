@@ -55,6 +55,10 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
+      - name: Prepare bundled SPICE runtime (Windows)
+        if: matrix.os == 'windows-latest'
+        run: npm run native:prepare-runtime
+
       # Builds and publishes depending on the runner OS
       - name: Build & Publish Release (Windows)
         if: matrix.os == 'windows-latest'
