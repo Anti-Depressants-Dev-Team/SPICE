@@ -29,6 +29,8 @@ export interface LocalRuntimeUpdateStatus {
 const DEFAULT_CLOUD_API_ORIGIN = 'https://music.spice-app.xyz';
 const DEFAULT_INSTALL_ORIGIN = 'https://install.spice-app.xyz';
 const DEFAULT_CHANNEL = 'stable';
+const DEFAULT_LOCAL_WINDOWS_DOWNLOAD_URL =
+  'https://github.com/Anti-Depressants-Dev-Team/SPICE-but-its-crazier-cuz-yes-/releases/latest/download/spice-local-windows.zip';
 
 export function currentLocalRuntimeVersion() {
   return normalizeVersion(process.env.SPICE_LOCAL_RUNTIME_VERSION || SPICE_MEDIA_CORE_VERSION);
@@ -40,9 +42,13 @@ export function localUpdateManifestUrl(cloudApiOrigin = defaultCloudApiOrigin())
   return `${trimTrailingSlash(cloudApiOrigin)}/api/updates/local-windows`;
 }
 
+export function localWindowsDownloadUrl() {
+  return process.env.SPICE_LOCAL_WINDOWS_DOWNLOAD_URL?.trim() || DEFAULT_LOCAL_WINDOWS_DOWNLOAD_URL;
+}
+
 export function buildLocalWindowsUpdateManifest(): LocalRuntimeUpdateManifest {
   const version = normalizeVersion(process.env.SPICE_LOCAL_WINDOWS_VERSION || currentLocalRuntimeVersion());
-  const downloadUrl = process.env.SPICE_LOCAL_WINDOWS_DOWNLOAD_URL?.trim();
+  const downloadUrl = localWindowsDownloadUrl();
   const sha256 = process.env.SPICE_LOCAL_WINDOWS_SHA256?.trim();
   const sizeBytes = Number(process.env.SPICE_LOCAL_WINDOWS_SIZE_BYTES);
 

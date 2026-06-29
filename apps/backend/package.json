@@ -11,6 +11,7 @@
     "build:local": "node scripts/run-next.mjs build local",
     "build:vercel": "node scripts/run-next.mjs build vercel",
     "package:local:windows": "node scripts/package-local-windows.mjs",
+    "package:local:windows:full": "pnpm build:local && pnpm package:local:windows",
     "start": "next start",
     "start:local": "node scripts/run-next.mjs start local",
     "lint": "eslint",

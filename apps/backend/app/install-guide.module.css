@@ -97,21 +97,21 @@
 
 .statusGrid,
 .grid,
-.sqlPanel {
+.commandPanel {
   width: min(1120px, 100%);
   margin: 0 auto;
 }
 
 .statusGrid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
   padding: 18px 0 28px;
 }
 
 .statusGrid div,
 .panel,
-.sqlPanel {
+.commandPanel {
   border: 1px solid rgba(255, 255, 255, 0.09);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.045);
@@ -124,8 +124,8 @@
 }
 
 .statusGrid span,
-.sqlHeader span,
-.verifyBlock span {
+.commandHeader span,
+.commandGrid span {
   display: block;
   color: #94a3b8;
   font-size: 0.75rem;
@@ -145,7 +145,7 @@
 
 .grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 14px;
 }
 
@@ -154,7 +154,7 @@
 }
 
 .panel h2,
-.sqlHeader h2 {
+.commandHeader h2 {
   margin: 8px 0 16px;
   color: #ffffff;
   font-size: 1.25rem;
@@ -177,7 +177,7 @@
 
 .steps code,
 .lede code,
-.verifyBlock code {
+.commandGrid code {
   border: 1px solid rgba(125, 211, 252, 0.18);
   border-radius: 6px;
   background: rgba(14, 165, 233, 0.09);
@@ -187,12 +187,12 @@
   overflow-wrap: anywhere;
 }
 
-.sqlPanel {
+.commandPanel {
   margin-top: 14px;
   padding: 22px;
 }
 
-.sqlHeader {
+.commandHeader {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -200,9 +200,15 @@
   margin-bottom: 16px;
 }
 
+.commandGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
 .codeBlock {
-  max-height: 420px;
-  margin: 0;
+  min-height: 78px;
+  margin: 8px 0 0;
   overflow: auto;
   border: 1px solid rgba(148, 163, 184, 0.16);
   border-radius: 8px;
@@ -214,16 +220,10 @@
   white-space: pre;
 }
 
-.verifyBlock {
-  display: grid;
-  gap: 10px;
-  margin-top: 16px;
-}
-
-.verifyBlock code {
-  display: block;
-  overflow-wrap: anywhere;
-  line-height: 1.5;
+@media (max-width: 1100px) {
+  .grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 900px) {
@@ -232,7 +232,8 @@
   }
 
   .statusGrid,
-  .grid {
+  .grid,
+  .commandGrid {
     grid-template-columns: 1fr;
   }
 
@@ -247,7 +248,7 @@
   }
 
   .brandRow,
-  .sqlHeader {
+  .commandHeader {
     flex-direction: column;
     align-items: flex-start;
   }

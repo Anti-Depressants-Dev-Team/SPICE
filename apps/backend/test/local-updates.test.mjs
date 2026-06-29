@@ -5,6 +5,7 @@ import {
   buildLocalWindowsUpdateManifest,
   compareVersions,
   localUpdateManifestUrl,
+  localWindowsDownloadUrl,
 } from '../lib/local-updates.ts';
 
 test('compareVersions compares dotted release versions', () => {
@@ -25,6 +26,18 @@ test('localUpdateManifestUrl defaults to the cloud update route', () => {
   else process.env.SPICE_LOCAL_UPDATE_MANIFEST_URL = originalManifest;
   if (originalCloud === undefined) delete process.env.SPICE_CLOUD_API_ORIGIN;
   else process.env.SPICE_CLOUD_API_ORIGIN = originalCloud;
+});
+
+test('localWindowsDownloadUrl falls back to the latest public GitHub release', () => {
+  const originalUrl = process.env.SPICE_LOCAL_WINDOWS_DOWNLOAD_URL;
+  delete process.env.SPICE_LOCAL_WINDOWS_DOWNLOAD_URL;
+
+  assert.equal(
+    localWindowsDownloadUrl(),
+    'https://github.com/Anti-Depressants-Dev-Team/SPICE-but-its-crazier-cuz-yes-/releases/latest/download/spice-local-windows.zip',
+  );
+
+  restoreEnv('SPICE_LOCAL_WINDOWS_DOWNLOAD_URL', originalUrl);
 });
 
 test('buildLocalWindowsUpdateManifest uses configured artifact metadata without requiring a database', () => {

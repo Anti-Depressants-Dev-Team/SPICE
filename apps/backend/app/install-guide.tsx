@@ -9,33 +9,15 @@ const CLOUD_ORIGIN = process.env.SPICE_CLOUD_API_ORIGIN?.trim()
 const LOCAL_ORIGIN = process.env.NEXT_PUBLIC_SPICE_LOCAL_API_ORIGIN?.trim()
   || process.env.SPICE_LOCAL_API_ORIGIN?.trim()
   || 'http://127.0.0.1:3939';
-const DEFAULT_RELEASE_DOWNLOAD_URL = 'https://github.com/Anti-Depressants-Dev-Team/SPICE-but-its-crazier-cuz-yes-/releases/latest/download/spice-local-windows.zip';
-const DOWNLOAD_URL = process.env.SPICE_LOCAL_WINDOWS_DOWNLOAD_URL?.trim();
 const MANIFEST_URL = `${trimTrailingSlash(CLOUD_ORIGIN)}/api/updates/local-windows`;
 const INSTALL_URL = trimTrailingSlash(INSTALL_ORIGIN);
-
-const feedbackSql = `CREATE TABLE IF NOT EXISTS "feedback_submissions" (
-  "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-  "user_id" uuid NOT NULL,
-  "email" text NOT NULL,
-  "category" text NOT NULL,
-  "content" text NOT NULL,
-  "rating" integer,
-  "created_at" timestamp with time zone DEFAULT now() NOT NULL
-);
-
-DO $$ BEGIN
- ALTER TABLE "feedback_submissions" ADD CONSTRAINT "feedback_submissions_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;
-EXCEPTION
- WHEN duplicate_object THEN null;
-END $$;
-
-CREATE INDEX IF NOT EXISTS "feedback_submissions_user_idx" ON "feedback_submissions" USING btree ("user_id");
-CREATE INDEX IF NOT EXISTS "feedback_submissions_created_at_idx" ON "feedback_submissions" USING btree ("created_at");`;
-const verifySql = `select table_name
-from information_schema.tables
-where table_schema = 'public'
-  and table_name = 'feedback_submissions';`;
+const ZIP_URL = '/api/downloads/local-windows';
+const MANAGER_SCRIPT_URL = `${INSTALL_URL}/spice-local-manager.ps1`;
+const INSTALL_SCRIPT_URL = `${INSTALL_URL}/install-spice-local.ps1`;
+const PORTABLE_SCRIPT_URL = `${INSTALL_URL}/spice-local-portable.ps1`;
+const MANAGER_COMMAND = `powershell -NoProfile -ExecutionPolicy Bypass -Command "irm ${MANAGER_SCRIPT_URL} | iex"`;
+const INSTALL_COMMAND = `powershell -NoProfile -ExecutionPolicy Bypass -Command "irm ${INSTALL_SCRIPT_URL} | iex"`;
+const PORTABLE_COMMAND = `powershell -NoProfile -ExecutionPolicy Bypass -File .\\spice-local-portable.ps1`;
 
 export default function InstallGuide() {
   return (
@@ -49,22 +31,25 @@ export default function InstallGuide() {
           </div>
         </div>
         <p className={styles.lede}>
-          Vercel stays responsible for auth, sync, metadata routing, feedback, and update delivery. The Windows
-          runtime runs the heavy media work on the user PC at <code>{LOCAL_ORIGIN}</code>.
+          Install SPICE as a local Windows runtime or keep it portable in any folder. The hosted page only
+          publishes account, setup, and update metadata; media search, stream extraction, lyrics, proxying,
+          and playback run on the user PC at <code>{LOCAL_ORIGIN}</code>.
         </p>
         <div className={styles.actionRow}>
-          {DOWNLOAD_URL ? (
-            <a className={styles.primaryButton} href={DOWNLOAD_URL}>
-              Download Windows runtime
-            </a>
-          ) : (
-            <span className={styles.disabledButton}>Download URL pending</span>
-          )}
-          <a className={styles.secondaryButton} href="/api/updates/local-windows">
-            Update manifest
+          <a className={styles.primaryButton} href={MANAGER_SCRIPT_URL}>
+            Download local manager
+          </a>
+          <a className={styles.secondaryButton} href={INSTALL_SCRIPT_URL}>
+            Installer script
+          </a>
+          <a className={styles.secondaryButton} href={ZIP_URL}>
+            Runtime ZIP
+          </a>
+          <a className={styles.secondaryButton} href={PORTABLE_SCRIPT_URL}>
+            Portable script
           </a>
           <a className={styles.secondaryButton} href={CLOUD_ORIGIN}>
-            Cloud portal
+            Account portal
           </a>
         </div>
       </section>
@@ -82,56 +67,79 @@ export default function InstallGuide() {
           <span>Update source</span>
           <strong>{MANIFEST_URL}</strong>
         </div>
+        <div>
+          <span>Recommended setup</span>
+          <strong>Local manager</strong>
+        </div>
       </section>
 
       <section className={styles.grid}>
         <article className={styles.panel}>
-          <p className={styles.kicker}>1. Windows install</p>
+          <p className={styles.kicker}>1. Recommended</p>
+          <h2>Use the local manager</h2>
+          <ol className={styles.steps}>
+            <li>Download <code>spice-local-manager.ps1</code> from this page.</li>
+            <li>Run it in PowerShell to open the small SPICE Local Manager window.</li>
+            <li>Use <code>Install / Update</code>, then <code>Start</code>.</li>
+            <li>Open <code>{LOCAL_ORIGIN}</code> from the manager.</li>
+          </ol>
+        </article>
+
+        <article className={styles.panel}>
+          <p className={styles.kicker}>2. Automated install</p>
+          <h2>User-space install with one script</h2>
+          <ol className={styles.steps}>
+            <li>Download <code>install-spice-local.ps1</code> from this page.</li>
+            <li>Run it in PowerShell to install SPICE into <code>%LOCALAPPDATA%\SPICE</code>.</li>
+            <li>Open the Start Menu shortcut or run <code>start-spice-local.ps1</code>.</li>
+            <li>Open <code>{LOCAL_ORIGIN}</code> in your browser.</li>
+          </ol>
+        </article>
+
+        <article className={styles.panel}>
+          <p className={styles.kicker}>3. Portable mode</p>
+          <h2>Keep SPICE inside one folder</h2>
+          <ol className={styles.steps}>
+            <li>Download <code>spice-local-portable.ps1</code> into the folder you want to use.</li>
+            <li>Run the script from that folder.</li>
+            <li>The runtime is extracted into <code>SPICE-Local-Portable</code>.</li>
+            <li>Move that folder anywhere and run <code>start-spice-local.ps1</code>.</li>
+          </ol>
+        </article>
+
+        <article className={styles.panel}>
+          <p className={styles.kicker}>4. Manual ZIP</p>
           <h2>Download, unpack, run</h2>
           <ol className={styles.steps}>
-            <li>Download the latest Windows runtime ZIP from this page once the artifact URL is published.</li>
-            <li>Unzip it into a normal user folder, such as <code>%LOCALAPPDATA%\SPICE</code>.</li>
-            <li>Run <code>start-spice-local.ps1</code> and open <code>{LOCAL_ORIGIN}</code> in the browser.</li>
+            <li>Download the runtime ZIP from this page.</li>
+            <li>Unzip it into a normal user folder.</li>
+            <li>Run <code>start-spice-local.ps1</code>.</li>
             <li>Run <code>check-spice-local-update.ps1 -Download</code> later to fetch a newer package.</li>
-          </ol>
-        </article>
-
-        <article className={styles.panel}>
-          <p className={styles.kicker}>2. Vercel setup</p>
-          <h2>Point the domain and env vars at the cloud runtime</h2>
-          <ol className={styles.steps}>
-            <li>Add <code>install.spice-app.xyz</code> as a domain on the existing Vercel project.</li>
-            <li>Keep <code>SPICE_RUNTIME_TARGET=vercel</code> for the Vercel deployment.</li>
-            <li>Set <code>SPICE_INSTALL_ORIGIN=https://install.spice-app.xyz</code>.</li>
-            <li>Set <code>SPICE_LOCAL_WINDOWS_DOWNLOAD_URL</code> to <code>{DEFAULT_RELEASE_DOWNLOAD_URL}</code> after the first main-branch package release is published.</li>
-            <li>Leave <code>SPICE_LOCAL_WINDOWS_SHA256</code> empty unless you also update it from each release.</li>
-          </ol>
-        </article>
-
-        <article className={styles.panel}>
-          <p className={styles.kicker}>3. Neon SQL Editor</p>
-          <h2>Apply the feedback table migration</h2>
-          <ol className={styles.steps}>
-            <li>Open the Neon Console, choose the SPICE project, then choose the production branch.</li>
-            <li>Open <strong>SQL Editor</strong> for that branch.</li>
-            <li>Paste the feedback SQL below and run it once.</li>
-            <li>Use the pooled Neon connection string in Vercel. The pooled host contains <code>-pooler</code>.</li>
           </ol>
         </article>
       </section>
 
-      <section className={styles.sqlPanel}>
-        <div className={styles.sqlHeader}>
+      <section className={styles.commandPanel}>
+        <div className={styles.commandHeader}>
           <div>
-            <p className={styles.kicker}>Feedback migration</p>
-            <h2>SQL to paste into Neon</h2>
+            <p className={styles.kicker}>Automation</p>
+            <h2>PowerShell commands</h2>
           </div>
-          <span>Serverless-safe feedback storage</span>
+          <span>No admin rights required</span>
         </div>
-        <pre className={styles.codeBlock}><code>{feedbackSql}</code></pre>
-        <div className={styles.verifyBlock}>
-          <span>Verification query</span>
-          <code>{verifySql}</code>
+        <div className={styles.commandGrid}>
+          <div>
+            <span>Local manager</span>
+            <pre className={styles.codeBlock}><code>{MANAGER_COMMAND}</code></pre>
+          </div>
+          <div>
+            <span>Install script</span>
+            <pre className={styles.codeBlock}><code>{INSTALL_COMMAND}</code></pre>
+          </div>
+          <div>
+            <span>Portable script</span>
+            <pre className={styles.codeBlock}><code>{PORTABLE_COMMAND}</code></pre>
+          </div>
         </div>
       </section>
     </main>

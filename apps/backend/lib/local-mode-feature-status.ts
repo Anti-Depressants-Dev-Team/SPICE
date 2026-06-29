@@ -16,10 +16,10 @@ export const localModeLanes = [
     scope: 'Auth, sync routing, metadata, feedback, install page, update manifest',
   },
   {
-    name: 'Neon Postgres',
-    owner: 'SPICE database',
+    name: 'Cloud database',
+    owner: 'SPICE cloud',
     status: 'Cloud only',
-    scope: 'Accounts, profiles, sync tables, feedback submissions, admin state',
+    scope: 'Accounts, profiles, sync state, operator-only admin data',
   },
 ] as const;
 
@@ -58,21 +58,27 @@ export const localModeFeatureStatus = [
     feature: 'Local JSON feedback writes',
     status: 'Replaced',
     reason: 'Vercel functions cannot depend on writable local files.',
-    replacement: 'Feedback persists to Neon when configured, with log-only fallback.',
+    replacement: 'Feedback uses private cloud handling when configured, with log-only fallback.',
   },
   {
-    feature: 'Neon code and secrets in local ZIPs',
+    feature: 'Cloud database code and secrets in local ZIPs',
     status: 'Blocked',
-    reason: 'Local installs must not ship database connection secrets, Neon clients, or database migrations.',
+    reason: 'Local installs must not ship database credentials, database clients, or migrations.',
     replacement: 'Database env stays in Vercel; package scans verify the local bundle.',
   },
 ] as const;
 
 export const localModeOptionalFeatureStatus = [
   {
+    feature: 'Local install and update manager',
+    status: 'Keep local-first',
+    reason: 'Install, update, start, and open-local actions should be easy for users without adding serverless load.',
+    operatingRule: 'Use the public update manifest and run all install/update work on the user PC.',
+  },
+  {
     feature: 'Floating mini player, queue polish, themes, and local profile UX',
     status: 'Keep local-first',
-    reason: 'These are mostly UI or local-storage conveniences and do not pressure Vercel or Neon during normal local playback.',
+    reason: 'These are mostly UI or local-storage conveniences and do not pressure Vercel or the cloud database during normal local playback.',
     operatingRule: 'Keep them inside the local runtime unless the user explicitly signs in or syncs.',
   },
   {

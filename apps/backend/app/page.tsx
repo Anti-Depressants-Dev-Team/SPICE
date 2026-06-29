@@ -12,7 +12,7 @@ const INSTALL_HOSTS = new Set(['install.spice-app.xyz']);
 
 const INSTALL_METADATA: Metadata = {
   title: 'Install SPICE Local',
-  description: 'Download and set up the SPICE local Windows runtime with Vercel and Neon configuration notes.',
+  description: 'Download, install, or run the portable SPICE local Windows runtime.',
 };
 
 export async function generateMetadata(): Promise<Metadata> {

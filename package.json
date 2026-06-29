@@ -14,6 +14,7 @@
     "backend:build:vercel": "pnpm --filter @spice/backend build:vercel",
     "backend:lint": "pnpm --filter @spice/backend lint",
     "backend:typecheck": "pnpm --filter @spice/backend typecheck",
-    "backend:package:local:windows": "pnpm --filter @spice/backend package:local:windows"
+    "backend:package:local:windows": "pnpm --filter @spice/backend package:local:windows",
+    "backend:package:local:windows:full": "pnpm --filter @spice/backend package:local:windows:full"
   }
 }

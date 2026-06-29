@@ -9,7 +9,9 @@
 
 .hero,
 .operatingModel,
-.featureLedger {
+.featureLedger,
+.accountSection,
+.technicalDetails {
   width: min(1180px, calc(100% - 40px));
   margin: 0 auto;
 }
@@ -24,7 +26,11 @@
 .heroCopy,
 .topology,
 .modelGrid article,
-.ledgerItem {
+.ledgerItem,
+.accountCard,
+.accountSummary,
+.accountForm,
+.technicalDetails {
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.045);
@@ -62,6 +68,9 @@
 .sectionHeading span,
 .modelGrid span,
 .ledgerItem span,
+.accountTabs span,
+.accountSummary span,
+.accountForm span,
 .quickStats dt {
   color: #5eead4;
   font-size: 0.72rem;
@@ -103,6 +112,28 @@
   flex-wrap: wrap;
   gap: 10px;
   margin-top: 30px;
+}
+
+.portalTabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 26px;
+}
+
+.portalTabs a {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(94, 234, 212, 0.22);
+  border-radius: 8px;
+  background: rgba(20, 184, 166, 0.08);
+  color: #ccfbf1;
+  padding: 0 12px;
+  font-size: 0.82rem;
+  font-weight: 850;
+  text-decoration: none;
 }
 
 .primaryAction,
@@ -231,8 +262,26 @@
   white-space: nowrap;
 }
 
+.technicalDetails {
+  margin-top: 18px;
+  padding: 18px;
+}
+
+.technicalDetails summary {
+  cursor: pointer;
+  color: #ccfbf1;
+  font-weight: 850;
+}
+
+.technicalDetails .operatingModel,
+.technicalDetails .featureLedger {
+  width: 100%;
+  margin-top: 24px;
+}
+
 .operatingModel,
-.featureLedger {
+.featureLedger,
+.accountSection {
   margin-top: 18px;
 }
 
@@ -294,10 +343,190 @@
   line-height: 1.55;
 }
 
+.accountCard {
+  padding: 18px;
+}
+
+.accountTabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.accountTabs a,
+.accountTabActive {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  padding: 0 12px;
+  font-size: 0.82rem;
+  font-weight: 850;
+  text-decoration: none;
+}
+
+.accountTabs a {
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  background: rgba(255, 255, 255, 0.055);
+  color: #f8fafc;
+}
+
+.accountTabActive {
+  background: #5eead4;
+  color: #031211 !important;
+}
+
+.accountGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.72fr);
+  gap: 12px;
+}
+
+.accountSummary,
+.accountForm {
+  min-width: 0;
+  padding: 18px;
+  box-shadow: none;
+}
+
+.accountSummary h3,
+.accountForm h3 {
+  margin: 8px 0 14px;
+  color: #f8fafc;
+  font-size: 1.28rem;
+}
+
+.accountSummary p,
+.statusNote {
+  color: #cbd5e1;
+  line-height: 1.58;
+}
+
+.accountSummary dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.accountSummary dl div {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.accountSummary dt,
+.accountSummary dd {
+  margin: 0;
+}
+
+.accountSummary dt {
+  color: #94a3b8;
+  font-size: 0.72rem;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.accountSummary dd {
+  margin-top: 7px;
+  color: #f8fafc;
+  overflow-wrap: anywhere;
+}
+
+.accountActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.accountActions a,
+.accountActions button,
+.accountForm button,
+.modeSwitch button {
+  min-height: 40px;
+  border-radius: 8px;
+  padding: 0 12px;
+  font-size: 0.84rem;
+  font-weight: 850;
+  text-decoration: none;
+}
+
+.accountActions a,
+.accountForm button {
+  border: 0;
+  background: #5eead4;
+  color: #031211;
+}
+
+.accountActions button,
+.modeSwitch button {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: #f8fafc;
+}
+
+.accountForm {
+  display: grid;
+  gap: 12px;
+}
+
+.accountForm label {
+  display: grid;
+  gap: 7px;
+  color: #cbd5e1;
+  font-size: 0.86rem;
+  font-weight: 750;
+}
+
+.accountForm input {
+  min-height: 42px;
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.28);
+  color: #f8fafc;
+  padding: 0 12px;
+}
+
+.accountForm input:focus {
+  border-color: #5eead4;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(94, 234, 212, 0.13);
+}
+
+.accountForm button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.modeSwitch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.modeActive {
+  background: rgba(94, 234, 212, 0.16) !important;
+  border-color: rgba(94, 234, 212, 0.32) !important;
+  color: #ccfbf1 !important;
+}
+
+.statusNote {
+  margin: 0;
+  font-size: 0.88rem;
+}
+
 @media (max-width: 920px) {
   .hero,
   .modelGrid,
-  .ledgerItem {
+  .ledgerItem,
+  .accountGrid {
     grid-template-columns: 1fr;
   }
 
@@ -309,7 +538,8 @@
 @media (max-width: 640px) {
   .hero,
   .operatingModel,
-  .featureLedger {
+  .featureLedger,
+  .accountSection {
     width: min(100% - 28px, 1180px);
   }
 
@@ -323,7 +553,14 @@
 
   .primaryAction,
   .secondaryAction,
-  .textAction {
+  .textAction,
+  .portalTabs a,
+  .accountTabs a,
+  .accountTabActive {
     width: 100%;
+  }
+
+  .accountSummary dl {
+    grid-template-columns: 1fr;
   }
 }

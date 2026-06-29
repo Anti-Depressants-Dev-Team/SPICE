@@ -10,6 +10,7 @@ const CLOUD_API_ROOTS = new Set([
   'admin',
   'auth',
   'changelog',
+  'downloads',
   'feedback',
   'lastfm',
   'listen-together',

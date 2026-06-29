@@ -1,4 +1,4 @@
-import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, readdir, readlink, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -15,6 +15,7 @@ const cloudApiPrefixes = [
   '/api/auth',
   '/api/changelog',
   '/api/cloud',
+  '/api/downloads',
   '/api/feedback',
   '/api/lastfm',
   '/api/listen-together',
@@ -49,6 +50,8 @@ if (existsSync(publicDir)) {
 await mkdir(path.join(packageDir, '.next'), { recursive: true });
 await cp(staticDir, path.join(packageDir, '.next', 'static'), { recursive: true });
 
+await materializePackageSymlinks(packageDir);
+await flattenStandaloneNodeModules(packageDir);
 await pruneLocalPackage(packageDir);
 await sanitizeNextManifests(packageDir);
 await pruneUnreferencedForbiddenChunks(packageDir);
@@ -72,6 +75,7 @@ async function pruneLocalPackage(root) {
     'apps/backend/.next/server/app/api/admin',
     'apps/backend/.next/server/app/api/auth',
     'apps/backend/.next/server/app/api/changelog',
+    'apps/backend/.next/server/app/api/downloads',
     'apps/backend/.next/server/app/api/feedback',
     'apps/backend/.next/server/app/api/lastfm',
     'apps/backend/.next/server/app/api/listen-together',
@@ -90,6 +94,87 @@ async function pruneLocalPackage(root) {
 
   for (const target of deleteTargets) {
     await rm(path.join(root, target), { recursive: true, force: true });
+  }
+}
+
+async function materializePackageSymlinks(root) {
+  for (let pass = 0; pass < 5; pass++) {
+    const links = [];
+    await collectSymlinks(root, links);
+
+    if (links.length === 0) return;
+
+    for (const link of links) {
+      const target = path.resolve(path.dirname(link), await readlink(link));
+      if (!isPathInside(target, root) && !isPathInside(target, standaloneDir)) {
+        throw new Error(`Refusing to copy local package symlink target outside the standalone build: ${link} -> ${target}`);
+      }
+
+      if (!existsSync(target)) {
+        await rm(link, { recursive: true, force: true });
+        continue;
+      }
+
+      await rm(link, { recursive: true, force: true });
+      await cp(target, link, { recursive: true, dereference: true });
+    }
+  }
+
+  const remainingLinks = [];
+  await collectSymlinks(root, remainingLinks);
+  if (remainingLinks.length > 0) {
+    throw new Error(`Local package still contains symlinks:\n${remainingLinks.join('\n')}`);
+  }
+}
+
+async function collectSymlinks(dir, links) {
+  const entries = await readdir(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isSymbolicLink()) {
+      links.push(fullPath);
+    } else if (entry.isDirectory()) {
+      await collectSymlinks(fullPath, links);
+    }
+  }
+}
+
+function isPathInside(candidate, root) {
+  const relative = path.relative(root, candidate);
+  return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+}
+
+async function flattenStandaloneNodeModules(root) {
+  const pnpmRoot = path.join(root, 'node_modules', '.pnpm');
+  const backendNodeModules = path.join(root, 'apps', 'backend', 'node_modules');
+  if (!existsSync(pnpmRoot)) return;
+
+  const packageEntries = await readdir(pnpmRoot, { withFileTypes: true });
+  for (const entry of packageEntries) {
+    if (!entry.isDirectory() || entry.name === 'node_modules') continue;
+    await copyNodeModuleEntries(path.join(pnpmRoot, entry.name, 'node_modules'), backendNodeModules);
+  }
+
+  await copyNodeModuleEntries(path.join(pnpmRoot, 'node_modules'), backendNodeModules);
+}
+
+async function copyNodeModuleEntries(sourceDir, destinationDir) {
+  if (!existsSync(sourceDir)) return;
+
+  await mkdir(destinationDir, { recursive: true });
+  const entries = await readdir(sourceDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.name === '.bin') continue;
+
+    const source = path.join(sourceDir, entry.name);
+    const destination = path.join(destinationDir, entry.name);
+    if (entry.name.startsWith('@') && entry.isDirectory()) {
+      await copyNodeModuleEntries(source, destination);
+      continue;
+    }
+
+    if (existsSync(destination)) continue;
+    await cp(source, destination, { recursive: true, dereference: true });
   }
 }
 
@@ -290,26 +375,27 @@ async function writeLaunchers(root) {
   const cmd = [
     '@echo off',
     'set SPICE_RUNTIME_TARGET=local',
-    'set HOSTNAME=127.0.0.1',
-    'set PORT=3939',
+    'if "%HOSTNAME%"=="" set HOSTNAME=127.0.0.1',
+    'if "%PORT%"=="" set PORT=3939',
     'if "%SPICE_CLOUD_API_ORIGIN%"=="" set SPICE_CLOUD_API_ORIGIN=https://music.spice-app.xyz',
     'if "%SPICE_LOCAL_UPDATE_MANIFEST_URL%"=="" set SPICE_LOCAL_UPDATE_MANIFEST_URL=https://music.spice-app.xyz/api/updates/local-windows',
     'if "%SPICE_LOCAL_UPDATE_CHECK_MIN_HOURS%"=="" set SPICE_LOCAL_UPDATE_CHECK_MIN_HOURS=12',
     'if exist "%~dp0check-spice-local-update.ps1" powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0check-spice-local-update.ps1" -Quiet',
-    'node server.js',
+    'node "%~dp0apps\\backend\\server.js"',
     '',
   ].join('\r\n');
 
   const ps1 = [
     '$env:SPICE_RUNTIME_TARGET = "local"',
-    '$env:HOSTNAME = "127.0.0.1"',
-    '$env:PORT = "3939"',
+    'if (-not $env:HOSTNAME) { $env:HOSTNAME = "127.0.0.1" }',
+    'if (-not $env:PORT) { $env:PORT = "3939" }',
     'if (-not $env:SPICE_CLOUD_API_ORIGIN) { $env:SPICE_CLOUD_API_ORIGIN = "https://music.spice-app.xyz" }',
     'if (-not $env:SPICE_LOCAL_UPDATE_MANIFEST_URL) { $env:SPICE_LOCAL_UPDATE_MANIFEST_URL = "https://music.spice-app.xyz/api/updates/local-windows" }',
     'if (-not $env:SPICE_LOCAL_UPDATE_CHECK_MIN_HOURS) { $env:SPICE_LOCAL_UPDATE_CHECK_MIN_HOURS = "12" }',
     '$updateCheck = Join-Path $PSScriptRoot "check-spice-local-update.ps1"',
     'if (Test-Path -LiteralPath $updateCheck) { & $updateCheck -Quiet }',
-    'node "$PSScriptRoot\\server.js"',
+    '$server = Join-Path $PSScriptRoot "apps\\backend\\server.js"',
+    'node $server',
     '',
   ].join('\r\n');
 
@@ -474,7 +560,6 @@ async function scanForForbiddenLocalPayload(root) {
 }
 
 async function walk(dir, visitor) {
-  const { readdir } = await import('node:fs/promises');
   const entries = await readdir(dir, { withFileTypes: true });
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name);

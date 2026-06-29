@@ -1,16 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { neon } from '@neondatabase/serverless';
-
-// Simple in-memory cache for edge runtime
-let cachedSettings: {
-  emergencyAusterity: boolean;
-  austerityThrottleRate: number;
-  disableSync: boolean;
-  emergencyStop: boolean;
-} | null = null;
-let lastFetchTime = 0;
-const CACHE_TTL_MS = 15000; // 15 seconds
+import { getProxySystemSettings } from '@/lib/proxy-system-settings';
 
 export async function proxy(request: NextRequest) {
   const url = request.nextUrl.clone();
@@ -25,45 +15,19 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const databaseUrl = process.env.DATABASE_URL;
-  if (!databaseUrl) {
-    // If no DB, we can't check settings. Just pass through.
-    return NextResponse.next();
-  }
-
   try {
-    const now = Date.now();
-    if (!cachedSettings || now - lastFetchTime > CACHE_TTL_MS) {
-      const sql = neon(databaseUrl);
-      const rows = await sql`SELECT emergency_austerity, austerity_throttle_rate, disable_sync, emergency_stop FROM system_settings WHERE id = 'default' LIMIT 1`;
+    const settings = await getProxySystemSettings();
+    if (!settings) return NextResponse.next();
 
-      if (rows && rows.length > 0) {
-        cachedSettings = {
-          emergencyAusterity: rows[0].emergency_austerity,
-          austerityThrottleRate: rows[0].austerity_throttle_rate,
-          disableSync: rows[0].disable_sync,
-          emergencyStop: rows[0].emergency_stop,
-        };
-      } else {
-        cachedSettings = {
-          emergencyAusterity: false,
-          austerityThrottleRate: 50,
-          disableSync: false,
-          emergencyStop: false,
-        };
-      }
-      lastFetchTime = now;
-    }
-
-    if (cachedSettings.emergencyStop) {
+    if (settings.emergencyStop) {
       return new NextResponse(
         JSON.stringify({ error: 'service_unavailable', message: 'System is temporarily halted for maintenance.' }),
         { status: 503, headers: { 'Content-Type': 'application/json' } }
       );
     }
 
-    if (cachedSettings.emergencyAusterity) {
-      if (cachedSettings.disableSync && url.pathname.startsWith('/api/sync')) {
+    if (settings.emergencyAusterity) {
+      if (settings.disableSync && url.pathname.startsWith('/api/sync')) {
         return new NextResponse(
           JSON.stringify({ error: 'service_unavailable', message: 'Sync services are temporarily disabled.' }),
           { status: 503, headers: { 'Content-Type': 'application/json' } }
@@ -73,7 +37,7 @@ export async function proxy(request: NextRequest) {
       // Randomly throttle based on rate (0-100)
       // If throttle rate is 80, 80% of requests should be dropped
       const randomValue = Math.random() * 100;
-      if (randomValue < cachedSettings.austerityThrottleRate) {
+      if (randomValue < settings.austerityThrottleRate) {
         return new NextResponse(
           JSON.stringify({ error: 'too_many_requests', message: 'System is under heavy load. Please try again later.' }),
           { status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': '60' } }

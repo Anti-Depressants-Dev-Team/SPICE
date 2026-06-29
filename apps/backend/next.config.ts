@@ -34,6 +34,7 @@ const nextConfig: NextConfig = {
           "@neondatabase/serverless": "./lib/neon-local-stub.ts",
           "drizzle-orm": "./lib/drizzle-local-stub.ts",
           "drizzle-orm/neon-http": "./lib/drizzle-local-stub.ts",
+          "@/lib/proxy-system-settings": "./lib/proxy-system-settings-local.ts",
         },
       }
     : undefined,

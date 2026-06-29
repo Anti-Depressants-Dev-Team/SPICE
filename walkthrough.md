@@ -1,5 +1,30 @@
 # SPICE Walkthrough
 
+## v1.0.98
+
+- [Spice.Home main] Clean up the hosted cloud portal so normal users see install, open-local, account, and changelog actions first while runtime maps and feature ledgers move behind a collapsed technical details section.
+- [Spice.Home main] Add a lightweight `spice-local-manager.ps1` Windows manager for install, update, start, open-local, and runtime status checks without adding an Electron bundle yet.
+- [Spice.Home main] Route the runtime ZIP button through `/api/downloads/local-windows` and default update metadata to the latest public GitHub release URL so the hosted download path is not dependent on a manually configured Vercel URL.
+- [Spice.Home main] Add `docs/local-mode-roadmap.md` with ranked local-move candidates and expected performance tradeoffs for the current split, local manager, sync batching, Electron, and more drastic desktop-first options.
+- [Spice.Home main] Bump the visible diagnostics version to `Spice Media Core v1.0.98`.
+
+## v1.0.97
+
+- [Spice.Music main] Fix packaged Windows local runtime launchers to start the standalone Next server from `apps/backend/server.js` instead of looking for `server.js` at the ZIP root.
+- [Spice.Music main] Materialize the standalone Next/pnpm links and flatten traced runtime dependencies during Windows package creation so extracted ZIPs do not depend on symlinks back to the repo checkout.
+- [Spice.Music main] Split the DB-backed proxy settings check behind a local-build stub so the local runtime middleware keeps working without bundling Neon code.
+- [Spice.Music main] Let packaged launcher scripts respect an existing `PORT` or `HOSTNAME` override so local smoke tests can run away from the default `127.0.0.1:3939` port.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.97`.
+
+## v1.0.96
+
+- [Spice.Home main] Add hosted portal tabs for Account, Changelog, Install, and Runtime so the walkthrough changelog is reachable again from the Vercel-hosted local-mode page.
+- [Spice.Home main] Add a hosted account management panel for cloud sign-in, registration, account status, subscription status, username updates, local runtime launch, changelog access, and admin dashboard entry.
+- [Spice.Music main] Add public Windows install and portable PowerShell scripts, expose them from the install page, and keep the manual ZIP fallback available.
+- [Spice.Music main] Add a one-command package automation script for building and packaging the local Windows runtime.
+- [Spice.Home main] Remove operator-only feedback database setup details from public install and local-mode ledger copy, keeping normal-user setup focused on install, portable mode, runtime launch, and updates.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.96`.
+
 ## v1.0.95
 
 - [Spice.Home main] Add a local-mode QoL and integrations ledger to clarify which convenience features stay local-first, opt-in, cost-gated, or removed.
