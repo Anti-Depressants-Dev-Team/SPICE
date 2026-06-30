@@ -7629,7 +7629,7 @@ const getMaskedEmail = (email: string) => {
           <button
             type="button"
             className="sidebar__brand"
-            onClick={() => { setCurrentPage(sidebarSearchEnabled ? 'search' : 'library'); setSelectedPlaylist(null); setSelectedUser(null); }}
+            onClick={() => { setCurrentPage('home'); setSelectedPlaylist(null); setSelectedUser(null); }}
             aria-label="Go to SPICE Music"
           >
             <div
@@ -7653,6 +7653,13 @@ const getMaskedEmail = (email: string) => {
         </div>
 
         <nav className="sidebar__nav">
+          <button
+            className={`sidebar__nav-item ${currentPage === 'home' && !selectedPlaylist ? 'active' : ''}`}
+            onClick={() => { setCurrentPage('home'); setSelectedPlaylist(null); setSelectedUser(null); }}
+          >
+            {Icons.home}
+            <span className="sidebar__nav-label">Home</span>
+          </button>
           {sidebarSearchEnabled && (
             <button
               className={`sidebar__nav-item ${currentPage === 'search' && !selectedPlaylist ? 'active' : ''}`}

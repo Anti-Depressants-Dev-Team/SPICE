@@ -1,5 +1,10 @@
 # SPICE Walkthrough
 
+## v1.0.107
+
+- [Spice.Music main] Restore the Home sidebar navigation item and make the Spice sidebar brand return to the Home surface.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.107`.
+
 ## v1.0.106
 
 - [Spice.Music main] Preserve the real audio container when downloading shared songs so streams saved as `m4a`, `webm`, or `mp3` match the upstream content instead of forcing a misleading `.mp3` filename.
