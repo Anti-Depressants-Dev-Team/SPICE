@@ -79,6 +79,7 @@
                 case 'hideView':       return window.api.hideView();
                 case 'showView':       return window.api.showView();
                 case 'toggleVolume':   return window.api.toggleVolume();
+                case 'setBoostEnabled': return window.api.setBoostEnabled(args[0]);
                 case 'openLyrics':     return window.api.openLyrics();
                 case 'openMiniPlayer': return window.api.openMiniPlayer();
                 case 'openQueue':      return window.api.openQueue();
@@ -766,6 +767,7 @@
                 callApi('setVolume', 2.0);
             }
             setBoostEnabled(false);
+            callApi('setBoostEnabled', false);
         }
 
         function requestBoost() {
@@ -775,6 +777,7 @@
         function acceptBoostWarning() {
             setShowBoostWarning(false);
             setBoostEnabled(true);
+            callApi('setBoostEnabled', true);
         }
 
         function handleBoostClick(e) {
@@ -1024,6 +1027,12 @@
                 });
             }
 
+            if (window.api.onBoostChanged) {
+                window.api.onBoostChanged(function(enabled) {
+                    setBoostEnabled(!!enabled);
+                });
+            }
+
             // Search bar visibility
             if (window.api.onTopBarSearchVisibility) {
                 window.api.onTopBarSearchVisibility(function(vis) {
@@ -1062,6 +1071,7 @@
                     var settings = await window.api.getSettings();
                     setToolbarButtons((settings && settings.toolbarButtons) || {});
                     setNativeMode(!!(settings && settings.nativeMode));
+                    setBoostEnabled(!!(settings && settings.boostEnabled));
                 }
             })();
         }, []);
