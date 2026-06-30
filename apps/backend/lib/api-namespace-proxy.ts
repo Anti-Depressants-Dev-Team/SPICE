@@ -1,4 +1,4 @@
-import { corsHeadersForRequest, jsonResponse, withCors } from '@/lib/cors';
+import { corsHeadersForRequest, jsonResponse, withCors, withoutDecodedBodyHeaders } from '@/lib/cors';
 
 const HOP_BY_HOP_HEADERS = new Set([
   'connection',
@@ -55,7 +55,8 @@ export async function proxyToLegacyApi(
   }
 
   const response = await fetch(targetUrl, init);
-  return withCors(response, request);
+  const proxyResponse = namespace === 'cloud' ? withoutDecodedBodyHeaders(response) : response;
+  return withCors(proxyResponse, request);
 }
 
 export function namespaceOptionsResponse(request: Request) {

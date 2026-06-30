@@ -18,6 +18,12 @@ export const corsHeaders = {
     'Accept-Ranges, Content-Length, Content-Range, Content-Type',
 };
 
+const DECODED_BODY_RESPONSE_HEADERS = [
+  'content-encoding',
+  'content-length',
+  'transfer-encoding',
+];
+
 export function corsHeadersForRequest(request?: Request | null) {
   const headers: Record<string, string> = { ...corsHeaders };
   const origin = request?.headers.get('origin')?.trim();
@@ -34,6 +40,19 @@ export function withCors(response: Response, request?: Request | null) {
   const headers = new Headers(response.headers);
   for (const [key, value] of Object.entries(corsHeadersForRequest(request))) {
     headers.set(key, value);
+  }
+
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+export function withoutDecodedBodyHeaders(response: Response) {
+  const headers = new Headers(response.headers);
+  for (const key of DECODED_BODY_RESPONSE_HEADERS) {
+    headers.delete(key);
   }
 
   return new Response(response.body, {

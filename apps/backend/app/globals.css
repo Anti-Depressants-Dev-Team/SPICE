@@ -273,6 +273,13 @@ h4 { font-size: 1rem; }
   fill: white;
 }
 
+.sidebar__logo-image {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  object-fit: cover;
+}
+
 .sidebar__logo-text {
   font-family: 'Outfit', sans-serif;
   font-size: 1.25rem;

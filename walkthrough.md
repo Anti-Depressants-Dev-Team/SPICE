@@ -1,5 +1,12 @@
 # SPICE Walkthrough
 
+## v1.0.104
+
+- [Spice.Music main] Strip decoded-body-unsafe upstream headers from `/api/cloud/*` proxy responses so local runtime account sign-in can relay hosted Vercel auth JSON without `incorrect header check` fetch failures.
+- [Spice.Music main] Keep local media range response payload headers intact while limiting decoded-body header cleanup to cloud proxy responses.
+- [Spice.Music main] Restore the actual SPICE icon in the Music sidebar brand mark by using the packaged `/icon.svg` asset instead of the temporary text-only badge.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.104`.
+
 ## v1.0.103
 
 - [Spice.Music main] Route local-mode cloud requests through the same-origin `/api/cloud/*` namespace so login, sync, and account calls proxy through the local runtime to Vercel instead of relying on fragile browser cross-origin fetches.

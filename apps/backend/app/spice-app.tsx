@@ -7586,7 +7586,7 @@ const getMaskedEmail = (email: string) => {
             <div
               className="sidebar__logo-icon"
             >
-              <span style={{ fontSize: '1rem', fontWeight: 900, color: '#fff' }}>S</span>
+              <img src="/icon.svg" alt="" className="sidebar__logo-image" />
             </div>
             <span className="sidebar__logo-text">
               Spice
