@@ -75,7 +75,9 @@ let lastTrack = null; // Store last track to send to lyrics on open
 let lyricsWindow = null;
 let queueWindow = null;
 let currentVolume = 1.0; // Volume gain value (0.0 - 10.0), shared across scopes
+let currentBoostEnabled = false;
 let spiceRuntimeManager = null;
+let applyVolumeToActiveView = () => {};
 
 const APP_NATIVE_MODE =
   process.env.SPICE_NATIVE_APP === "1" ||
@@ -361,6 +363,9 @@ function initStore() {
   try {
     const Store = require("electron-store");
     store = new Store();
+    const savedVolume = Number(store.get("volume", currentVolume));
+    if (Number.isFinite(savedVolume)) currentVolume = Math.max(0, Math.min(10, savedVolume));
+    currentBoostEnabled = Boolean(store.get("boostEnabled", false));
     // Initialize scrobbler after store
     scrobbler = new Scrobbler(store);
     console.log("Scrobbler initialized");
@@ -559,6 +564,12 @@ function sendActiveServiceState(active) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send("service-active", active);
   mainWindow.webContents.send("active-service-changed", active ? currentService : null);
+}
+
+function sendAudioControlState() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send("volume-changed", currentVolume);
+  mainWindow.webContents.send("boost-changed", currentBoostEnabled);
 }
 
 function getToolbarButtons() {
@@ -1147,6 +1158,8 @@ async function loadService(serviceKey) {
       } else {
         resetTrackedPlayback();
       }
+
+      applyVolumeToActiveView();
     })
     .catch((e) => {
       console.error(`Failed to load ${serviceKey}: `, e);
@@ -3238,22 +3251,72 @@ app.whenReady().then(async () => {
         })();
     `;
 
+  const getSpiceAudioSyncScript = (gainValue, boostEnabled) => `
+        (function() {
+            if (typeof window.__spiceDesktopSetAudioSettings !== 'function') return false;
+            window.__spiceDesktopSetAudioSettings({
+                volume: ${Math.round(Math.max(0, Math.min(10, Number(gainValue) || 0)) * 100)},
+                boostEnabled: ${boostEnabled ? "true" : "false"}
+            });
+            return true;
+        })();
+    `;
+
+  function applySpiceAudioControls() {
+    const targetView = getActiveBackendView();
+    if (!targetView) return;
+    targetView.webContents
+      .executeJavaScript(getSpiceAudioSyncScript(currentVolume, currentBoostEnabled))
+      .catch(() => {});
+  }
+
   // Apply volume to current view
   // Volume Logic
   function applyVolume(vol) {
-    if (vol !== undefined) currentVolume = vol;
+    if (vol !== undefined) {
+      const gain = Number(vol);
+      if (Number.isFinite(gain)) currentVolume = Math.max(0, Math.min(10, gain));
+    }
     const targetView = getActiveBackendView();
     if (!targetView) return;
+    if (currentService === "spice_crazy") {
+      applySpiceAudioControls();
+      return;
+    }
     targetView.webContents
       .executeJavaScript(getVolumeScript(currentVolume))
       .catch(() => {});
   }
+  applyVolumeToActiveView = applyVolume;
 
   // Set Volume IPC
   ipcMain.on("set-volume", async (event, gainValue) => {
-    currentVolume = gainValue;
     applyVolume(gainValue);
-    if (store) store.set("volume", gainValue);
+    if (store) store.set("volume", currentVolume);
+    sendAudioControlState();
+  });
+
+  ipcMain.on("set-boost-enabled", async (event, enabled) => {
+    currentBoostEnabled = Boolean(enabled);
+    if (store) store.set("boostEnabled", currentBoostEnabled);
+    if (currentService === "spice_crazy") {
+      applySpiceAudioControls();
+    }
+    sendAudioControlState();
+  });
+
+  ipcMain.on("spice-audio-state-changed", (event, state) => {
+    const volume = Number(state && state.volume);
+    if (Number.isFinite(volume)) {
+      currentVolume = Math.max(0, Math.min(10, volume / 100));
+      if (store) store.set("volume", currentVolume);
+    }
+    if (typeof (state && state.boostEnabled) === "boolean") {
+      currentBoostEnabled = state.boostEnabled;
+      if (store) store.set("boostEnabled", currentBoostEnabled);
+    }
+    miniPlayerServer.updateState({ volume: currentVolume });
+    sendAudioControlState();
   });
 
   // Toggle Volume (Legacy)
@@ -3261,7 +3324,7 @@ app.whenReady().then(async () => {
     const target = currentVolume > 1.0 ? 1.0 : 10.0;
     currentVolume = target;
     applyVolume(target);
-    if (mainWindow) mainWindow.webContents.send("volume-changed", target);
+    sendAudioControlState();
   });
 
   // Apply volume on navigation
@@ -3283,6 +3346,7 @@ app.whenReady().then(async () => {
         ? store.get("defaultService", DEFAULT_STARTUP_SERVICE)
         : DEFAULT_STARTUP_SERVICE,
       toolbarButtons: getToolbarButtons(),
+      boostEnabled: currentBoostEnabled,
       customCss: store ? store.get("customCss", "") : "",
       discordRpcEnabled: store ? store.get("discordRpcEnabled", true) : true,
       vkPlayerEnabled: store ? store.get("vkPlayerEnabled", false) : false,

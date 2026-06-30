@@ -27,6 +27,133 @@ function installNativeSessionSnapshot() {
 
 installNativeSessionSnapshot();
 
+function installSpiceAudioBridge() {
+    if (!IS_SPICE_LOCAL_RUNTIME) return;
+
+    let lastSignature = '';
+    let listenerAttached = false;
+    let pendingAudioPayload = null;
+
+    function readBoostEnabled() {
+        return window.localStorage.getItem('spice_volume_booster_accepted') === 'true';
+    }
+
+    function findVolumeSlider() {
+        return document.querySelector('.now-playing__volume-slider')
+            || document.querySelector('.mini-player__volume-slider')
+            || document.querySelector('input[type="range"][max="1000"]')
+            || document.querySelector('input[type="range"][max="200"]');
+    }
+
+    function readVolume() {
+        const slider = findVolumeSlider();
+        if (!slider) return null;
+        const value = Number(slider.value);
+        return Number.isFinite(value) ? value : null;
+    }
+
+    function emitAudioState(force = false) {
+        const volume = readVolume();
+        const boostEnabled = readBoostEnabled();
+        if (volume === null) return;
+
+        const signature = `${volume}:${boostEnabled}`;
+        if (!force && signature === lastSignature) return;
+        lastSignature = signature;
+        ipcRenderer.send('spice-audio-state-changed', {
+            volume,
+            boostEnabled,
+        });
+    }
+
+    function setNativeRangeValue(input, value) {
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+        if (setter) setter.call(input, String(value));
+        else input.value = String(value);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
+    function applyAudioSettingsPayload(payload) {
+        const boostEnabled = Boolean(payload && payload.boostEnabled);
+        const currentBoost = readBoostEnabled();
+        let boostClickQueued = false;
+        if (currentBoost !== boostEnabled) {
+            const boostButton = document.querySelector('button[title="Toggle Volume Booster"]');
+            if (boostButton) {
+                boostButton.click();
+                boostClickQueued = true;
+            } else {
+                window.localStorage.setItem('spice_volume_booster_accepted', String(boostEnabled));
+            }
+        }
+
+        const applyRequestedVolume = () => {
+            const maxVolume = boostEnabled ? 1000 : 200;
+            const requested = Number(payload && payload.volume);
+            if (!Number.isFinite(requested)) return;
+
+            const slider = findVolumeSlider();
+            if (!slider) {
+                pendingAudioPayload = payload;
+                return;
+            }
+            pendingAudioPayload = null;
+            const nextVolume = Math.max(0, Math.min(maxVolume, Math.round(requested)));
+            setNativeRangeValue(slider, nextVolume);
+        };
+
+        if (boostClickQueued) setTimeout(applyRequestedVolume, 80);
+        else applyRequestedVolume();
+
+        setTimeout(() => emitAudioState(true), 50);
+    }
+
+    window.__spiceDesktopSetAudioSettings = function(payload) {
+        pendingAudioPayload = payload;
+        applyAudioSettingsPayload(payload);
+    };
+
+    function attachListeners() {
+        const slider = findVolumeSlider();
+        if (slider && pendingAudioPayload) {
+            applyAudioSettingsPayload(pendingAudioPayload);
+        }
+        if (slider && !slider.dataset.spiceDesktopAudioBridge) {
+            slider.dataset.spiceDesktopAudioBridge = '1';
+            slider.addEventListener('input', () => emitAudioState());
+            slider.addEventListener('change', () => emitAudioState(true));
+        }
+
+        if (!listenerAttached) {
+            listenerAttached = true;
+            document.addEventListener('click', (event) => {
+                const target = event.target;
+                if (target && target.closest && target.closest('button[title="Toggle Volume Booster"]')) {
+                    setTimeout(() => emitAudioState(true), 50);
+                }
+            }, true);
+        }
+
+        emitAudioState();
+    }
+
+    function startBridgeObserver() {
+        attachListeners();
+        const observer = new MutationObserver(attachListeners);
+        observer.observe(document.body, { childList: true, subtree: true });
+        setInterval(attachListeners, 1500);
+    }
+
+    if (document.readyState === 'loading') {
+        window.addEventListener('DOMContentLoaded', startBridgeObserver);
+    } else {
+        startBridgeObserver();
+    }
+}
+
+installSpiceAudioBridge();
+
 let spicePolicy;
 if (window.trustedTypes && window.trustedTypes.createPolicy) {
     try {

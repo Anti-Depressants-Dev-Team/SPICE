@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld("api", {
   hideView: () => ipcRenderer.send("hide-view"),
   showView: () => ipcRenderer.send("show-view"),
   toggleVolume: () => ipcRenderer.send("toggle-volume"),
+  setBoostEnabled: (enabled) => ipcRenderer.send("set-boost-enabled", enabled),
   checkForUpdates: () => ipcRenderer.invoke("check-for-updates"),
   installUpdate: () => ipcRenderer.send("install-update"),
   onUpdateStatus: (callback) =>
@@ -72,6 +73,8 @@ contextBridge.exposeInMainWorld("api", {
     ),
   onVolumeChanged: (callback) =>
     ipcRenderer.on("volume-changed", (event, value) => callback(value)),
+  onBoostChanged: (callback) =>
+    ipcRenderer.on("boost-changed", (event, value) => callback(value)),
   onVkPlayerVisibility: (callback) =>
     ipcRenderer.on("vk-player-visibility", (event, visible) =>
       callback(visible),
