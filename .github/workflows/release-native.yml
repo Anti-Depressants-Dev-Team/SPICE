@@ -1,0 +1,49 @@
+name: Release Spice Native
+
+on:
+  workflow_dispatch:
+
+jobs:
+  prepare-native-release:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Ensure GitHub Release Exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="v$(node -p "require('./package.json').version")"
+          gh release view "$VERSION" || gh release create "$VERSION" --target "$GITHUB_SHA" --title "$VERSION" --generate-notes
+
+  build-native-windows:
+    needs: prepare-native-release
+    runs-on: windows-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Prepare bundled SPICE runtime
+        run: npm run native:prepare-runtime
+
+      - name: Build & Publish Native Release
+        run: npm run dist:native -- --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
