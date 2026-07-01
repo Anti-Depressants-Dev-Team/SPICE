@@ -1,5 +1,12 @@
 # SPICE Walkthrough
 
+## v1.0.109
+
+- [Spice.Music main] Keep paused playback stopped when a saved audio stream expires or resets so backend updates do not trigger self-healing skips into autoplay.
+- [Spice.Music main] Stop passive Home feed loading from replacing the player placeholder with a trending track before the listener chooses music.
+- [Spice.Music main] Ignore stale Spice Connect playback commands created before startup or during a short update-reload suppress window.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.109`.
+
 ## v1.0.108
 
 - [Spice.Music main] Reduce Vercel Fluid Compute pressure by slowing always-on version, invite, Listen Together, and Spice Connect polling intervals.

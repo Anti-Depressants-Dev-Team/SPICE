@@ -36,6 +36,8 @@ const SHARED_PLAYLIST_INVITE_POLL_INTERVAL_MS = 5 * 60 * 1000;
 const LISTEN_TOGETHER_INVITE_POLL_INTERVAL_MS = 60 * 1000;
 const LISTEN_TOGETHER_HOST_INVITE_POLL_INTERVAL_MS = 30 * 1000;
 const LISTEN_TOGETHER_SYNC_INTERVAL_MS = 5000;
+const UPDATE_RELOAD_REMOTE_SUPPRESS_MS = 30 * 1000;
+const UPDATE_RELOAD_REMOTE_SUPPRESS_KEY = 'spice_update_reload_remote_suppress_until';
 const MAX_LOCAL_PROFILES = 6;
 const SPICE_MEDIA_CORE_LABEL = `Spice Media Core v${SPICE_MEDIA_CORE_VERSION}`;
 const LASTFM_CALLBACK_ORIGIN_STORAGE_KEY = 'spice_lastfm_callback_origin';
@@ -861,6 +863,8 @@ const dedupeTracks = (tracks: Track[]) => {
 
 const playbackTrackKey = (track: Track) =>
   `${track.sourceId ?? 'youtube_music'}:${track.id}`;
+
+const currentTimestampMs = () => Date.now();
 
 const profileArtistName = (track: Track) =>
   track.artists.map((entry) => entry.name).filter(Boolean).join(', ') || 'Unknown Artist';
@@ -2023,6 +2027,8 @@ export default function SpiceApp() {
   const errorSkipTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const playbackRequestRef = useRef(0);
   const shouldAutoPlayRef = useRef(false);
+  const clientBootedAtRef = useRef(0);
+  const suppressRemotePlaybackUntilRef = useRef(0);
   const directEmbedRetryRef = useRef<Set<string>>(new Set());
   const embedProxyRetryRef = useRef<Set<string>>(new Set());
   const syncLockRef = useRef<boolean>(false);
@@ -2367,6 +2373,15 @@ export default function SpiceApp() {
   useEffect(() => {
     setIsMounted(true);
     if (typeof window !== 'undefined') {
+      const now = currentTimestampMs();
+      clientBootedAtRef.current = now;
+      const suppressUntil = Number(localStorage.getItem(UPDATE_RELOAD_REMOTE_SUPPRESS_KEY) || 0);
+      if (Number.isFinite(suppressUntil) && suppressUntil > now) {
+        suppressRemotePlaybackUntilRef.current = suppressUntil;
+      } else {
+        localStorage.removeItem(UPDATE_RELOAD_REMOTE_SUPPRESS_KEY);
+      }
+
       const savedBooster = localStorage.getItem('spice_volume_booster_accepted');
       if (savedBooster === 'true') setVolumeBoosterAccepted(true);
     }
@@ -2752,6 +2767,12 @@ export default function SpiceApp() {
             // Version changed! Wait a moment to ensure deployment finishes, then reload.
             logDebug('system', 'New deployment detected. Reloading app to update...');
             clearInterval(intervalId);
+            shouldAutoPlayRef.current = false;
+            const suppressUntil = currentTimestampMs() + UPDATE_RELOAD_REMOTE_SUPPRESS_MS;
+            suppressRemotePlaybackUntilRef.current = suppressUntil;
+            try {
+              localStorage.setItem(UPDATE_RELOAD_REMOTE_SUPPRESS_KEY, String(suppressUntil));
+            } catch {}
             window.setTimeout(() => window.location.reload(), 1500);
           }
         }
@@ -2869,20 +2890,6 @@ export default function SpiceApp() {
 
         if (trendData.tracks?.length > 0) {
           setHomeTrending(trendData.tracks);
-          // Set trending pick as default if queue only contains placeholder
-          const firstTrack = trendData.tracks[0];
-          setQueue(prevQueue => {
-            if (prevQueue.length === 1 && prevQueue[0].id === 'placeholder') {
-              return [firstTrack];
-            }
-            return prevQueue;
-          });
-          setCurrentTrack(prevTrack => {
-            if (prevTrack.id === 'placeholder') {
-              return firstTrack;
-            }
-            return prevTrack;
-          });
         }
         if (chillData.tracks?.length > 0) setHomeChill(chillData.tracks);
         if (energyData.tracks?.length > 0) setHomeEnergy(energyData.tracks);
@@ -2953,6 +2960,8 @@ export default function SpiceApp() {
   const handleAudioCanPlay = () => {
     if (!audioRef.current || !isPlaying) return;
     audioRef.current.play().catch(() => {
+      shouldAutoPlayRef.current = false;
+      isPlayingRef.current = false;
       setIsPlaying(false);
       logDebug('stream', 'Direct audio is ready. Browser autoplay was blocked; use the play button to continue.');
     });
@@ -3521,6 +3530,21 @@ export default function SpiceApp() {
   const handleAudioError = () => {
     const activeTrack = currentTrackRef.current;
     const activeTrackKey = playbackTrackKey(activeTrack);
+    const playbackWasRequested = shouldAutoPlayRef.current || isPlayingRef.current;
+
+    if (!playbackWasRequested) {
+      if (errorSkipTimeoutRef.current) {
+        clearTimeout(errorSkipTimeoutRef.current);
+        errorSkipTimeoutRef.current = null;
+      }
+      setStreamUrl(null);
+      streamUrlRef.current = null;
+      setIsLoadingStream(false);
+      isLoadingStreamRef.current = false;
+      setPlaybackPlaying(false);
+      logDebug('stream', 'Paused audio stream expired or reset. Keeping playback stopped until the user presses play.');
+      return;
+    }
 
     if (
       activeTrack.id !== 'placeholder'
@@ -4430,8 +4454,28 @@ export default function SpiceApp() {
     return true;
   };
 
-  const applyRemoteCommand = (command: RemoteCommand) => {
+  const isRemotePlaybackCommand = (command: RemoteCommand) => (
+    command.command === 'play'
+    || command.command === 'toggle'
+    || command.command === 'next'
+    || command.command === 'previous'
+    || command.command === 'play_track'
+  );
+
+  const shouldIgnoreRemotePlaybackCommand = (command: RemoteCommand, now: number) => {
+    const createdAt = new Date(command.createdAt).getTime();
+    if (!Number.isFinite(createdAt)) return true;
+    if (createdAt < clientBootedAtRef.current) return true;
+    return now < suppressRemotePlaybackUntilRef.current;
+  };
+
+  const applyRemoteCommand = (command: RemoteCommand, now: number) => {
     if (command.sourceDeviceId === remoteDeviceId) return;
+    if (isRemotePlaybackCommand(command) && shouldIgnoreRemotePlaybackCommand(command, now)) {
+      setRemoteStatus('Ignored a stale Spice Connect playback command after startup.');
+      logDebug('remote', `Ignored stale Spice Connect command ${command.command} after startup/update reload.`);
+      return;
+    }
 
     switch (command.command) {
       case 'play':
@@ -4493,16 +4537,17 @@ export default function SpiceApp() {
       }
 
       const commands = Array.isArray(data.commands) ? data.commands as RemoteCommand[] : [];
+      const now = currentTimestampMs();
       const freshCommands = commands.filter((command) => {
         if (!command.id || !rememberRemoteCommandId(command.id)) return false;
-        if (!isSpiceConnectCommandFresh(command.createdAt, Date.now(), SPICE_CONNECT_COMMAND_TTL_MS)) {
+        if (!isSpiceConnectCommandFresh(command.createdAt, now, SPICE_CONNECT_COMMAND_TTL_MS)) {
           logDebug('remote', `Ignored stale Spice Connect command ${command.command}.`);
           return false;
         }
         return true;
       });
 
-      freshCommands.forEach(applyRemoteCommand);
+      freshCommands.forEach((command) => applyRemoteCommand(command, now));
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Spice Connect command poll failed.';
       setRemoteStatus(message);
