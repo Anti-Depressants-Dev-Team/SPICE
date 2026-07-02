@@ -288,7 +288,7 @@
                 <h2>Preferences</h2>
             </div>
 
-            <div class="settings-section">
+            <div class="settings-section native-legacy-setting" id="adblock-section">
                 <label for="adblock-type" style="font-size: 16px"
                     >AdBlocker Type</label
                 >
@@ -308,7 +308,7 @@
                 </select>
             </div>
 
-            <div class="settings-section">
+            <div class="settings-section native-legacy-setting" id="default-service-section">
                 <label for="default-service" style="font-size: 16px"
                     >Default Startup Service</label
                 >
@@ -341,7 +341,7 @@
                 </p>
             </div>
 
-            <div class="settings-section">
+            <div class="settings-section native-legacy-setting" id="vk-player-section">
                 <div class="toggle-container">
                     <label
                         for="vk-player-toggle"
@@ -616,9 +616,27 @@
             const clearCustomCssBtn = document.getElementById(
                 "clear-custom-css-btn",
             );
+            const nativeLegacySections = document.querySelectorAll(
+                ".native-legacy-setting",
+            );
+
+            function applyNativeModeSettings(settings) {
+                const isNativeMode = Boolean(settings && settings.nativeMode);
+                document.body.classList.toggle("native-mode", isNativeMode);
+                nativeLegacySections.forEach((section) => {
+                    section.classList.toggle("hidden", isNativeMode);
+                });
+                if (isNativeMode) {
+                    defaultServiceSelect.value = "spice_crazy";
+                    defaultServiceSelect.disabled = true;
+                    adBlockTypeSelect.disabled = true;
+                    vkPlayerToggle.disabled = true;
+                }
+            }
 
             // Load settings
             window.api.getSettings().then((settings) => {
+                applyNativeModeSettings(settings);
                 // Migration: if adBlockerType is undefined, map boolean to 'spice' or 'none'
                 if (settings.adBlockerType) {
                     adBlockTypeSelect.value = settings.adBlockerType;
@@ -628,7 +646,7 @@
                         : "none";
                 }
 
-                defaultServiceSelect.value = settings.defaultService;
+                defaultServiceSelect.value = settings.nativeMode ? "spice_crazy" : settings.defaultService;
                 discordToggle.checked = settings.discordRpcEnabled;
                 vkPlayerToggle.checked = settings.vkPlayerEnabled;
                 topbarSearchToggle.checked = settings.topBarSearchEnabled;

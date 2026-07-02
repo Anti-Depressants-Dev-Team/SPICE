@@ -184,8 +184,18 @@ async function ensureNativeRuntimeReady() {
     throw new Error("SPICE local runtime manager is not ready yet.");
   }
   await spiceRuntimeManager.ensureBundledRuntimeInstalled();
+  let updateError = null;
+  try {
+    await spiceRuntimeManager.installLatestIfAvailable();
+  } catch (error) {
+    updateError = error;
+    console.error("Native runtime update check failed:", error);
+  }
   const status = await spiceRuntimeManager.getStatus();
   if (!status.installed && !status.running) {
+    if (updateError) {
+      throw updateError;
+    }
     await spiceRuntimeManager.installOrUpdate();
   }
   await spiceRuntimeManager.start();
@@ -3438,6 +3448,10 @@ app.whenReady().then(async () => {
   });
 
   ipcMain.on("set-default-service", (event, service) => {
+    if (APP_NATIVE_MODE) {
+      console.log("Native mode ignores default service changes; SPICE Music is the only startup service.");
+      return;
+    }
     if (store) store.set("defaultService", service);
     console.log(`Default Service set to ${service}. Restarting...`);
     app.relaunch();
