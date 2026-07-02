@@ -9,6 +9,238 @@ const IS_SPICE_LOCAL_RUNTIME =
     (window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost') &&
     window.location.port === '3939';
 
+const NATIVE_STARTUP_PLAYBACK_GUARD_MS = 60 * 1000;
+const NATIVE_REMOTE_SUPPRESS_KEY = 'spice_update_reload_remote_suppress_until';
+const NATIVE_STARTUP_GUARD_KEY = 'spice_native_startup_playback_guard_until';
+
+function installNativeStartupPlaybackGuard() {
+    if (!IS_SPICE_LOCAL_RUNTIME || window.__spiceNativeStartupPlaybackGuardInstalled) return;
+    window.__spiceNativeStartupPlaybackGuardInstalled = true;
+
+    const guardUntil = Date.now() + NATIVE_STARTUP_PLAYBACK_GUARD_MS;
+    let userPlaybackIntent = false;
+    let loggedBlockedPlayback = false;
+
+    function readStoredGuardUntil() {
+        try {
+            const value = Number(window.localStorage.getItem(NATIVE_STARTUP_GUARD_KEY) || 0);
+            return Number.isFinite(value) ? value : 0;
+        } catch (_) {
+            return 0;
+        }
+    }
+
+    function writeStartupGuards() {
+        try {
+            const suppressUntil = String(guardUntil);
+            window.localStorage.setItem(NATIVE_REMOTE_SUPPRESS_KEY, suppressUntil);
+            window.localStorage.setItem(NATIVE_STARTUP_GUARD_KEY, suppressUntil);
+        } catch (error) {
+            console.warn('[Preload] Native startup playback guard could not write localStorage:', error && error.message);
+        }
+    }
+
+    function isGuardActive() {
+        return Date.now() < Math.max(guardUntil, readStoredGuardUntil());
+    }
+
+    function shouldBlockStartupPlayback() {
+        return isGuardActive() && !userPlaybackIntent;
+    }
+
+    function allowPlaybackIntent(reason) {
+        userPlaybackIntent = true;
+        try {
+            window.localStorage.removeItem(NATIVE_STARTUP_GUARD_KEY);
+        } catch (_) {}
+        console.log(`[Preload] Native startup playback guard released by ${reason || 'user intent'}.`);
+    }
+
+    function isEditableTarget(target) {
+        const element = target && target.nodeType === Node.ELEMENT_NODE
+            ? target
+            : target && target.parentElement;
+        if (!element || !element.closest) return false;
+        const editable = element.closest('input, textarea, select, [contenteditable="true"]');
+        return Boolean(editable);
+    }
+
+    function looksLikePlaybackTarget(target) {
+        const element = target && target.nodeType === Node.ELEMENT_NODE
+            ? target
+            : target && target.parentElement;
+        if (!element || !element.closest) return false;
+
+        const candidate = element.closest([
+            'button',
+            'a',
+            '[role="button"]',
+            '[data-track-id]',
+            '[data-song-id]',
+            '.library-item',
+            '.queue-item',
+            '.search-result',
+            '.track-card',
+            '.track-row',
+            '.playlist-track',
+            '.recommendation-card',
+            '.chart-card',
+            '.now-playing__control',
+            '.mini-player__control',
+            '.player-controls',
+            '.playback-control'
+        ].join(','));
+
+        if (!candidate) return false;
+
+        const label = [
+            candidate.getAttribute('aria-label'),
+            candidate.getAttribute('title'),
+            candidate.getAttribute('data-action'),
+            candidate.className,
+            candidate.textContent
+        ].filter(Boolean).join(' ').toLowerCase();
+
+        return /play|pause|track|song|queue|listen|album|artist|result|library|chart|recommendation/.test(label);
+    }
+
+    function noteTrustedPlaybackIntent(event) {
+        if (!event || event.defaultPrevented || !event.isTrusted) return;
+
+        if (event.type === 'keydown') {
+            const playbackKeys = new Set([' ', 'Enter', 'MediaPlayPause', 'MediaPlay', 'MediaTrackNext', 'MediaTrackPrevious']);
+            if (!playbackKeys.has(event.key)) return;
+            if (isEditableTarget(event.target) && !event.key.startsWith('Media')) return;
+            allowPlaybackIntent(`trusted ${event.type}`);
+            return;
+        }
+
+        if (looksLikePlaybackTarget(event.target)) {
+            allowPlaybackIntent(`trusted ${event.type}`);
+        }
+    }
+
+    function blockPlayback(media) {
+        try {
+            if (media && typeof media.pause === 'function') media.pause();
+        } catch (_) {}
+        if (!loggedBlockedPlayback) {
+            loggedBlockedPlayback = true;
+            console.warn('[Preload] Blocked native startup playback until the user starts playback.');
+        }
+    }
+
+    function pauseUnexpectedMedia() {
+        if (!shouldBlockStartupPlayback() || !document.querySelectorAll) return;
+        document.querySelectorAll('audio, video').forEach((media) => {
+            if (!media.paused) blockPlayback(media);
+        });
+    }
+
+    function patchHtmlMediaPlayback() {
+        const prototype = window.HTMLMediaElement && window.HTMLMediaElement.prototype;
+        if (!prototype || typeof prototype.play !== 'function' || prototype.play.__spiceNativeGuardPatched) return;
+
+        const originalPlay = prototype.play;
+        const guardedPlay = function(...args) {
+            if (shouldBlockStartupPlayback()) {
+                blockPlayback(this);
+                const error = new DOMException(
+                    'Native startup playback is blocked until the user starts playback.',
+                    'NotAllowedError'
+                );
+                return Promise.reject(error);
+            }
+            return originalPlay.apply(this, args);
+        };
+
+        guardedPlay.__spiceNativeGuardPatched = true;
+        prototype.play = guardedPlay;
+    }
+
+    function patchYouTubePlayerInstance(player) {
+        if (!player || player.__spiceNativeGuardPatched) return player;
+        player.__spiceNativeGuardPatched = true;
+
+        ['playVideo', 'loadVideoById'].forEach((method) => {
+            const original = player[method];
+            if (typeof original !== 'function') return;
+
+            player[method] = function(...args) {
+                if (shouldBlockStartupPlayback()) {
+                    if (method === 'loadVideoById' && typeof this.cueVideoById === 'function') {
+                        try {
+                            return this.cueVideoById(...args);
+                        } catch (_) {}
+                    }
+                    if (!loggedBlockedPlayback) {
+                        loggedBlockedPlayback = true;
+                        console.warn('[Preload] Blocked native startup YouTube playback until the user starts playback.');
+                    }
+                    return undefined;
+                }
+                return original.apply(this, args);
+            };
+        });
+
+        return player;
+    }
+
+    function patchYouTubeApi(value) {
+        if (!value || typeof value.Player !== 'function' || value.Player.__spiceNativeGuardPatched) return;
+
+        const OriginalPlayer = value.Player;
+        function GuardedPlayer(...args) {
+            const player = new OriginalPlayer(...args);
+            return patchYouTubePlayerInstance(player);
+        }
+
+        Object.setPrototypeOf(GuardedPlayer, OriginalPlayer);
+        GuardedPlayer.prototype = OriginalPlayer.prototype;
+        GuardedPlayer.__spiceNativeGuardPatched = true;
+        value.Player = GuardedPlayer;
+    }
+
+    function patchYouTubeApiWhenAvailable() {
+        let ytValue = window.YT;
+        try {
+            Object.defineProperty(window, 'YT', {
+                configurable: true,
+                get() {
+                    return ytValue;
+                },
+                set(value) {
+                    ytValue = value;
+                    patchYouTubeApi(value);
+                },
+            });
+        } catch (_) {}
+
+        patchYouTubeApi(ytValue);
+        const interval = window.setInterval(() => patchYouTubeApi(window.YT), 250);
+        window.setTimeout(() => window.clearInterval(interval), NATIVE_STARTUP_PLAYBACK_GUARD_MS);
+    }
+
+    writeStartupGuards();
+    window.__spiceNativeAllowPlaybackIntent = allowPlaybackIntent;
+    window.addEventListener('pointerdown', noteTrustedPlaybackIntent, true);
+    window.addEventListener('click', noteTrustedPlaybackIntent, true);
+    window.addEventListener('keydown', noteTrustedPlaybackIntent, true);
+
+    patchHtmlMediaPlayback();
+    patchYouTubeApiWhenAvailable();
+
+    const pauseInterval = window.setInterval(pauseUnexpectedMedia, 250);
+    window.setTimeout(() => window.clearInterval(pauseInterval), NATIVE_STARTUP_PLAYBACK_GUARD_MS);
+    if (document.readyState === 'loading') {
+        window.addEventListener('DOMContentLoaded', pauseUnexpectedMedia);
+    } else {
+        pauseUnexpectedMedia();
+    }
+}
+
+installNativeStartupPlaybackGuard();
+
 function installNativeSessionSnapshot() {
     if (!IS_SPICE_LOCAL_RUNTIME) return;
     try {
