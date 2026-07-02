@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import xyz.spiceapp.mobile.model.RepeatMode
 import xyz.spiceapp.mobile.model.Track
 
 data class PlayerUiState(
@@ -34,10 +35,15 @@ data class PlayerUiState(
     val isBuffering: Boolean = false,
     val positionMs: Long = 0,
     val durationMs: Long = 0,
+    val shuffleEnabled: Boolean = false,
+    val repeatMode: RepeatMode = RepeatMode.Off,
     val error: String? = null,
 )
 
-class PlayerConnection(context: Context) {
+class PlayerConnection(
+    context: Context,
+    private val onPlaybackEnded: () -> Unit = {},
+) {
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val _state = MutableStateFlow(PlayerUiState())
@@ -51,6 +57,10 @@ class PlayerConnection(context: Context) {
     private var controller: MediaController? = null
     private var pendingAction: ((MediaController) -> Unit)? = null
     private var progressJob: Job? = null
+    private var lastMediaItem: MediaItem? = null
+    private var handledEndedForItem = false
+    private var repeatMode = RepeatMode.Off
+    private var sourceRetryCount = 0
 
     private val listener = object : Player.Listener {
         override fun onEvents(player: Player, events: Player.Events) {
@@ -58,11 +68,23 @@ class PlayerConnection(context: Context) {
             updateProgressLoop(player.isPlaying)
         }
 
+        override fun onPlaybackStateChanged(playbackState: Int) {
+            if (playbackState == Player.STATE_ENDED && !handledEndedForItem) {
+                handledEndedForItem = true
+                onPlaybackEnded()
+            }
+        }
+
         override fun onPlayerError(error: PlaybackException) {
+            if (shouldRetrySource(error)) {
+                retryCurrentSource()
+                return
+            }
+
             _state.value = _state.value.copy(
                 isPlaying = false,
                 isBuffering = false,
-                error = error.message ?: "Android could not play this stream.",
+                error = playbackErrorMessage(error),
             )
         }
     }
@@ -103,6 +125,9 @@ class PlayerConnection(context: Context) {
                 .setUri(streamUrl)
                 .setMediaMetadata(metadata)
                 .build()
+            lastMediaItem = mediaItem
+            handledEndedForItem = false
+            sourceRetryCount = 0
             activeController.setMediaItem(mediaItem)
             activeController.prepare()
             activeController.play()
@@ -129,6 +154,29 @@ class PlayerConnection(context: Context) {
         runWithController { activeController ->
             val duration = activeController.duration.takeUnless { it == C.TIME_UNSET } ?: Long.MAX_VALUE
             activeController.seekTo((activeController.currentPosition + deltaMs).coerceIn(0, duration))
+        }
+    }
+
+    fun toggleShuffle() {
+        runWithController { activeController ->
+            activeController.shuffleModeEnabled = !activeController.shuffleModeEnabled
+            publishState(activeController)
+        }
+    }
+
+    fun cycleRepeat() {
+        runWithController { activeController ->
+            repeatMode = when (repeatMode) {
+                RepeatMode.Off -> RepeatMode.All
+                RepeatMode.All -> RepeatMode.One
+                RepeatMode.One -> RepeatMode.Off
+            }
+            activeController.repeatMode = if (repeatMode == RepeatMode.One) {
+                Player.REPEAT_MODE_ONE
+            } else {
+                Player.REPEAT_MODE_OFF
+            }
+            publishState(activeController)
         }
     }
 
@@ -168,6 +216,8 @@ class PlayerConnection(context: Context) {
             isBuffering = player.playbackState == Player.STATE_BUFFERING,
             positionMs = player.currentPosition.coerceAtLeast(0),
             durationMs = player.duration.takeUnless { it == C.TIME_UNSET }?.coerceAtLeast(0) ?: 0,
+            shuffleEnabled = player.shuffleModeEnabled,
+            repeatMode = repeatMode,
             error = _state.value.error,
         )
     }
@@ -185,5 +235,38 @@ class PlayerConnection(context: Context) {
                 delay(500)
             }
         }
+    }
+
+    private fun shouldRetrySource(error: PlaybackException): Boolean =
+        sourceRetryCount < 1 && error.errorCode in setOf(
+            PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS,
+            PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
+            PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT,
+            PlaybackException.ERROR_CODE_IO_UNSPECIFIED,
+        )
+
+    private fun retryCurrentSource() {
+        val mediaItem = lastMediaItem ?: return
+        sourceRetryCount += 1
+        _state.value = _state.value.copy(
+            isPlaying = false,
+            isBuffering = true,
+            error = null,
+        )
+        scope.launch {
+            delay(650)
+            runWithController { activeController ->
+                activeController.setMediaItem(mediaItem)
+                handledEndedForItem = false
+                activeController.prepare()
+                activeController.play()
+                publishState(activeController)
+            }
+        }
+    }
+
+    private fun playbackErrorMessage(error: PlaybackException): String {
+        val detail = error.message?.takeIf { it.isNotBlank() } ?: error.errorCodeName
+        return "Android could not play this stream: $detail"
     }
 }
