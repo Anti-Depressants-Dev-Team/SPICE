@@ -1,6 +1,7 @@
 package xyz.spiceapp.mobile
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -24,6 +25,13 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent { SpiceTheme { SpiceRoot(viewModel) } }
+        viewModel.openPlaylistInviteFromUri(intent?.data)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        viewModel.openPlaylistInviteFromUri(intent.data)
     }
 }
 
@@ -51,21 +59,56 @@ private fun SpiceRoot(viewModel: SpiceViewModel) {
         onScreenSelected = viewModel::selectScreen,
         onSearchQueryChanged = viewModel::setSearchQuery,
         onSearch = viewModel::search,
-        onTrackSelected = { track ->
+        onTrackSelected = { track, queue ->
             ensureNotificationPermission()
-            viewModel.play(track)
+            viewModel.play(track, queue)
         },
         onTogglePlayback = viewModel::togglePlayback,
+        onPlayNext = viewModel::playNext,
+        onPlayPrevious = viewModel::playPrevious,
         onSeekTo = viewModel::seekTo,
         onSeekBy = viewModel::seekBy,
+        onToggleShuffle = viewModel::toggleShuffle,
+        onCycleRepeat = viewModel::cycleRepeat,
         onStopPlayback = viewModel::stopPlayback,
         onToggleLike = viewModel::toggleLike,
         onLibraryTabSelected = viewModel::setLibraryTab,
-        onQualitySelected = viewModel::setQuality,
+        onCreatePlaylist = viewModel::createPlaylist,
+        onAddCurrentTrackToPlaylist = viewModel::addCurrentTrackToPlaylist,
+        onSharePlaylist = viewModel::sharePlaylist,
+        onAcceptPlaylistInvite = viewModel::acceptPlaylistInvite,
+        onDismissPlaylistInvite = viewModel::dismissPlaylistInvite,
+        onRefreshPendingInvites = viewModel::refreshPendingAccountInvites,
+        onAcceptPendingInvite = viewModel::acceptPendingPlaylistInvite,
+        onRejectPendingInvite = viewModel::rejectPendingPlaylistInvite,
+        onOpenPlaylistMembers = viewModel::openPlaylistMembers,
+        onDismissPlaylistMembers = viewModel::dismissPlaylistMembers,
+        onMemberInviteUsernameChanged = viewModel::setMemberInviteUsername,
+        onInvitePlaylistMember = viewModel::invitePlaylistMember,
+        onRemovePlaylistMember = viewModel::removePlaylistMember,
+        onLeaveSharedPlaylist = viewModel::leaveActiveSharedPlaylist,
+        onRemoveSharedPlaylistTrack = viewModel::removeSharedPlaylistTrack,
+        onRefreshSharedPlaylistTracks = viewModel::refreshActiveSharedPlaylistTracks,
+        onAuthModeSelected = viewModel::setAuthMode,
+        onAuthEmailChanged = viewModel::setAuthEmail,
+        onAuthPasswordChanged = viewModel::setAuthPassword,
+        onAuthUsernameChanged = viewModel::setAuthUsername,
+        onSubmitAccount = viewModel::submitAccount,
+        onSignOut = viewModel::signOut,
+        onSyncNow = viewModel::syncNow,
+        onRefreshSpiceConnect = viewModel::refreshSpiceConnect,
+        onSendSpiceConnectCommand = viewModel::sendSpiceConnectCommand,
         onTestEngine = {
             ensureNotificationPermission()
             viewModel.playEngineTest()
         },
+        onDownloadTrack = viewModel::downloadTrack,
+        onCancelDownload = viewModel::cancelDownload,
+        onLoadLyrics = viewModel::loadCurrentLyrics,
+        onDismissLyrics = viewModel::dismissLyrics,
+        onOpenDownload = viewModel::openDownload,
+        onShareDownload = viewModel::shareDownload,
+        onRemoveDownload = viewModel::removeDownload,
         onRetryHome = viewModel::retryHome,
         onClearMessage = viewModel::clearMessage,
     )

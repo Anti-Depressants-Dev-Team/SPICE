@@ -15,11 +15,157 @@ data class FeedSection(
     val tracks: List<Track>,
 )
 
+data class Playlist(
+    val id: String,
+    val title: String,
+    val description: String = "",
+    val coverUrl: String = "",
+    val tracks: List<Track> = emptyList(),
+    val shared: Boolean = false,
+    val shareRole: String = "",
+    val isPublic: Boolean = true,
+)
+
+data class PlaylistInvite(
+    val token: String,
+    val inviteUrl: String,
+    val expiresAt: String = "",
+)
+
+data class PlaylistInvitePreview(
+    val token: String,
+    val role: String,
+    val expiresAt: String = "",
+    val playlist: Playlist,
+)
+
+data class PendingPlaylistInvite(
+    val playlistId: String,
+    val playlistTitle: String,
+    val ownerId: String,
+    val ownerUsername: String = "",
+    val ownerDisplayName: String = "",
+)
+
+data class PlaylistMember(
+    val userId: String,
+    val username: String = "",
+    val displayName: String = "",
+    val avatarUrl: String = "",
+    val role: String = "",
+    val status: String = "",
+    val acceptedAt: String = "",
+)
+
+data class PlaylistMembersSummary(
+    val playlistId: String,
+    val owner: PlaylistMember,
+    val members: List<PlaylistMember>,
+    val maxMembers: Int,
+)
+
+data class SharedPlaylistTrack(
+    val position: Int,
+    val track: Track,
+    val addedBy: PlaylistMember? = null,
+)
+
+data class SharedPlaylistTracks(
+    val playlistId: String,
+    val role: String,
+    val tracks: List<SharedPlaylistTrack>,
+)
+
+data class DownloadedTrack(
+    val id: String,
+    val track: Track,
+    val filePath: String,
+    val fileName: String,
+    val mimeType: String,
+    val bytes: Long,
+    val downloadedAt: Long,
+)
+
 data class ResolvedStream(
     val url: String,
     val container: String = "",
     val bitrate: Long = 0,
+    val protocol: String = "",
+    val contentType: String = "",
+    val expiresAt: String = "",
 )
+
+data class SpiceAccount(
+    val id: String,
+    val email: String = "",
+    val username: String = "",
+    val displayName: String = "",
+    val avatarUrl: String = "",
+    val accountRole: String = "user",
+    val isAdmin: Boolean = false,
+)
+
+data class SpiceProfile(
+    val id: String = "default",
+    val displayName: String = "Spice Listener",
+    val username: String = "",
+    val avatarUrl: String = "",
+    val bio: String = "",
+    val joinedAt: String = "",
+    val isPrivate: Boolean = false,
+)
+
+data class ProfileStats(
+    val songsPlayed: Int = 0,
+    val likedCount: Int = 0,
+    val playlistsCount: Int = 0,
+)
+
+data class ProfileSummary(
+    val profile: SpiceProfile,
+    val stats: ProfileStats,
+)
+
+data class AccountSession(
+    val token: String,
+    val account: SpiceAccount,
+)
+
+data class LibrarySyncSummary(
+    val likedCount: Int,
+    val historyCount: Int,
+    val playlistCount: Int,
+)
+
+data class LyricsPayload(
+    val plainLyrics: String = "",
+    val syncedLyrics: String = "",
+    val isSynced: Boolean = false,
+)
+
+data class RemoteDevice(
+    val deviceId: String,
+    val displayName: String,
+    val currentTrack: Track? = null,
+    val isPlaying: Boolean = false,
+    val progressMs: Long = 0,
+    val durationMs: Long = 0,
+    val volume: Int = 70,
+    val updatedAt: String = "",
+)
+
+data class RemoteCommand(
+    val id: String,
+    val command: String,
+    val payloadTrack: Track? = null,
+    val seekPositionMs: Long? = null,
+)
+
+enum class RepeatMode {
+    Off,
+    All,
+    One,
+}
 
 enum class AppScreen(val label: String) {
     Home("Home"),
@@ -34,8 +180,14 @@ enum class StreamQuality(val label: String) {
     DataSaver("Data saver"),
 }
 
+enum class AuthMode(val label: String) {
+    SignIn("Sign in"),
+    SignUp("Create account"),
+}
+
 enum class LibraryTab(val label: String) {
     Playlists("Playlists"),
     Liked("Liked"),
     History("History"),
+    Downloads("Downloads"),
 }

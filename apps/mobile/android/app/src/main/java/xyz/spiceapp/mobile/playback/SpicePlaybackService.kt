@@ -19,6 +19,7 @@ class SpicePlaybackService : MediaSessionService() {
         val player = ExoPlayer.Builder(this)
             .setAudioAttributes(audioAttributes, true)
             .setHandleAudioBecomingNoisy(true)
+            .setWakeMode(C.WAKE_MODE_LOCAL)
             .build()
         mediaSession = MediaSession.Builder(this, player).build()
     }

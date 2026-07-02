@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -25,25 +26,39 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Album
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Devices
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.Forward10
+import androidx.compose.material.icons.rounded.Group
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Repeat
+import androidx.compose.material.icons.rounded.RepeatOne
 import androidx.compose.material.icons.rounded.Replay10
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material.icons.rounded.Shuffle
+import androidx.compose.material.icons.rounded.SkipNext
+import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -70,6 +85,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.Slider
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -83,6 +99,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -90,9 +108,20 @@ import coil3.compose.AsyncImage
 import xyz.spiceapp.mobile.BuildConfig
 import xyz.spiceapp.mobile.SpiceUiState
 import xyz.spiceapp.mobile.model.AppScreen
+import xyz.spiceapp.mobile.model.AuthMode
+import xyz.spiceapp.mobile.model.DownloadedTrack
 import xyz.spiceapp.mobile.model.FeedSection
 import xyz.spiceapp.mobile.model.LibraryTab
-import xyz.spiceapp.mobile.model.StreamQuality
+import xyz.spiceapp.mobile.model.LyricsPayload
+import xyz.spiceapp.mobile.model.PendingPlaylistInvite
+import xyz.spiceapp.mobile.model.Playlist
+import xyz.spiceapp.mobile.model.PlaylistInvitePreview
+import xyz.spiceapp.mobile.model.PlaylistMember
+import xyz.spiceapp.mobile.model.PlaylistMembersSummary
+import xyz.spiceapp.mobile.model.RemoteDevice
+import xyz.spiceapp.mobile.model.RepeatMode
+import xyz.spiceapp.mobile.model.SharedPlaylistTrack
+import xyz.spiceapp.mobile.model.SharedPlaylistTracks
 import xyz.spiceapp.mobile.model.Track
 import xyz.spiceapp.mobile.playback.PlayerUiState
 
@@ -104,20 +133,57 @@ fun SpiceApp(
     onScreenSelected: (AppScreen) -> Unit,
     onSearchQueryChanged: (String) -> Unit,
     onSearch: (String) -> Unit,
-    onTrackSelected: (Track) -> Unit,
+    onTrackSelected: (Track, List<Track>) -> Unit,
     onTogglePlayback: () -> Unit,
+    onPlayNext: () -> Unit,
+    onPlayPrevious: () -> Unit,
     onSeekTo: (Long) -> Unit,
     onSeekBy: (Long) -> Unit,
+    onToggleShuffle: () -> Unit,
+    onCycleRepeat: () -> Unit,
     onStopPlayback: () -> Unit,
     onToggleLike: (Track) -> Unit,
     onLibraryTabSelected: (LibraryTab) -> Unit,
-    onQualitySelected: (StreamQuality) -> Unit,
+    onCreatePlaylist: () -> Unit,
+    onAddCurrentTrackToPlaylist: (String) -> Unit,
+    onSharePlaylist: (Playlist) -> Unit,
+    onAcceptPlaylistInvite: () -> Unit,
+    onDismissPlaylistInvite: () -> Unit,
+    onRefreshPendingInvites: () -> Unit,
+    onAcceptPendingInvite: (PendingPlaylistInvite) -> Unit,
+    onRejectPendingInvite: (PendingPlaylistInvite) -> Unit,
+    onOpenPlaylistMembers: (Playlist) -> Unit,
+    onDismissPlaylistMembers: () -> Unit,
+    onMemberInviteUsernameChanged: (String) -> Unit,
+    onInvitePlaylistMember: () -> Unit,
+    onRemovePlaylistMember: (String) -> Unit,
+    onLeaveSharedPlaylist: () -> Unit,
+    onRemoveSharedPlaylistTrack: (SharedPlaylistTrack) -> Unit,
+    onRefreshSharedPlaylistTracks: () -> Unit,
+    onAuthModeSelected: (AuthMode) -> Unit,
+    onAuthEmailChanged: (String) -> Unit,
+    onAuthPasswordChanged: (String) -> Unit,
+    onAuthUsernameChanged: (String) -> Unit,
+    onSubmitAccount: () -> Unit,
+    onSignOut: () -> Unit,
+    onSyncNow: () -> Unit,
+    onRefreshSpiceConnect: () -> Unit,
+    onSendSpiceConnectCommand: (String, String) -> Unit,
     onTestEngine: () -> Unit,
+    onDownloadTrack: (Track) -> Unit,
+    onCancelDownload: () -> Unit,
+    onLoadLyrics: () -> Unit,
+    onDismissLyrics: () -> Unit,
+    onOpenDownload: (DownloadedTrack) -> Unit,
+    onShareDownload: (DownloadedTrack) -> Unit,
+    onRemoveDownload: (DownloadedTrack) -> Unit,
     onRetryHome: () -> Unit,
     onClearMessage: () -> Unit,
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
     var showPlayer by remember { mutableStateOf(false) }
+    var showProfile by remember { mutableStateOf(false) }
+    var showNotifications by remember { mutableStateOf(false) }
     val message = uiState.message ?: playerState.error
 
     LaunchedEffect(message) {
@@ -129,7 +195,13 @@ fun SpiceApp(
 
     Scaffold(
         containerColor = SpiceBackground,
-        topBar = { SpiceTopBar(uiState.screen.label) },
+        topBar = {
+            SpiceTopBar(
+                uiState = uiState,
+                onNotificationsClick = { showNotifications = true },
+                onProfileClick = { showProfile = true },
+            )
+        },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
             Column(Modifier.background(SpiceBackground).navigationBarsPadding()) {
@@ -138,8 +210,14 @@ fun SpiceApp(
                         track = track,
                         player = playerState,
                         resolving = uiState.resolvingTrackId == track.id,
+                        queueSize = uiState.playbackQueue.size,
+                        queueIndex = uiState.queueIndex,
                         onOpen = { showPlayer = true },
                         onToggle = onTogglePlayback,
+                        onNext = onPlayNext,
+                        onPrevious = onPlayPrevious,
+                        onShuffle = onToggleShuffle,
+                        onRepeat = onCycleRepeat,
                     )
                 }
                 SpiceNavigation(uiState.screen, onScreenSelected)
@@ -159,9 +237,33 @@ fun SpiceApp(
                 uiState = uiState,
                 contentPadding = padding,
                 onTabSelected = onLibraryTabSelected,
+                onCreatePlaylist = onCreatePlaylist,
+                onAddCurrentTrackToPlaylist = onAddCurrentTrackToPlaylist,
+                onSharePlaylist = onSharePlaylist,
+                onOpenPlaylistMembers = onOpenPlaylistMembers,
+                onCancelDownload = onCancelDownload,
+                onOpenDownload = onOpenDownload,
+                onShareDownload = onShareDownload,
+                onRemoveDownload = onRemoveDownload,
                 onTrackSelected = onTrackSelected,
             )
-            AppScreen.Settings -> SettingsScreen(uiState, padding, onQualitySelected, onTestEngine)
+            AppScreen.Settings -> SettingsScreen(
+                uiState = uiState,
+                contentPadding = padding,
+                onAuthModeSelected = onAuthModeSelected,
+                onAuthEmailChanged = onAuthEmailChanged,
+                onAuthPasswordChanged = onAuthPasswordChanged,
+                onAuthUsernameChanged = onAuthUsernameChanged,
+                onSubmitAccount = onSubmitAccount,
+                onSignOut = onSignOut,
+                onSyncNow = onSyncNow,
+                onRefreshSpiceConnect = onRefreshSpiceConnect,
+                onSendSpiceConnectCommand = onSendSpiceConnectCommand,
+                onRefreshPendingInvites = onRefreshPendingInvites,
+                onAcceptPendingInvite = onAcceptPendingInvite,
+                onRejectPendingInvite = onRejectPendingInvite,
+                onTestEngine = onTestEngine,
+            )
         }
     }
 
@@ -172,40 +274,358 @@ fun SpiceApp(
             liked = uiState.likedTracks.any { it.id == uiState.currentTrack.id },
             onDismiss = { showPlayer = false },
             onToggle = onTogglePlayback,
+            onNext = onPlayNext,
+            onPrevious = onPlayPrevious,
             onSeekTo = onSeekTo,
             onSeekBy = onSeekBy,
+            onShuffle = onToggleShuffle,
+            onRepeat = onCycleRepeat,
+            queueSize = uiState.playbackQueue.size,
+            queueIndex = uiState.queueIndex,
             onStop = onStopPlayback,
             onLike = { onToggleLike(uiState.currentTrack) },
+            onLyrics = onLoadLyrics,
+            downloadTrackId = uiState.downloadTrackId,
+            downloadProgress = uiState.downloadProgress,
+            onDownload = { onDownloadTrack(uiState.currentTrack) },
+            onCancelDownload = onCancelDownload,
+        )
+    }
+
+    if (showProfile) {
+        ProfileSheet(
+            uiState = uiState,
+            onDismiss = { showProfile = false },
+            onOpenSettings = {
+                showProfile = false
+                onScreenSelected(AppScreen.Settings)
+            },
+        )
+    }
+
+    if (showNotifications) {
+        NotificationsSheet(
+            uiState = uiState,
+            onDismiss = { showNotifications = false },
+            onOpenSettings = {
+                showNotifications = false
+                onScreenSelected(AppScreen.Settings)
+            },
+            onAcceptPendingInvite = onAcceptPendingInvite,
+            onRejectPendingInvite = onRejectPendingInvite,
+        )
+    }
+
+    if (uiState.lyricsTrackId != null) {
+        LyricsSheet(
+            track = uiState.currentTrack,
+            loading = uiState.lyricsLoading,
+            lyrics = uiState.lyricsPayload,
+            onDismiss = onDismissLyrics,
+        )
+    }
+
+    uiState.pendingInvitePreview?.let { preview ->
+        PlaylistInviteDialog(
+            preview = preview,
+            signedIn = uiState.accountSession != null,
+            loading = uiState.inviteLoading,
+            onAccept = onAcceptPlaylistInvite,
+            onDismiss = onDismissPlaylistInvite,
+            onOpenSettings = {
+                onDismissPlaylistInvite()
+                onScreenSelected(AppScreen.Settings)
+            },
+        )
+    }
+
+    uiState.activeMemberPlaylist?.let { playlist ->
+        PlaylistMembersSheet(
+            playlist = playlist,
+            members = uiState.playlistMembers,
+            sharedTracks = uiState.sharedPlaylistTracks,
+            currentUserId = uiState.accountSession?.account?.id.orEmpty(),
+            inviteUsername = uiState.memberInviteUsername,
+            loading = uiState.membersLoading,
+            actionLoading = uiState.memberActionLoading,
+            trackActionLoading = uiState.sharedTrackActionLoading,
+            onDismiss = onDismissPlaylistMembers,
+            onInviteUsernameChanged = onMemberInviteUsernameChanged,
+            onInvite = onInvitePlaylistMember,
+            onRemoveMember = onRemovePlaylistMember,
+            onLeave = onLeaveSharedPlaylist,
+            onRemoveTrack = onRemoveSharedPlaylistTrack,
+            onRefreshTracks = onRefreshSharedPlaylistTracks,
         )
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SpiceTopBar(screenTitle: String) {
+private fun SpiceTopBar(
+    uiState: SpiceUiState,
+    onNotificationsClick: () -> Unit,
+    onProfileClick: () -> Unit,
+) {
     TopAppBar(
         title = {
             Column {
                 Text("SPICE MUSIC", color = SpicePink, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                Text(screenTitle, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
+                Text(uiState.screen.label, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
             }
         },
         actions = {
-            Surface(shape = CircleShape, color = SpicePink, modifier = Modifier.padding(end = 16.dp).size(38.dp)) {
-                Box(contentAlignment = Alignment.Center) {
-                    Text("S", fontWeight = FontWeight.Bold, color = Color.White)
-                }
+            RoundTopAction(
+                onClick = onNotificationsClick,
+                showDot = uiState.pendingAccountInvites.isNotEmpty() || uiState.downloadTrackId != null,
+                contentDescription = "Notifications",
+            ) {
+                Icon(Icons.Rounded.Notifications, null, tint = Color.White)
             }
+            ProfileAvatarButton(uiState, onProfileClick)
         },
         colors = TopAppBarDefaults.topAppBarColors(containerColor = SpiceBackground),
     )
 }
 
 @Composable
+private fun RoundTopAction(
+    onClick: () -> Unit,
+    showDot: Boolean,
+    contentDescription: String,
+    content: @Composable () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.padding(end = 8.dp).size(42.dp).clickable { onClick() },
+        shape = CircleShape,
+        color = SpiceSurfaceHigh,
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f)),
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            content()
+            if (showDot) {
+                Surface(
+                    shape = CircleShape,
+                    color = SpicePink,
+                    modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(9.dp),
+                ) {}
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProfileAvatarButton(uiState: SpiceUiState, onClick: () -> Unit) {
+    val session = uiState.accountSession
+    val profile = uiState.profileSummary?.profile
+    val avatarUrl = profile?.avatarUrl?.takeIf { it.isNotBlank() } ?: session?.account?.avatarUrl
+    val displayName = profile?.displayName?.takeIf { it.isNotBlank() }
+        ?: session?.account?.displayName?.takeIf { it.isNotBlank() }
+        ?: session?.account?.email?.substringBefore("@")
+    val initials = profileInitials(displayName ?: session?.account?.email, session?.account?.id)
+    val borderColor = if (session == null) SpiceTextMuted.copy(alpha = 0.45f) else SpicePink.copy(alpha = 0.7f)
+
+    Surface(
+        modifier = Modifier.padding(end = 12.dp).size(42.dp).clickable { onClick() },
+        shape = CircleShape,
+        color = SpiceSurfaceHigh,
+        border = BorderStroke(1.dp, borderColor),
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            if (!avatarUrl.isNullOrBlank()) {
+                AsyncImage(
+                    model = avatarUrl,
+                    contentDescription = displayName ?: "Profile",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize().clip(CircleShape),
+                )
+            } else {
+                Surface(shape = CircleShape, color = if (session == null) SpiceSurface else SpicePink, modifier = Modifier.fillMaxSize()) {
+                Box(contentAlignment = Alignment.Center) {
+                        Text(initials, fontWeight = FontWeight.Bold, color = Color.White, fontSize = 13.sp)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun profileInitials(email: String?, id: String?): String {
+    val source = email?.takeIf { it.isNotBlank() } ?: id.orEmpty()
+    val base = source.substringBefore("@").replace(Regex("""[^A-Za-z0-9]+"""), " ").trim()
+    return base
+        .split(Regex("""\s+"""))
+        .filter { it.isNotBlank() }
+        .take(2)
+        .joinToString("") { it.first().uppercase() }
+        .ifBlank { "S" }
+        .take(2)
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ProfileSheet(
+    uiState: SpiceUiState,
+    onDismiss: () -> Unit,
+    onOpenSettings: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val session = uiState.accountSession
+    val profile = uiState.profileSummary?.profile
+    val displayName = profile?.displayName?.takeIf { it.isNotBlank() }
+        ?: session?.account?.displayName?.takeIf { it.isNotBlank() }
+        ?: session?.account?.email?.substringBefore("@")
+        ?: "Spice Listener"
+    val username = profile?.username?.takeIf { it.isNotBlank() }
+        ?: session?.account?.username?.takeIf { it.isNotBlank() }
+    val avatarUrl = profile?.avatarUrl?.takeIf { it.isNotBlank() } ?: session?.account?.avatarUrl
+    val stats = uiState.profileSummary?.stats
+
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = SpiceSurface) {
+        LazyColumn(
+            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Surface(shape = CircleShape, color = SpicePink, modifier = Modifier.size(72.dp)) {
+                        if (!avatarUrl.isNullOrBlank()) {
+                            AsyncImage(
+                                model = avatarUrl,
+                                contentDescription = displayName,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize().clip(CircleShape),
+                            )
+                        } else {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(profileInitials(displayName, session?.account?.id), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 22.sp)
+                            }
+                        }
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text(displayName, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(username?.let { "@$it" } ?: session?.account?.email.orEmpty(), color = SpiceTextMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (uiState.profileLoading) {
+                            Text("Refreshing profile...", color = SpiceTextMuted, fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    ProfileStatCard("Played", (stats?.songsPlayed ?: uiState.historyTracks.size).toString(), Modifier.weight(1f))
+                    ProfileStatCard("Liked", (stats?.likedCount ?: uiState.likedTracks.size).toString(), Modifier.weight(1f))
+                }
+            }
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    ProfileStatCard("Playlists", (stats?.playlistsCount ?: uiState.playlists.size).toString(), Modifier.weight(1f))
+                    ProfileStatCard("Downloads", uiState.downloads.size.toString(), Modifier.weight(1f))
+                }
+            }
+            if (!profile?.bio.isNullOrBlank()) {
+                item {
+                    Text(profile.bio, color = SpiceTextMuted)
+                }
+            }
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(onClick = onOpenSettings, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Rounded.Settings, null)
+                        Text("Account", modifier = Modifier.padding(start = 8.dp))
+                    }
+                    TextButton(onClick = onDismiss, modifier = Modifier.weight(1f)) {
+                        Text("Close")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProfileStatCard(label: String, value: String, modifier: Modifier = Modifier) {
+    Card(
+        modifier = modifier,
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = SpiceSurfaceHigh),
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(value, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
+            Text(label, color = SpiceTextMuted, fontSize = 12.sp)
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun NotificationsSheet(
+    uiState: SpiceUiState,
+    onDismiss: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onAcceptPendingInvite: (PendingPlaylistInvite) -> Unit,
+    onRejectPendingInvite: (PendingPlaylistInvite) -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = SpiceSurface) {
+        LazyColumn(
+            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item {
+                Text("Notifications", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            }
+            if (uiState.downloadTrackId != null) {
+                item {
+                    StatusNotice("Download", uiState.downloadProgress ?: "Preparing download...")
+                }
+            }
+            if (uiState.pendingAccountInvites.isEmpty() && uiState.downloadTrackId == null) {
+                item { Text("No notifications right now.", color = SpiceTextMuted) }
+            }
+            items(uiState.pendingAccountInvites, key = { it.playlistId }) { invite ->
+                Card(shape = RoundedCornerShape(8.dp), colors = CardDefaults.cardColors(containerColor = SpiceSurfaceHigh)) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(invite.playlistTitle, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("Playlist invite from ${invite.ownerDisplayName.ifBlank { invite.ownerUsername.ifBlank { invite.ownerId } }}", color = SpiceTextMuted, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(onClick = { onRejectPendingInvite(invite) }, modifier = Modifier.weight(1f), enabled = !uiState.accountInvitesLoading) {
+                                Icon(Icons.Rounded.Close, null)
+                                Text("Reject", modifier = Modifier.padding(start = 6.dp))
+                            }
+                            Button(onClick = { onAcceptPendingInvite(invite) }, modifier = Modifier.weight(1f), enabled = !uiState.accountInvitesLoading) {
+                                Icon(Icons.Rounded.Check, null)
+                                Text("Accept", modifier = Modifier.padding(start = 6.dp))
+                            }
+                        }
+                    }
+                }
+            }
+            item {
+                TextButton(onClick = onOpenSettings, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Rounded.Settings, null)
+                    Text("Open account settings", modifier = Modifier.padding(start = 8.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatusNotice(title: String, body: String) {
+    Card(shape = RoundedCornerShape(8.dp), colors = CardDefaults.cardColors(containerColor = SpiceSurfaceHigh)) {
+        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(title, fontWeight = FontWeight.Bold)
+            Text(body, color = SpiceTextMuted, fontSize = 13.sp)
+        }
+    }
+}
+
+@Composable
 private fun HomeScreen(
     uiState: SpiceUiState,
     contentPadding: PaddingValues,
-    onTrackSelected: (Track) -> Unit,
+    onTrackSelected: (Track, List<Track>) -> Unit,
     onSearch: (String) -> Unit,
     onRetry: () -> Unit,
 ) {
@@ -264,7 +684,7 @@ private fun ProviderBadge(label: String) {
 }
 
 @Composable
-private fun TrackSection(section: FeedSection, onTrackSelected: (Track) -> Unit) {
+private fun TrackSection(section: FeedSection, onTrackSelected: (Track, List<Track>) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(
             section.title,
@@ -277,7 +697,7 @@ private fun TrackSection(section: FeedSection, onTrackSelected: (Track) -> Unit)
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             items(section.tracks, key = { section.title + it.id }) { track ->
-                TrackCard(track, onTrackSelected)
+                TrackCard(track) { selected -> onTrackSelected(selected, section.tracks) }
             }
         }
     }
@@ -315,7 +735,7 @@ private fun SearchScreen(
     contentPadding: PaddingValues,
     onQueryChanged: (String) -> Unit,
     onSearch: (String) -> Unit,
-    onTrackSelected: (Track) -> Unit,
+    onTrackSelected: (Track, List<Track>) -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -379,7 +799,9 @@ private fun SearchScreen(
         if (uiState.searchLoading) {
             item { Box(Modifier.fillMaxWidth().height(120.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
         } else {
-            items(uiState.searchResults, key = { it.id }) { track -> TrackRow(track, onTrackSelected) }
+            items(uiState.searchResults, key = { it.id }) { track ->
+                TrackRow(track) { selected -> onTrackSelected(selected, uiState.searchResults) }
+            }
         }
     }
 }
@@ -389,7 +811,15 @@ private fun LibraryScreen(
     uiState: SpiceUiState,
     contentPadding: PaddingValues,
     onTabSelected: (LibraryTab) -> Unit,
-    onTrackSelected: (Track) -> Unit,
+    onCreatePlaylist: () -> Unit,
+    onAddCurrentTrackToPlaylist: (String) -> Unit,
+    onSharePlaylist: (Playlist) -> Unit,
+    onOpenPlaylistMembers: (Playlist) -> Unit,
+    onCancelDownload: () -> Unit,
+    onOpenDownload: (DownloadedTrack) -> Unit,
+    onShareDownload: (DownloadedTrack) -> Unit,
+    onRemoveDownload: (DownloadedTrack) -> Unit,
+    onTrackSelected: (Track, List<Track>) -> Unit,
 ) {
     Column(
         modifier = Modifier.fillMaxSize().padding(top = contentPadding.calculateTopPadding()),
@@ -399,7 +829,7 @@ private fun LibraryScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text("Your Library", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-            FilledIconButton(onClick = {}) { Icon(Icons.Rounded.Add, "Create playlist") }
+            FilledIconButton(onClick = onCreatePlaylist) { Icon(Icons.Rounded.Add, "Create playlist") }
         }
         PrimaryTabRow(selectedTabIndex = uiState.libraryTab.ordinal, containerColor = SpiceBackground) {
             LibraryTab.entries.forEach { tab ->
@@ -411,15 +841,158 @@ private fun LibraryScreen(
             }
         }
         when (uiState.libraryTab) {
-            LibraryTab.Playlists -> EmptyState("No playlists yet", "Playlist sync will use the Spice account API.", null)
+            LibraryTab.Playlists -> PlaylistList(
+                playlists = uiState.playlists,
+                currentTrack = uiState.currentTrack,
+                bottomPadding = contentPadding.calculateBottomPadding(),
+                onCreatePlaylist = onCreatePlaylist,
+                onAddCurrentTrackToPlaylist = onAddCurrentTrackToPlaylist,
+                onSharePlaylist = onSharePlaylist,
+                onOpenPlaylistMembers = onOpenPlaylistMembers,
+                onTrackSelected = onTrackSelected,
+                sharingPlaylistId = uiState.sharingPlaylistId,
+            )
             LibraryTab.Liked -> TrackList(uiState.likedTracks, contentPadding.calculateBottomPadding(), onTrackSelected, "No liked tracks")
             LibraryTab.History -> TrackList(uiState.historyTracks, contentPadding.calculateBottomPadding(), onTrackSelected, "No listening history")
+            LibraryTab.Downloads -> DownloadList(
+                downloads = uiState.downloads,
+                activeTrackId = uiState.downloadTrackId,
+                activeProgress = uiState.downloadProgress,
+                bottomPadding = contentPadding.calculateBottomPadding(),
+                onCancelDownload = onCancelDownload,
+                onOpenDownload = onOpenDownload,
+                onShareDownload = onShareDownload,
+                onRemoveDownload = onRemoveDownload,
+            )
         }
     }
 }
 
 @Composable
-private fun TrackList(tracks: List<Track>, bottomPadding: androidx.compose.ui.unit.Dp, onTrackSelected: (Track) -> Unit, empty: String) {
+private fun PlaylistList(
+    playlists: List<Playlist>,
+    currentTrack: Track?,
+    bottomPadding: androidx.compose.ui.unit.Dp,
+    onCreatePlaylist: () -> Unit,
+    onAddCurrentTrackToPlaylist: (String) -> Unit,
+    onSharePlaylist: (Playlist) -> Unit,
+    onOpenPlaylistMembers: (Playlist) -> Unit,
+    onTrackSelected: (Track, List<Track>) -> Unit,
+    sharingPlaylistId: String?,
+) {
+    if (playlists.isEmpty()) {
+        EmptyState(
+            title = "No playlists yet",
+            body = "Create a local playlist, then sync it to your Spice account.",
+            onAction = onCreatePlaylist,
+            actionLabel = "Create playlist",
+        )
+        return
+    }
+
+    LazyColumn(
+        contentPadding = PaddingValues(18.dp, 12.dp, 18.dp, bottomPadding + 16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        items(playlists, key = { it.id }) { playlist ->
+            PlaylistCard(
+                playlist = playlist,
+                currentTrack = currentTrack,
+                onAddCurrentTrackToPlaylist = onAddCurrentTrackToPlaylist,
+                onSharePlaylist = onSharePlaylist,
+                onOpenPlaylistMembers = onOpenPlaylistMembers,
+                onTrackSelected = onTrackSelected,
+                sharing = sharingPlaylistId == playlist.id,
+            )
+        }
+    }
+}
+
+@Composable
+private fun PlaylistCard(
+    playlist: Playlist,
+    currentTrack: Track?,
+    onAddCurrentTrackToPlaylist: (String) -> Unit,
+    onSharePlaylist: (Playlist) -> Unit,
+    onOpenPlaylistMembers: (Playlist) -> Unit,
+    onTrackSelected: (Track, List<Track>) -> Unit,
+    sharing: Boolean,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable { onOpenPlaylistMembers(playlist) },
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = SpiceSurfaceHigh),
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(playlist.title, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "${playlist.tracks.size} tracks" + if (playlist.shared) " - shared" else "",
+                        color = SpiceTextMuted,
+                        fontSize = 13.sp,
+                    )
+                }
+            }
+            val canInvite = !playlist.shared || playlist.shareRole == "owner"
+            val canEditTracks = !playlist.shared || playlist.shareRole in setOf("owner", "editor")
+            if ((currentTrack != null && canEditTracks) || canInvite || playlist.shared) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    if (currentTrack != null && canEditTracks) {
+                        TextButton(
+                            onClick = { onAddCurrentTrackToPlaylist(playlist.id) },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Icon(Icons.Rounded.Add, null)
+                            Text("Add", modifier = Modifier.padding(start = 6.dp))
+                        }
+                    }
+                    if (canInvite) {
+                        TextButton(
+                            onClick = { onSharePlaylist(playlist) },
+                            enabled = !sharing,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            if (sharing) {
+                                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                            } else {
+                                Icon(Icons.Rounded.Share, null)
+                            }
+                            Text(if (sharing) "Linking" else "Share", modifier = Modifier.padding(start = 6.dp))
+                        }
+                    }
+                    if (playlist.shared || canInvite) {
+                        TextButton(
+                            onClick = { onOpenPlaylistMembers(playlist) },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Icon(Icons.Rounded.Group, null)
+                            Text("People", modifier = Modifier.padding(start = 6.dp))
+                        }
+                    }
+                }
+            }
+            if (playlist.tracks.isEmpty()) {
+                Text("Play a track, then add it here.", color = SpiceTextMuted, fontSize = 13.sp)
+            } else {
+                playlist.tracks.take(3).forEach { track ->
+                    TrackRow(track) { selected -> onTrackSelected(selected, playlist.tracks) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TrackList(
+    tracks: List<Track>,
+    bottomPadding: androidx.compose.ui.unit.Dp,
+    onTrackSelected: (Track, List<Track>) -> Unit,
+    empty: String,
+) {
     if (tracks.isEmpty()) {
         EmptyState(empty, "Play or like a track to add it here.", null)
     } else {
@@ -427,7 +1000,128 @@ private fun TrackList(tracks: List<Track>, bottomPadding: androidx.compose.ui.un
             contentPadding = PaddingValues(18.dp, 12.dp, 18.dp, bottomPadding + 16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            items(tracks, key = { it.id }) { track -> TrackRow(track, onTrackSelected) }
+            items(tracks, key = { it.id }) { track ->
+                TrackRow(track) { selected -> onTrackSelected(selected, tracks) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun Artwork(track: Track, modifier: Modifier) {
+    AsyncImage(
+        model = track.artworkUrl,
+        contentDescription = track.title,
+        contentScale = ContentScale.Crop,
+        modifier = modifier.clip(RoundedCornerShape(6.dp)),
+    )
+}
+
+@Composable
+private fun DownloadList(
+    downloads: List<DownloadedTrack>,
+    activeTrackId: String?,
+    activeProgress: String?,
+    bottomPadding: androidx.compose.ui.unit.Dp,
+    onCancelDownload: () -> Unit,
+    onOpenDownload: (DownloadedTrack) -> Unit,
+    onShareDownload: (DownloadedTrack) -> Unit,
+    onRemoveDownload: (DownloadedTrack) -> Unit,
+) {
+    if (downloads.isEmpty() && activeTrackId == null) {
+        EmptyState(
+            title = "No downloads yet",
+            body = "Use the full player download button to save audio on this phone.",
+            onAction = null,
+        )
+        return
+    }
+
+    LazyColumn(
+        contentPadding = PaddingValues(18.dp, 12.dp, 18.dp, bottomPadding + 16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        if (activeTrackId != null) {
+            item {
+                ActiveDownloadCard(
+                    progress = activeProgress.orEmpty(),
+                    onCancelDownload = onCancelDownload,
+                )
+            }
+        }
+        items(downloads, key = { it.id }) { download ->
+            DownloadCard(
+                download = download,
+                onOpenDownload = onOpenDownload,
+                onShareDownload = onShareDownload,
+                onRemoveDownload = onRemoveDownload,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ActiveDownloadCard(
+    progress: String,
+    onCancelDownload: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = SpiceSurfaceHigh),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 3.dp)
+            Column(Modifier.weight(1f)) {
+                Text("Download in progress", fontWeight = FontWeight.Bold)
+                Text(progress.ifBlank { "Preparing download..." }, color = SpiceTextMuted, fontSize = 13.sp, maxLines = 2)
+            }
+            TextButton(onClick = onCancelDownload) {
+                Icon(Icons.Rounded.Close, null)
+                Text("Cancel", modifier = Modifier.padding(start = 6.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun DownloadCard(
+    download: DownloadedTrack,
+    onOpenDownload: (DownloadedTrack) -> Unit,
+    onShareDownload: (DownloadedTrack) -> Unit,
+    onRemoveDownload: (DownloadedTrack) -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = SpiceSurfaceHigh),
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Artwork(download.track, Modifier.size(54.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(download.track.title, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(download.track.artist, color = SpiceTextMuted, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(download.fileName + " - " + formatBytes(download.bytes), color = SpiceTextMuted, fontSize = 12.sp, maxLines = 1)
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = { onOpenDownload(download) }, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.AutoMirrored.Rounded.OpenInNew, null)
+                    Text("Open", modifier = Modifier.padding(start = 6.dp))
+                }
+                TextButton(onClick = { onShareDownload(download) }, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Rounded.Share, null)
+                    Text("Share", modifier = Modifier.padding(start = 6.dp))
+                }
+                IconButton(onClick = { onRemoveDownload(download) }) {
+                    Icon(Icons.Rounded.Delete, "Remove download")
+                }
+            }
         }
     }
 }
@@ -457,9 +1151,22 @@ private fun TrackRow(track: Track, onTrackSelected: (Track) -> Unit) {
 private fun SettingsScreen(
     uiState: SpiceUiState,
     contentPadding: PaddingValues,
-    onQualitySelected: (StreamQuality) -> Unit,
+    onAuthModeSelected: (AuthMode) -> Unit,
+    onAuthEmailChanged: (String) -> Unit,
+    onAuthPasswordChanged: (String) -> Unit,
+    onAuthUsernameChanged: (String) -> Unit,
+    onSubmitAccount: () -> Unit,
+    onSignOut: () -> Unit,
+    onSyncNow: () -> Unit,
+    onRefreshSpiceConnect: () -> Unit,
+    onSendSpiceConnectCommand: (String, String) -> Unit,
+    onRefreshPendingInvites: () -> Unit,
+    onAcceptPendingInvite: (PendingPlaylistInvite) -> Unit,
+    onRejectPendingInvite: (PendingPlaylistInvite) -> Unit,
     onTestEngine: () -> Unit,
 ) {
+    var selectedTab by remember { mutableStateOf(SettingsTab.General) }
+
     LazyColumn(
         contentPadding = PaddingValues(
             start = 18.dp,
@@ -470,48 +1177,663 @@ private fun SettingsScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            Text("Audio quality", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Text("Applied when the Spice backend returns multiple direct streams.", color = SpiceTextMuted)
-        }
-        items(StreamQuality.entries) { quality ->
-            Row(
-                modifier = Modifier.fillMaxWidth().clickable { onQualitySelected(quality) }.padding(vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                RadioButton(selected = uiState.quality == quality, onClick = { onQualitySelected(quality) })
-                Text(quality.label, modifier = Modifier.padding(start = 8.dp))
+            PrimaryTabRow(selectedTabIndex = selectedTab.ordinal, containerColor = SpiceBackground) {
+                SettingsTab.entries.forEach { tab ->
+                    Tab(
+                        selected = selectedTab == tab,
+                        onClick = { selectedTab = tab },
+                        text = { Text(tab.label) },
+                    )
+                }
             }
         }
-        item { HorizontalDivider() }
-        item {
-            Text("Playback transport", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(8.dp))
-            StatusRow("Native engine", "Media3 / ExoPlayer", SpiceCyan)
-            StatusRow("Spice search API", "Connected at runtime", SpiceCyan)
-            StatusRow("Direct stream API", "Required for playback", SpicePink)
-            Text(
-                "YouTube iframe fallback is intentionally excluded because it cannot provide reliable Android background playback.",
-                color = SpiceTextMuted,
-                modifier = Modifier.padding(top = 10.dp),
+        when (selectedTab) {
+            SettingsTab.General -> {
+                item {
+                    AccountSection(
+                        uiState = uiState,
+                        onAuthModeSelected = onAuthModeSelected,
+                        onAuthEmailChanged = onAuthEmailChanged,
+                        onAuthPasswordChanged = onAuthPasswordChanged,
+                        onAuthUsernameChanged = onAuthUsernameChanged,
+                        onSubmitAccount = onSubmitAccount,
+                        onSignOut = onSignOut,
+                        onSyncNow = onSyncNow,
+                        onRefreshPendingInvites = onRefreshPendingInvites,
+                        onAcceptPendingInvite = onAcceptPendingInvite,
+                        onRejectPendingInvite = onRejectPendingInvite,
+                    )
+                }
+                item { HorizontalDivider() }
+                item {
+                    SpiceConnectSection(
+                        uiState = uiState,
+                        onRefresh = onRefreshSpiceConnect,
+                        onSendCommand = onSendSpiceConnectCommand,
+                    )
+                }
+                if (BuildConfig.DEBUG) {
+                    item { HorizontalDivider() }
+                    item {
+                        Button(onClick = onTestEngine, modifier = Modifier.fillMaxWidth()) {
+                            Icon(Icons.Rounded.PlayArrow, null)
+                            Text("Test native audio", modifier = Modifier.padding(start = 8.dp))
+                        }
+                        Text(
+                            "Plays a bundled 30-second test tone through Media3.",
+                            color = SpiceTextMuted,
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
+                    }
+                }
+            }
+            SettingsTab.Terms -> item { TermsSection() }
+            SettingsTab.Licenses -> item { LicenseSection() }
+        }
+    }
+}
+
+@Composable
+private fun AccountSection(
+    uiState: SpiceUiState,
+    onAuthModeSelected: (AuthMode) -> Unit,
+    onAuthEmailChanged: (String) -> Unit,
+    onAuthPasswordChanged: (String) -> Unit,
+    onAuthUsernameChanged: (String) -> Unit,
+    onSubmitAccount: () -> Unit,
+    onSignOut: () -> Unit,
+    onSyncNow: () -> Unit,
+    onRefreshPendingInvites: () -> Unit,
+    onAcceptPendingInvite: (PendingPlaylistInvite) -> Unit,
+    onRejectPendingInvite: (PendingPlaylistInvite) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("Spice account", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        val session = uiState.accountSession
+
+        if (session != null) {
+            StatusRow("Signed in", session.account.email.ifBlank { session.account.id }, SpiceCyan)
+            StatusRow("Cloud sync", if (uiState.syncLoading) "Syncing" else "Ready", SpiceCyan)
+            uiState.lastSync?.let { summary ->
+                Text(
+                    "Synced ${summary.likedCount} liked tracks, ${summary.historyCount} history items, and ${summary.playlistCount} playlists.",
+                    color = SpiceTextMuted,
+                    fontSize = 13.sp,
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(onClick = onSyncNow, enabled = !uiState.syncLoading && !uiState.accountLoading, modifier = Modifier.weight(1f)) {
+                    if (uiState.syncLoading) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    } else {
+                        Icon(Icons.Rounded.Refresh, null)
+                    }
+                    Text("Sync", modifier = Modifier.padding(start = 8.dp))
+                }
+                TextButton(onClick = onSignOut, enabled = !uiState.syncLoading && !uiState.accountLoading) {
+                    Text("Sign out")
+                }
+            }
+            PendingInviteSection(
+                invites = uiState.pendingAccountInvites,
+                loading = uiState.accountInvitesLoading,
+                onRefresh = onRefreshPendingInvites,
+                onAccept = onAcceptPendingInvite,
+                onReject = onRejectPendingInvite,
+            )
+            return
+        }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            AuthMode.entries.forEach { mode ->
+                if (uiState.authMode == mode) {
+                    Button(onClick = { onAuthModeSelected(mode) }, modifier = Modifier.weight(1f)) {
+                        Text(mode.label)
+                    }
+                } else {
+                    TextButton(onClick = { onAuthModeSelected(mode) }, modifier = Modifier.weight(1f)) {
+                        Text(mode.label)
+                    }
+                }
+            }
+        }
+        OutlinedTextField(
+            value = uiState.authEmail,
+            onValueChange = onAuthEmailChanged,
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            label = { Text("Email") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next),
+            shape = RoundedCornerShape(8.dp),
+        )
+        if (uiState.authMode == AuthMode.SignUp) {
+            OutlinedTextField(
+                value = uiState.authUsername,
+                onValueChange = onAuthUsernameChanged,
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                label = { Text("Username") },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                shape = RoundedCornerShape(8.dp),
             )
         }
-        if (BuildConfig.DEBUG) {
-            item {
-                Button(onClick = onTestEngine, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Rounded.PlayArrow, null)
-                    Text("Test native audio", modifier = Modifier.padding(start = 8.dp))
-                }
+        OutlinedTextField(
+            value = uiState.authPassword,
+            onValueChange = onAuthPasswordChanged,
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            label = { Text("Password") },
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = { onSubmitAccount() }),
+            shape = RoundedCornerShape(8.dp),
+        )
+        Button(
+            onClick = onSubmitAccount,
+            enabled = !uiState.accountLoading,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            if (uiState.accountLoading) {
+                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+            } else {
+                Icon(Icons.Rounded.LibraryMusic, null)
+            }
+            Text(uiState.authMode.label, modifier = Modifier.padding(start = 8.dp))
+        }
+    }
+}
+
+@Composable
+private fun SpiceConnectSection(
+    uiState: SpiceUiState,
+    onRefresh: () -> Unit,
+    onSendCommand: (String, String) -> Unit,
+) {
+    val signedIn = uiState.accountSession != null
+    val targets = uiState.remoteDevices.filter { it.deviceId != uiState.remoteDeviceId }
+
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Spice Connect", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 Text(
-                    "Plays a bundled 30-second test tone through Media3 so notification and background controls can be verified without the stream API.",
+                    if (signedIn) "This phone: ${uiState.remoteDeviceId.takeLast(8)}" else "Sign in to sync devices.",
                     color = SpiceTextMuted,
-                    modifier = Modifier.padding(top = 8.dp),
+                    fontSize = 13.sp,
+                )
+            }
+            TextButton(onClick = onRefresh, enabled = signedIn && !uiState.connectLoading) {
+                if (uiState.connectLoading) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                } else {
+                    Icon(Icons.Rounded.Refresh, null)
+                }
+                Text("Refresh", modifier = Modifier.padding(start = 6.dp))
+            }
+        }
+        if (uiState.connectStatus.isNotBlank()) {
+            Text(uiState.connectStatus, color = SpiceTextMuted, fontSize = 13.sp)
+        }
+        if (!signedIn) {
+            Text("Spice Connect uses your Spice account to discover trusted devices.", color = SpiceTextMuted)
+        } else if (targets.isEmpty()) {
+            Text("No other Spice Connect devices are visible yet.", color = SpiceTextMuted)
+        } else {
+            targets.forEach { device ->
+                RemoteDeviceCard(
+                    device = device,
+                    loading = uiState.connectLoading,
+                    onSendCommand = onSendCommand,
                 )
             }
         }
-        item { HorizontalDivider() }
-        item {
-            Text("Coming next", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Text("Spice account login, cloud playlists, lyrics, scrobbling, and Spice Connect device discovery.", color = SpiceTextMuted)
+    }
+}
+
+@Composable
+private fun RemoteDeviceCard(
+    device: RemoteDevice,
+    loading: Boolean,
+    onSendCommand: (String, String) -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = SpiceSurfaceHigh),
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Surface(shape = CircleShape, color = SpiceCyan, modifier = Modifier.size(34.dp)) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(Icons.Rounded.Devices, null, tint = Color.Black, modifier = Modifier.size(18.dp))
+                    }
+                }
+                Column(Modifier.weight(1f)) {
+                    Text(device.displayName, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        device.currentTrack?.let { "${if (device.isPlaying) "Playing" else "Paused"} - ${it.title}" }
+                            ?: "Idle",
+                        color = SpiceTextMuted,
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("previous" to "Prev", "toggle" to "Play", "next" to "Next").forEach { (command, label) ->
+                    TextButton(
+                        onClick = { onSendCommand(device.deviceId, command) },
+                        enabled = !loading,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text(label)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PendingInviteSection(
+    invites: List<PendingPlaylistInvite>,
+    loading: Boolean,
+    onRefresh: () -> Unit,
+    onAccept: (PendingPlaylistInvite) -> Unit,
+    onReject: (PendingPlaylistInvite) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Playlist invites", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            TextButton(onClick = onRefresh, enabled = !loading) {
+                if (loading) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                } else {
+                    Icon(Icons.Rounded.Refresh, null)
+                }
+                Text("Refresh", modifier = Modifier.padding(start = 6.dp))
+            }
+        }
+        if (invites.isEmpty() && !loading) {
+            Text("No pending playlist invites.", color = SpiceTextMuted, fontSize = 13.sp)
+        }
+        invites.forEach { invite ->
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(8.dp),
+                colors = CardDefaults.cardColors(containerColor = SpiceSurfaceHigh),
+            ) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(invite.playlistTitle, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        "From ${invite.ownerDisplayName.ifBlank { invite.ownerUsername.ifBlank { invite.ownerId } }}",
+                        color = SpiceTextMuted,
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = { onReject(invite) }, enabled = !loading, modifier = Modifier.weight(1f)) {
+                            Icon(Icons.Rounded.Close, null)
+                            Text("Reject", modifier = Modifier.padding(start = 6.dp))
+                        }
+                        Button(onClick = { onAccept(invite) }, enabled = !loading, modifier = Modifier.weight(1f)) {
+                            Icon(Icons.Rounded.Check, null)
+                            Text("Accept", modifier = Modifier.padding(start = 6.dp))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlaylistInviteDialog(
+    preview: PlaylistInvitePreview,
+    signedIn: Boolean,
+    loading: Boolean,
+    onAccept: () -> Unit,
+    onDismiss: () -> Unit,
+    onOpenSettings: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Playlist invite") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(preview.playlist.title, fontWeight = FontWeight.Bold)
+                Text("${preview.playlist.tracks.size} tracks", color = SpiceTextMuted)
+                if (preview.role.isNotBlank()) {
+                    Text("Role: ${preview.role}", color = SpiceTextMuted, fontSize = 13.sp)
+                }
+                if (!signedIn) {
+                    Text("Sign in to your Spice account before accepting.", color = SpiceTextMuted, fontSize = 13.sp)
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = if (signedIn) onAccept else onOpenSettings,
+                enabled = !loading,
+            ) {
+                if (loading) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                } else {
+                    Icon(Icons.Rounded.Check, null)
+                }
+                Text(if (signedIn) "Accept" else "Sign in", modifier = Modifier.padding(start = 6.dp))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !loading) {
+                Text("Close")
+            }
+        },
+        containerColor = SpiceSurface,
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PlaylistMembersSheet(
+    playlist: Playlist,
+    members: PlaylistMembersSummary?,
+    sharedTracks: SharedPlaylistTracks?,
+    currentUserId: String,
+    inviteUsername: String,
+    loading: Boolean,
+    actionLoading: Boolean,
+    trackActionLoading: Boolean,
+    onDismiss: () -> Unit,
+    onInviteUsernameChanged: (String) -> Unit,
+    onInvite: () -> Unit,
+    onRemoveMember: (String) -> Unit,
+    onLeave: () -> Unit,
+    onRemoveTrack: (SharedPlaylistTrack) -> Unit,
+    onRefreshTracks: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val isOwner = !playlist.shared || playlist.shareRole == "owner"
+    val canEditTracks = sharedTracks?.role in setOf("owner", "editor")
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = SpiceSurface,
+    ) {
+        LazyColumn(
+            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item {
+                Text("Manage playlist", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text(playlist.title, color = SpiceTextMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            if (loading || members == null) {
+                item {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 3.dp)
+                        Text("Loading members...", color = SpiceTextMuted, fontSize = 13.sp)
+                    }
+                }
+            } else {
+                item {
+                    Text(
+                        "${members.members.size}/${members.maxMembers} invited members",
+                        color = SpiceTextMuted,
+                        fontSize = 13.sp,
+                    )
+                }
+                item {
+                    PlaylistMemberRow(member = members.owner, label = "Owner", actionLoading = actionLoading)
+                }
+                if (members.members.isEmpty()) {
+                    item {
+                        Text("No other members yet.", color = SpiceTextMuted, fontSize = 13.sp)
+                    }
+                } else {
+                    items(members.members, key = { it.userId }) { member ->
+                        PlaylistMemberRow(
+                            member = member,
+                            label = member.role.ifBlank { "Member" },
+                            actionLoading = actionLoading,
+                            onRemove = if (isOwner) {
+                                { onRemoveMember(member.userId) }
+                            } else {
+                                null
+                            },
+                        )
+                    }
+                }
+            }
+            item { HorizontalDivider() }
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Tracks", fontWeight = FontWeight.Bold)
+                        Text(
+                            "${sharedTracks?.tracks?.size ?: playlist.tracks.size} tracks",
+                            color = SpiceTextMuted,
+                            fontSize = 13.sp,
+                        )
+                    }
+                    TextButton(onClick = onRefreshTracks, enabled = !trackActionLoading) {
+                        if (trackActionLoading) {
+                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(Icons.Rounded.Refresh, null)
+                        }
+                        Text("Refresh", modifier = Modifier.padding(start = 6.dp))
+                    }
+                }
+            }
+            if (sharedTracks == null) {
+                item {
+                    Text("No track details are loaded yet.", color = SpiceTextMuted, fontSize = 13.sp)
+                }
+            } else if (sharedTracks.tracks.isEmpty()) {
+                item {
+                    Text("No tracks in this playlist yet.", color = SpiceTextMuted, fontSize = 13.sp)
+                }
+            } else {
+                items(sharedTracks.tracks, key = { it.position }) { sharedTrack ->
+                    val canRemoveTrack = sharedTracks.role == "owner" ||
+                        (sharedTracks.role == "editor" && sharedTrack.addedBy?.userId == currentUserId)
+                    SharedPlaylistTrackRow(
+                        item = sharedTrack,
+                        actionLoading = trackActionLoading,
+                        onRemove = if (canEditTracks && canRemoveTrack) {
+                            { onRemoveTrack(sharedTrack) }
+                        } else {
+                            null
+                        },
+                    )
+                }
+            }
+            if (!loading && members != null && isOwner) {
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = inviteUsername,
+                            onValueChange = onInviteUsernameChanged,
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            label = { Text("Username") },
+                            leadingIcon = { Icon(Icons.Rounded.Add, null) },
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                            keyboardActions = KeyboardActions(onDone = { onInvite() }),
+                            shape = RoundedCornerShape(8.dp),
+                        )
+                        Button(
+                            onClick = onInvite,
+                            enabled = !actionLoading && inviteUsername.isNotBlank(),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            if (actionLoading) {
+                                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                            } else {
+                                Icon(Icons.Rounded.Add, null)
+                            }
+                            Text("Invite member", modifier = Modifier.padding(start = 8.dp))
+                        }
+                    }
+                }
+            } else if (!loading && members != null && playlist.shared) {
+                item {
+                    TextButton(
+                        onClick = onLeave,
+                        enabled = !actionLoading,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(Icons.Rounded.Close, null)
+                        Text("Leave playlist", modifier = Modifier.padding(start = 8.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlaylistMemberRow(
+    member: PlaylistMember,
+    label: String,
+    actionLoading: Boolean,
+    onRemove: (() -> Unit)? = null,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Surface(shape = CircleShape, color = SpicePink, modifier = Modifier.size(34.dp)) {
+            Box(contentAlignment = Alignment.Center) {
+                Text(memberInitials(member), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+            }
+        }
+        Column(Modifier.weight(1f)) {
+            Text(member.displayName.ifBlank { member.username.ifBlank { member.userId } }, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                listOf(
+                    member.username.takeIf { it.isNotBlank() }?.let { "@$it" },
+                    label.replaceFirstChar { it.uppercase() },
+                    member.status.takeIf { it.isNotBlank() },
+                ).filterNotNull().joinToString(" - "),
+                color = SpiceTextMuted,
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (onRemove != null) {
+            IconButton(onClick = onRemove, enabled = !actionLoading) {
+                Icon(Icons.Rounded.Delete, "Remove member")
+            }
+        }
+    }
+}
+
+@Composable
+private fun SharedPlaylistTrackRow(
+    item: SharedPlaylistTrack,
+    actionLoading: Boolean,
+    onRemove: (() -> Unit)?,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        AsyncImage(
+            model = item.track.artworkUrl,
+            contentDescription = item.track.title,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.size(44.dp).clip(RoundedCornerShape(6.dp)),
+        )
+        Column(Modifier.weight(1f)) {
+            Text(item.track.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                listOf(
+                    item.track.artist,
+                    item.addedBy?.displayName?.takeIf { it.isNotBlank() }?.let { "Added by $it" },
+                ).filterNotNull().filter { it.isNotBlank() }.joinToString(" - "),
+                color = SpiceTextMuted,
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (onRemove != null) {
+            IconButton(onClick = onRemove, enabled = !actionLoading) {
+                Icon(Icons.Rounded.Delete, "Remove track")
+            }
+        }
+    }
+}
+
+private fun memberInitials(member: PlaylistMember): String {
+    val source = member.displayName.ifBlank { member.username.ifBlank { member.userId } }
+    return source
+        .replace(Regex("""[^A-Za-z0-9]+"""), " ")
+        .trim()
+        .split(Regex("""\s+"""))
+        .filter { it.isNotBlank() }
+        .take(2)
+        .joinToString("") { it.first().uppercase() }
+        .ifBlank { "S" }
+        .take(2)
+}
+
+@Composable
+private fun TermsSection() {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("Terms", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Text(
+            "Private sideload build for power users. No Play Store distribution or provider endorsement is implied.",
+            color = SpiceTextMuted,
+        )
+        termsEntries.forEach { term ->
+            Text("- $term", color = SpiceTextMuted, fontSize = 13.sp)
+        }
+        Text(
+            "Redistributing the APK means keeping these notices, the source links, and the matching source availability for GPL components.",
+            color = SpicePink,
+            fontSize = 13.sp,
+        )
+    }
+}
+
+@Composable
+private fun LicenseSection() {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("Licenses", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Text(
+            "Resolver and download components used by the native Android app.",
+            color = SpiceTextMuted,
+        )
+        licenseEntries.forEach { entry -> LicenseCard(entry) }
+        Text(
+            "This repository provides the app-side integration source. Third-party source and license texts are linked above and documented in the mobile notices.",
+            color = SpiceTextMuted,
+            fontSize = 13.sp,
+        )
+    }
+}
+
+@Composable
+private fun LicenseCard(entry: LicenseEntry) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = SpiceSurfaceHigh),
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(entry.name, fontWeight = FontWeight.Bold)
+            Text(entry.license, color = SpicePink, fontSize = 13.sp)
+            Text(entry.purpose, color = SpiceTextMuted, fontSize = 13.sp)
+            Text(entry.url, color = SpiceCyan, fontSize = 12.sp)
         }
     }
 }
@@ -526,35 +1848,81 @@ private fun StatusRow(label: String, value: String, color: Color) {
 }
 
 @Composable
-private fun MiniPlayer(track: Track, player: PlayerUiState, resolving: Boolean, onOpen: () -> Unit, onToggle: () -> Unit) {
+private fun MiniPlayer(
+    track: Track,
+    player: PlayerUiState,
+    resolving: Boolean,
+    queueSize: Int,
+    queueIndex: Int,
+    onOpen: () -> Unit,
+    onToggle: () -> Unit,
+    onNext: () -> Unit,
+    onPrevious: () -> Unit,
+    onShuffle: () -> Unit,
+    onRepeat: () -> Unit,
+) {
     Surface(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
         color = SpiceSurfaceHigh,
         border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
     ) {
-        Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            AsyncImage(
-                model = track.artworkUrl,
-                contentDescription = track.title,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.size(48.dp).clip(RoundedCornerShape(6.dp)),
-            )
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                Text(track.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
-                Text(
-                    if (resolving) "Resolving native stream..." else track.artist,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    color = SpiceTextMuted,
-                    fontSize = 12.sp,
+        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                AsyncImage(
+                    model = track.artworkUrl,
+                    contentDescription = track.title,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.size(48.dp).clip(RoundedCornerShape(6.dp)),
                 )
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(track.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        if (resolving) {
+                            "Resolving native stream..."
+                        } else {
+                            listOf(
+                                track.artist,
+                                formatMiniDuration(player.positionMs, player.durationMs.takeIf { it > 0 } ?: track.durationMs),
+                                queueLabel(queueSize, queueIndex, compact = true),
+                            )
+                                .filter { it.isNotBlank() }
+                                .joinToString(" - ")
+                        },
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = SpiceTextMuted,
+                        fontSize = 12.sp,
+                    )
+                }
+                if (resolving || player.isBuffering) {
+                    CircularProgressIndicator(modifier = Modifier.size(30.dp), strokeWidth = 3.dp)
+                } else {
+                    FilledIconButton(onClick = onToggle) {
+                        Icon(if (player.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, "Play or pause")
+                    }
+                }
             }
-            if (resolving || player.isBuffering) {
-                CircularProgressIndicator(modifier = Modifier.size(30.dp), strokeWidth = 3.dp)
-            } else {
-                FilledIconButton(onClick = onToggle) {
-                    Icon(if (player.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, "Play or pause")
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(start = 58.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(onClick = onShuffle, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Rounded.Shuffle, "Shuffle", tint = if (player.shuffleEnabled) SpicePink else Color.White)
+                }
+                IconButton(onClick = onPrevious, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Rounded.SkipPrevious, "Previous track")
+                }
+                IconButton(onClick = onNext, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Rounded.SkipNext, "Next track")
+                }
+                IconButton(onClick = onRepeat, modifier = Modifier.size(36.dp)) {
+                    Icon(
+                        if (player.repeatMode == RepeatMode.One) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
+                        "Repeat",
+                        tint = if (player.repeatMode != RepeatMode.Off) SpicePink else Color.White,
+                    )
                 }
             }
         }
@@ -589,30 +1957,98 @@ private fun FullPlayer(
     liked: Boolean,
     onDismiss: () -> Unit,
     onToggle: () -> Unit,
+    onNext: () -> Unit,
+    onPrevious: () -> Unit,
     onSeekTo: (Long) -> Unit,
     onSeekBy: (Long) -> Unit,
+    onShuffle: () -> Unit,
+    onRepeat: () -> Unit,
+    queueSize: Int,
+    queueIndex: Int,
     onStop: () -> Unit,
     onLike: () -> Unit,
+    onLyrics: () -> Unit,
+    downloadTrackId: String?,
+    downloadProgress: String?,
+    onDownload: () -> Unit,
+    onCancelDownload: () -> Unit,
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = SpiceSurface) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        modifier = Modifier.fillMaxHeight(0.96f),
+        containerColor = SpiceSurface,
+    ) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 28.dp),
+            modifier = Modifier.fillMaxWidth().fillMaxHeight().padding(horizontal = 24.dp).padding(bottom = 28.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             AsyncImage(
                 model = track.artworkUrl,
                 contentDescription = track.title,
                 contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(8.dp)),
+                modifier = Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(8.dp)),
             )
             Spacer(Modifier.height(20.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(track.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 2)
                     Text(track.artist, color = SpiceTextMuted)
+                    val queueText = queueLabel(queueSize, queueIndex)
+                    if (queueText.isNotBlank()) {
+                        Text(queueText, color = SpiceTextMuted, fontSize = 12.sp)
+                    }
                 }
                 IconButton(onClick = onLike) {
                     Icon(if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, "Like", tint = if (liked) SpicePink else Color.White)
+                }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = onLyrics, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Rounded.MusicNote, null)
+                    Text("Lyrics", modifier = Modifier.padding(start = 6.dp))
+                }
+                TextButton(onClick = onShuffle, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Rounded.Shuffle, null, tint = if (player.shuffleEnabled) SpicePink else Color.White)
+                    Text("Shuffle", modifier = Modifier.padding(start = 6.dp), color = if (player.shuffleEnabled) SpicePink else Color.White)
+                }
+                TextButton(onClick = onRepeat, modifier = Modifier.weight(1f)) {
+                    Icon(
+                        if (player.repeatMode == RepeatMode.One) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
+                        null,
+                        tint = if (player.repeatMode != RepeatMode.Off) SpicePink else Color.White,
+                    )
+                    Text(
+                        when (player.repeatMode) {
+                            RepeatMode.One -> "One"
+                            RepeatMode.All -> "Repeat"
+                            RepeatMode.Off -> "Repeat"
+                        },
+                        modifier = Modifier.padding(start = 6.dp),
+                        color = if (player.repeatMode != RepeatMode.Off) SpicePink else Color.White,
+                    )
+                }
+            }
+            val downloading = downloadTrackId == track.id
+            Button(
+                onClick = onDownload,
+                enabled = !downloading,
+                modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+            ) {
+                if (downloading) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                } else {
+                    Icon(Icons.Rounded.Download, null)
+                }
+                Text(if (downloading) "Downloading" else "Download audio", modifier = Modifier.padding(start = 8.dp))
+            }
+            if (downloading && !downloadProgress.isNullOrBlank()) {
+                Text(downloadProgress, color = SpiceTextMuted, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
+                TextButton(onClick = onCancelDownload) {
+                    Icon(Icons.Rounded.Close, null)
+                    Text("Cancel download", modifier = Modifier.padding(start = 6.dp))
                 }
             }
             Slider(
@@ -625,12 +2061,14 @@ private fun FullPlayer(
                 Text(formatTime(player.positionMs), color = SpiceTextMuted, fontSize = 12.sp)
                 Text(formatTime(player.durationMs), color = SpiceTextMuted, fontSize = 12.sp)
             }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                IconButton(onClick = onPrevious) { Icon(Icons.Rounded.SkipPrevious, "Previous track") }
                 IconButton(onClick = { onSeekBy(-10_000) }) { Icon(Icons.Rounded.Replay10, "Back 10 seconds") }
                 FilledIconButton(onClick = onToggle, modifier = Modifier.size(64.dp)) {
                     Icon(if (player.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, "Play or pause", modifier = Modifier.size(34.dp))
                 }
                 IconButton(onClick = { onSeekBy(10_000) }) { Icon(Icons.Rounded.Forward10, "Forward 10 seconds") }
+                IconButton(onClick = onNext) { Icon(Icons.Rounded.SkipNext, "Next track") }
             }
             TextButton(onClick = { onStop(); onDismiss() }) {
                 Icon(Icons.Rounded.Stop, null)
@@ -640,8 +2078,49 @@ private fun FullPlayer(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun EmptyState(title: String, body: String, onAction: (() -> Unit)?) {
+private fun LyricsSheet(
+    track: Track?,
+    loading: Boolean,
+    lyrics: LyricsPayload?,
+    onDismiss: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = SpiceSurface) {
+        LazyColumn(
+            contentPadding = PaddingValues(start = 22.dp, end = 22.dp, bottom = 30.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item {
+                Text("Lyrics", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                if (track != null) {
+                    Text("${track.title} - ${track.artist}", color = SpiceTextMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            if (loading) {
+                item {
+                    Box(Modifier.fillMaxWidth().height(120.dp), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator()
+                    }
+                }
+            } else {
+                val text = lyrics?.syncedLyrics?.takeIf { it.isNotBlank() }
+                    ?: lyrics?.plainLyrics?.takeIf { it.isNotBlank() }
+                if (text.isNullOrBlank()) {
+                    item { Text("No lyrics found.", color = SpiceTextMuted) }
+                } else {
+                    items(text.lines().filter { it.isNotBlank() }) { line ->
+                        Text(cleanLyricLine(line), color = Color.White, fontSize = 15.sp)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EmptyState(title: String, body: String, onAction: (() -> Unit)?, actionLabel: String = "Retry") {
     Column(
         modifier = Modifier.fillMaxWidth().padding(32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -653,7 +2132,7 @@ private fun EmptyState(title: String, body: String, onAction: (() -> Unit)?) {
         if (onAction != null) {
             TextButton(onClick = onAction) {
                 Icon(Icons.Rounded.Refresh, null)
-                Text("Retry", modifier = Modifier.padding(start = 6.dp))
+                Text(actionLabel, modifier = Modifier.padding(start = 6.dp))
             }
         }
     }
@@ -664,7 +2143,91 @@ private fun formatTime(milliseconds: Long): String {
     return "%d:%02d".format(totalSeconds / 60, totalSeconds % 60)
 }
 
+private fun formatMiniDuration(positionMs: Long, durationMs: Long): String =
+    if (durationMs > 0) {
+        formatTime(positionMs) + " / " + formatTime(durationMs)
+    } else {
+        ""
+    }
+
+private fun queueLabel(queueSize: Int, queueIndex: Int, compact: Boolean = false): String =
+    if (queueSize > 1 && queueIndex in 0 until queueSize) {
+        if (compact) "Queue ${queueIndex + 1}/$queueSize" else "Queue ${queueIndex + 1} of $queueSize"
+    } else {
+        ""
+    }
+
+private fun cleanLyricLine(line: String): String =
+    line.replace(Regex("""^\[[0-9:.]+]\s*"""), "").ifBlank { line }
+
+private fun formatBytes(bytes: Long): String {
+    val safeBytes = bytes.coerceAtLeast(0)
+    if (safeBytes < 1024) return "$safeBytes B"
+    val units = listOf("KB", "MB", "GB")
+    var value = safeBytes / 1024.0
+    var unitIndex = 0
+    while (value >= 1024 && unitIndex < units.lastIndex) {
+        value /= 1024.0
+        unitIndex += 1
+    }
+    return "%.1f %s".format(value, units[unitIndex])
+}
+
 private fun trackSubtitle(track: Track): String {
     val source = if (track.sourceId.startsWith("soundcloud")) "SoundCloud" else "YouTube"
     return track.artist + " - " + source
 }
+
+private enum class SettingsTab(val label: String) {
+    General("General"),
+    Terms("Terms"),
+    Licenses("Licenses"),
+}
+
+private data class LicenseEntry(
+    val name: String,
+    val license: String,
+    val purpose: String,
+    val url: String,
+)
+
+private val termsEntries = listOf(
+    "Use media providers only through your own rights, accounts, region access, and provider rules.",
+    "Downloads are explicit user actions for personal/offline use where you have permission to keep a copy.",
+    "Do not use Spice to bypass DRM, access controls, paywalls, bot checks, or copyright restrictions.",
+    "Shared playlists expose member names and playlist edits to invited members; only invite people you trust.",
+    "This build is provided without warranty, and resolver availability can break when providers change.",
+)
+
+private val licenseEntries = listOf(
+    LicenseEntry(
+        name = "NewPipe Extractor",
+        license = "GPL-3.0",
+        purpose = "Phone-native YouTube search and audio stream extraction.",
+        url = "https://github.com/TeamNewPipe/NewPipeExtractor",
+    ),
+    LicenseEntry(
+        name = "youtubedl-android",
+        license = "GPL-3.0",
+        purpose = "Embedded Android wrapper for yt-dlp downloads.",
+        url = "https://github.com/yausername/youtubedl-android",
+    ),
+    LicenseEntry(
+        name = "yt-dlp",
+        license = "Unlicense",
+        purpose = "Download engine used by the Android download wrapper.",
+        url = "https://github.com/yt-dlp/yt-dlp",
+    ),
+    LicenseEntry(
+        name = "FFmpeg / aria2",
+        license = "LGPL/GPL and GPL-2.0-or-later",
+        purpose = "Media conversion, metadata embedding, and accelerated transfer support for downloads.",
+        url = "https://ffmpeg.org | https://aria2.github.io",
+    ),
+    LicenseEntry(
+        name = "QuickJS Android",
+        license = "Apache-2.0 wrapper / MIT engine",
+        purpose = "Experimental JavaScript resolver parity bridge.",
+        url = "https://github.com/cashapp/quickjs-java",
+    ),
+)

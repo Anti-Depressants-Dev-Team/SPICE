@@ -5,8 +5,29 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
+import xyz.spiceapp.mobile.BuildConfig
+import xyz.spiceapp.mobile.data.provider.NewPipeYouTubeClient
+import xyz.spiceapp.mobile.data.provider.SoundCloudDirectClient
+import xyz.spiceapp.mobile.model.AccountSession
+import xyz.spiceapp.mobile.model.LibrarySyncSummary
+import xyz.spiceapp.mobile.model.PendingPlaylistInvite
+import xyz.spiceapp.mobile.model.Playlist
+import xyz.spiceapp.mobile.model.PlaylistInvite
+import xyz.spiceapp.mobile.model.PlaylistInvitePreview
+import xyz.spiceapp.mobile.model.PlaylistMember
+import xyz.spiceapp.mobile.model.PlaylistMembersSummary
+import xyz.spiceapp.mobile.model.LyricsPayload
+import xyz.spiceapp.mobile.model.ProfileStats
+import xyz.spiceapp.mobile.model.ProfileSummary
+import xyz.spiceapp.mobile.model.RemoteCommand
+import xyz.spiceapp.mobile.model.RemoteDevice
 import xyz.spiceapp.mobile.model.ResolvedStream
+import xyz.spiceapp.mobile.model.SharedPlaylistTrack
+import xyz.spiceapp.mobile.model.SharedPlaylistTracks
+import xyz.spiceapp.mobile.model.SpiceAccount
+import xyz.spiceapp.mobile.model.SpiceProfile
 import xyz.spiceapp.mobile.model.StreamQuality
 import xyz.spiceapp.mobile.model.Track
 import java.net.HttpURLConnection
@@ -16,20 +37,328 @@ import java.nio.charset.StandardCharsets
 import java.util.Locale
 
 class SpiceApi(
-    private val baseUrl: String = "https://music.spice-app.xyz",
+    cloudBaseUrl: String = BuildConfig.SPICE_CLOUD_BASE_URL,
+    mediaBaseUrls: List<String> = parseBaseUrls(BuildConfig.SPICE_MEDIA_BASE_URLS),
+    private val streamProbe: StreamProbe = HttpStreamProbe(),
+    private val soundCloudDirectClient: SoundCloudDirectClient = SoundCloudDirectClient(),
+    private val newPipeYouTubeClient: NewPipeYouTubeClient = NewPipeYouTubeClient(),
 ) {
+    private val cloudBaseUrl = normalizeBaseUrl(cloudBaseUrl)
+    private val mediaBaseUrls = mediaBaseUrls
+        .map(::normalizeBaseUrl)
+        .filter { it.isNotBlank() }
+        .distinct()
+
+    suspend fun signIn(email: String, password: String): AccountSession = withContext(Dispatchers.IO) {
+        parseAccountSession(
+            postJson(
+                "/api/auth/spice/signin",
+                JSONObject()
+                    .put("email", email.trim())
+                    .put("password", password),
+            ),
+        )
+    }
+
+    suspend fun signUp(email: String, password: String, username: String): AccountSession = withContext(Dispatchers.IO) {
+        parseAccountSession(
+            postJson(
+                "/api/auth/spice/signup",
+                JSONObject()
+                    .put("email", email.trim())
+                    .put("password", password)
+                    .put("username", username.trim()),
+            ),
+        )
+    }
+
+    suspend fun syncLibrary(
+        token: String,
+        liked: List<Track>,
+        history: List<Track>,
+        playlists: List<Playlist>,
+        profileId: String = "default",
+    ): LibrarySyncSummary {
+        val remoteLiked = fetchLikedTracks(token, profileId)
+        val remoteHistory = fetchHistoryTracks(token, profileId)
+        val remotePlaylists = fetchPlaylists(token, profileId)
+        val mergedLiked = mergeSyncTracks(remoteLiked, liked)
+        val mergedHistory = mergeSyncTracks(remoteHistory, history).take(50)
+        val mergedPlaylists = mergeSyncPlaylists(remotePlaylists, playlists)
+
+        pushLikedTracks(token, mergedLiked, profileId)
+        pushHistoryTracks(token, mergedHistory, profileId)
+        pushPlaylists(token, mergedPlaylists, profileId)
+
+        return LibrarySyncSummary(
+            likedCount = mergedLiked.size,
+            historyCount = mergedHistory.size,
+            playlistCount = mergedPlaylists.size,
+        )
+    }
+
+    suspend fun fetchLikedTracks(token: String, profileId: String = "default"): List<Track> = withContext(Dispatchers.IO) {
+        val payload = getJson("/api/sync/likes?profileId=" + encodeQuery(profileId), token)
+        val ids = payload.optJSONArray("likedTracks") ?: JSONArray()
+        val details = payload.optJSONObject("likedTrackDetails") ?: JSONObject()
+
+        buildList {
+            for (index in 0 until ids.length()) {
+                val id = ids.optString(index).trim()
+                if (id.isEmpty()) continue
+                add(parseTrackSnapshot(details.optJSONObject(id), fallbackId = id))
+            }
+        }
+    }
+
+    suspend fun fetchHistoryTracks(token: String, profileId: String = "default"): List<Track> = withContext(Dispatchers.IO) {
+        val payload = getJson("/api/sync/history?profileId=" + encodeQuery(profileId), token)
+        val history = payload.optJSONArray("history") ?: JSONArray()
+
+        buildList {
+            for (index in 0 until history.length()) {
+                val item = history.optJSONObject(index) ?: continue
+                add(parseTrackSnapshot(item))
+            }
+        }
+    }
+
+    suspend fun pushLikedTracks(token: String, liked: List<Track>, profileId: String = "default") = withContext(Dispatchers.IO) {
+        val details = JSONObject()
+        liked.forEach { track -> details.put(track.id, track.toSnapshotJson()) }
+
+        postJson(
+            "/api/sync/likes",
+            JSONObject()
+                .put("profileId", profileId)
+                .put("likedTracks", JSONArray(liked.map { it.id }))
+                .put("likedTrackDetails", details),
+            token,
+        )
+        Unit
+    }
+
+    suspend fun pushHistoryTracks(token: String, history: List<Track>, profileId: String = "default") = withContext(Dispatchers.IO) {
+        postJson(
+            "/api/sync/history",
+            JSONObject()
+                .put("profileId", profileId)
+                .put("history", JSONArray(history.map { it.toSnapshotJson() })),
+            token,
+        )
+        Unit
+    }
+
+    suspend fun fetchPlaylists(token: String, profileId: String = "default"): List<Playlist> = withContext(Dispatchers.IO) {
+        val payload = getJson("/api/sync/playlists?profileId=" + encodeQuery(profileId), token)
+        parsePlaylists(payload)
+    }
+
+    suspend fun pushPlaylists(token: String, playlists: List<Playlist>, profileId: String = "default") = withContext(Dispatchers.IO) {
+        postJson(
+            "/api/sync/playlists",
+            JSONObject()
+                .put("profileId", profileId)
+                .put("playlists", JSONArray(playlists.map { it.toSnapshotJson() })),
+            token,
+        )
+        Unit
+    }
+
+    suspend fun createPlaylistInvite(token: String, playlistId: String): PlaylistInvite = withContext(Dispatchers.IO) {
+        parsePlaylistInvite(
+            postJson(
+                "/api/playlists/invites",
+                JSONObject().put("playlistId", playlistId),
+                token,
+            ),
+        )
+    }
+
+    suspend fun previewPlaylistInvite(inviteToken: String): PlaylistInvitePreview = withContext(Dispatchers.IO) {
+        parsePlaylistInvitePreview(
+            getJson("/api/playlists/invites/" + encodePath(inviteToken)),
+            fallbackToken = inviteToken,
+        )
+    }
+
+    suspend fun acceptPlaylistInvite(token: String, inviteToken: String): Playlist = withContext(Dispatchers.IO) {
+        val payload = postJson(
+            "/api/playlists/invites/" + encodePath(inviteToken),
+            JSONObject(),
+            token,
+        )
+        parsePlaylist(payload.optJSONObject("playlist") ?: JSONObject())
+            ?: throw SpiceApiException("Spice accepted the invite, but no playlist was returned.")
+    }
+
+    suspend fun fetchPendingPlaylistInvites(token: String): List<PendingPlaylistInvite> = withContext(Dispatchers.IO) {
+        parsePendingPlaylistInvites(getJson("/api/account/invites", token))
+    }
+
+    suspend fun acceptPendingPlaylistInvite(token: String, playlistId: String) = withContext(Dispatchers.IO) {
+        postJson("/api/account/invites/" + encodePath(playlistId) + "/accept", JSONObject(), token)
+        Unit
+    }
+
+    suspend fun rejectPendingPlaylistInvite(token: String, playlistId: String) = withContext(Dispatchers.IO) {
+        postJson("/api/account/invites/" + encodePath(playlistId) + "/reject", JSONObject(), token)
+        Unit
+    }
+
+    suspend fun fetchProfileSummary(token: String, userId: String, profileId: String = "default"): ProfileSummary =
+        withContext(Dispatchers.IO) {
+            parseProfileSummary(
+                getJson(
+                    "/api/users/profile?userId=" + encodeQuery(userId) + "&profileId=" + encodeQuery(profileId),
+                    token,
+                ),
+            )
+        }
+
+    suspend fun fetchRemoteDevices(token: String): List<RemoteDevice> = withContext(Dispatchers.IO) {
+        parseRemoteDevices(getJson("/api/remote/devices", token))
+    }
+
+    suspend fun updateRemoteDevice(
+        token: String,
+        deviceId: String,
+        displayName: String,
+        currentTrack: Track?,
+        isPlaying: Boolean,
+        progressMs: Long,
+        durationMs: Long,
+        volume: Int = 70,
+        queue: List<Track> = emptyList(),
+        queueIndex: Int = 0,
+    ) = withContext(Dispatchers.IO) {
+        postJson(
+            "/api/remote/devices",
+            JSONObject()
+                .put("deviceId", deviceId)
+                .put("displayName", displayName)
+                .put("currentTrack", currentTrack?.toRemoteTrackJson() ?: JSONObject.NULL)
+                .put("queue", JSONArray(queue.map { it.toRemoteTrackJson() }))
+                .put("queueIndex", queueIndex.coerceIn(0, queue.lastIndex.coerceAtLeast(0)))
+                .put("isPlaying", isPlaying)
+                .put("progress", progressMs.coerceAtLeast(0) / 1000.0)
+                .put("duration", durationMs.coerceAtLeast(0) / 1000.0)
+                .put("volume", volume.coerceIn(0, 100)),
+            token,
+        )
+        Unit
+    }
+
+    suspend fun sendRemoteCommand(
+        token: String,
+        targetDeviceId: String,
+        sourceDeviceId: String,
+        command: String,
+        payload: JSONObject = JSONObject(),
+    ) = withContext(Dispatchers.IO) {
+        postJson(
+            "/api/remote/commands",
+            JSONObject()
+                .put("targetDeviceId", targetDeviceId)
+                .put("sourceDeviceId", sourceDeviceId)
+                .put("command", command)
+                .put("payload", payload),
+            token,
+        )
+        Unit
+    }
+
+    suspend fun fetchRemoteCommands(token: String, deviceId: String): List<RemoteCommand> = withContext(Dispatchers.IO) {
+        parseRemoteCommands(
+            getJson("/api/remote/commands?deviceId=" + encodeQuery(deviceId), token),
+        )
+    }
+
+    suspend fun fetchLyrics(track: Track): LyricsPayload = withContext(Dispatchers.IO) {
+        val title = cleanLyricsTitle(track.title)
+        val artist = cleanLyricsArtist(track.artist)
+        val durationSec = ((track.durationMs.takeIf { it > 0 } ?: 180_000L) / 1000).coerceAtLeast(1)
+        val direct = runCatching {
+            val params = "track_name=" + encodeQuery(title) +
+                "&artist_name=" + encodeQuery(artist) +
+                "&duration=" + durationSec
+            requestExternalJson("https://lrclib.net/api/get?$params")
+        }.getOrNull()
+        val match = direct ?: runCatching {
+            val params = "track_name=" + encodeQuery(title) + "&artist_name=" + encodeQuery(artist)
+            val results = requestExternalArray("https://lrclib.net/api/search?$params")
+            selectLyricsMatch(results, title, artist, durationSec.toInt())
+        }.getOrNull()
+
+        LyricsPayload(
+            plainLyrics = match?.optString("plainLyrics").orEmpty(),
+            syncedLyrics = match?.optString("syncedLyrics").orEmpty(),
+            isSynced = !match?.optString("syncedLyrics").isNullOrBlank(),
+        )
+    }
+
+    suspend fun fetchPlaylistMembers(token: String, playlistId: String): PlaylistMembersSummary = withContext(Dispatchers.IO) {
+        parsePlaylistMembersSummary(
+            getJson("/api/playlists/shared/members?playlistId=" + encodeQuery(playlistId), token),
+            fallbackPlaylistId = playlistId,
+        )
+    }
+
+    suspend fun invitePlaylistMember(token: String, playlistId: String, username: String): PlaylistMember = withContext(Dispatchers.IO) {
+        val payload = postJson(
+            "/api/playlists/shared/members",
+            JSONObject()
+                .put("playlistId", playlistId)
+                .put("username", username.trim()),
+            token,
+        )
+        parsePlaylistMember(payload.optJSONObject("member") ?: JSONObject())
+            ?: throw SpiceApiException("Spice sent the invite, but no member was returned.")
+    }
+
+    suspend fun removePlaylistMember(token: String, playlistId: String, userId: String? = null) = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("playlistId", playlistId)
+        if (!userId.isNullOrBlank()) {
+            body.put("userId", userId)
+        }
+        deleteJson("/api/playlists/shared/members", body, token)
+        Unit
+    }
+
+    suspend fun fetchSharedPlaylistTracks(token: String, playlistId: String): SharedPlaylistTracks = withContext(Dispatchers.IO) {
+        parseSharedPlaylistTracks(
+            getJson("/api/playlists/shared/" + encodePath(playlistId) + "/tracks", token),
+            fallbackPlaylistId = playlistId,
+        )
+    }
+
+    suspend fun addSharedPlaylistTrack(token: String, playlistId: String, track: Track): Int = withContext(Dispatchers.IO) {
+        val payload = postJson(
+            "/api/playlists/shared/" + encodePath(playlistId) + "/tracks",
+            JSONObject().put("track", track.toSnapshotJson()),
+            token,
+        )
+        payload.optInt("position", -1)
+    }
+
+    suspend fun removeSharedPlaylistTrack(token: String, playlistId: String, position: Int) = withContext(Dispatchers.IO) {
+        deleteJson(
+            "/api/playlists/shared/" + encodePath(playlistId) + "/tracks",
+            JSONObject().put("position", position),
+            token,
+        )
+        Unit
+    }
+
     suspend fun search(query: String, limit: Int = 12): List<Track> = coroutineScope {
         val encoded = URLEncoder.encode(query.trim(), StandardCharsets.UTF_8.name())
         val safeLimit = limit.coerceIn(1, 30)
-        val providers = listOf(
-            "/api/sc/search?q=" + encoded + "&limit=" + safeLimit to "soundcloud",
-            "/api/yt/search?q=" + encoded + "&limit=" + safeLimit to "youtube_music",
-        )
-        val results = providers.map { (path, sourceId) ->
+        val results = listOf(
+            async(Dispatchers.IO) { runCatching { searchSoundCloudCandidates(query.trim(), safeLimit) } },
             async(Dispatchers.IO) {
-                runCatching { searchProvider(path, sourceId) }
-            }
-        }.awaitAll()
+                runCatching { searchYouTubeCandidates(query.trim(), encoded, safeLimit) }
+            },
+        ).awaitAll()
         val successful = results.mapNotNull { it.getOrNull() }
 
         if (successful.isEmpty()) {
@@ -47,9 +376,8 @@ class SpiceApi(
         }
 
         val query = fallbackSearchQuery(track)
-        val encoded = URLEncoder.encode(query, StandardCharsets.UTF_8.name())
         val alternatives = withContext(Dispatchers.IO) {
-            searchProvider("/api/sc/search?q=" + encoded + "&limit=30", "soundcloud")
+            searchSoundCloudCandidates(query, 30)
         }
         var lastFailure: Exception = directFailure
 
@@ -72,52 +400,163 @@ class SpiceApi(
     }
 
     suspend fun resolve(track: Track, quality: StreamQuality): ResolvedStream = withContext(Dispatchers.IO) {
-        val endpoint = if (track.sourceId.startsWith("soundcloud")) {
-            "/api/sc/track/" + encodePath(soundCloudTrackId(track.id)) + "?quality=" + quality.apiValue()
-        } else {
-            "/api/yt/track/" + encodePath(track.id)
-        }
-        val payload = getJson(endpoint)
-        val streams = payload.optJSONArray("streams")
-            ?: throw SpiceApiException("Spice returned no playable streams for this track.")
+        val candidates = if (track.sourceId.startsWith("soundcloud")) {
+            val directCandidates = runCatching {
+                soundCloudDirectClient.resolveStreams(soundCloudTrackId(track.id), quality)
+            }.getOrDefault(emptyList())
 
-        val candidates = buildList {
-            for (index in 0 until streams.length()) {
-                val stream = streams.optJSONObject(index) ?: continue
-                val url = stream.optString("url").trim()
-                if (!url.startsWith("https://")) continue
-                add(
-                    ResolvedStream(
-                        url = url,
-                        container = stream.optString("container"),
-                        bitrate = stream.optLong("bitrate", 0).coerceAtLeast(0),
-                    ),
-                )
+            if (directCandidates.isNotEmpty()) {
+                orderStreamCandidates(directCandidates, quality)
+            } else {
+                val endpoint = localMediaPath("/sc/track/" + encodePath(soundCloudTrackId(track.id)) + "?quality=" + quality.apiValue())
+                localRuntimeStreamCandidates(endpoint, quality)
+            }
+        } else {
+            val directCandidates = runCatching {
+                newPipeYouTubeClient.resolveStreams(track.id, quality)
+            }.getOrDefault(emptyList())
+
+            if (directCandidates.isNotEmpty()) {
+                orderStreamCandidates(directCandidates, quality)
+            } else {
+                localRuntimeStreamCandidates(localMediaPath("/yt/track/" + encodePath(track.id)), quality)
             }
         }
 
         if (candidates.isEmpty()) {
-            throw SpiceApiException("No Android-compatible HTTPS stream is available for this track.")
+            throw SpiceApiException("No Android-compatible stream is available for this track.")
         }
 
-        when (quality) {
-            StreamQuality.High -> candidates.maxByOrNull { it.bitrate }
-            StreamQuality.DataSaver -> candidates.minByOrNull { if (it.bitrate > 0) it.bitrate else Long.MAX_VALUE }
-            StreamQuality.Standard -> candidates.firstOrNull()
-        } ?: candidates.first()
+        val failures = mutableListOf<String>()
+        for (candidate in candidates) {
+            val probe = streamProbe.probe(candidate.url)
+            if (probe.playable) {
+                return@withContext candidate.copy(
+                    contentType = candidate.contentType.ifBlank { probe.contentType },
+                )
+            }
+            failures += probe.message
+        }
+
+        throw SpiceApiException(
+            "Spice resolved ${candidates.size} stream(s), but Android could not open them. " +
+                failures.firstOrNull().orEmpty(),
+        )
     }
 
-    private fun getJson(path: String): JSONObject {
+    private fun localRuntimeStreamCandidates(endpoint: String, quality: StreamQuality): List<ResolvedStream> {
+        val payload = getJson(endpoint, lane = ApiLane.Media)
+        return orderStreamCandidates(parseStreamCandidates(payload), quality)
+    }
+
+    private fun searchSoundCloudCandidates(query: String, limit: Int): List<Track> {
+        val encoded = URLEncoder.encode(query.trim(), StandardCharsets.UTF_8.name())
+        val results = listOf(
+            runCatching { soundCloudDirectClient.search(query, limit) },
+            runCatching {
+                searchProvider(localMediaPath("/sc/search?q=" + encoded + "&limit=" + limit), "soundcloud")
+            },
+        )
+        val successful = results.mapNotNull { it.getOrNull() }
+
+        if (successful.isEmpty()) {
+            throw results.firstNotNullOf { it.exceptionOrNull() }
+        }
+
+        return mergeProviderTracks(successful, limit)
+    }
+
+    private fun searchYouTubeCandidates(query: String, encodedQuery: String, limit: Int): List<Track> {
+        val results = listOf(
+            runCatching { newPipeYouTubeClient.search(query, limit) },
+            runCatching {
+                searchProvider(localMediaPath("/yt/search?q=" + encodedQuery + "&limit=" + limit), "youtube_music")
+            },
+        )
+        val successful = results.mapNotNull { it.getOrNull() }
+
+        if (successful.isEmpty()) {
+            throw results.firstNotNullOf { it.exceptionOrNull() }
+        }
+
+        return mergeProviderTracks(successful, limit)
+    }
+
+    private fun getJson(path: String, bearerToken: String? = null, lane: ApiLane = ApiLane.Cloud): JSONObject =
+        requestJson(path, method = "GET", bearerToken = bearerToken, lane = lane)
+
+    private fun postJson(path: String, body: JSONObject, bearerToken: String? = null): JSONObject =
+        requestJson(path, method = "POST", body = body, bearerToken = bearerToken)
+
+    private fun deleteJson(path: String, body: JSONObject, bearerToken: String? = null): JSONObject =
+        requestJson(path, method = "DELETE", body = body, bearerToken = bearerToken)
+
+    private fun requestJson(
+        path: String,
+        method: String,
+        body: JSONObject? = null,
+        bearerToken: String? = null,
+        lane: ApiLane = ApiLane.Cloud,
+    ): JSONObject {
+        val baseUrls = when (lane) {
+            ApiLane.Cloud -> listOf(cloudBaseUrl)
+            ApiLane.Media -> mediaBaseUrls
+        }.filter { it.isNotBlank() }
+
+        if (baseUrls.isEmpty()) {
+            throw SpiceApiException(mediaRuntimeMessage())
+        }
+
+        var lastFailure: Exception? = null
+        for (baseUrl in baseUrls) {
+            try {
+                return requestJsonFromBase(baseUrl, path, method, body, bearerToken, lane)
+            } catch (error: Exception) {
+                lastFailure = error
+                if (!shouldTryNextBase(error)) break
+            }
+        }
+
+        if (lane == ApiLane.Media) {
+            throw SpiceApiException(mediaRuntimeMessage(), cause = lastFailure)
+        }
+
+        throw lastFailure ?: SpiceApiException("Spice API request failed.")
+    }
+
+    private fun requestJsonFromBase(
+        baseUrl: String,
+        path: String,
+        method: String,
+        body: JSONObject?,
+        bearerToken: String?,
+        lane: ApiLane,
+    ): JSONObject {
         val connection = (URL(baseUrl + path).openConnection() as HttpURLConnection).apply {
-            requestMethod = "GET"
+            requestMethod = method
             connectTimeout = 8_000
             readTimeout = 15_000
             instanceFollowRedirects = true
             setRequestProperty("Accept", "application/json")
-            setRequestProperty("User-Agent", "Spice-Native-Android/0.2")
+            setRequestProperty("User-Agent", "Spice-Native-Android/0.7")
+            if (lane == ApiLane.Media) {
+                setRequestProperty("x-spice-api-namespace", "local")
+            }
+            if (!bearerToken.isNullOrBlank()) {
+                setRequestProperty("Authorization", "Bearer $bearerToken")
+            }
+            if (body != null) {
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json")
+            }
         }
 
         try {
+            if (body != null) {
+                connection.outputStream.use { output ->
+                    output.write(body.toString().toByteArray(StandardCharsets.UTF_8))
+                }
+            }
             val status = connection.responseCode
             val body = (if (status in 200..299) connection.inputStream else connection.errorStream)
                 ?.bufferedReader()
@@ -139,8 +578,67 @@ class SpiceApi(
     private fun encodePath(value: String): String =
         URLEncoder.encode(value, StandardCharsets.UTF_8.name()).replace("+", "%20")
 
+    private fun encodeQuery(value: String): String =
+        URLEncoder.encode(value, StandardCharsets.UTF_8.name())
+
+    private fun shouldTryNextBase(error: Exception): Boolean {
+        val status = (error as? SpiceApiException)?.statusCode
+        return status == null || status in setOf(404, 410, 429, 500, 502, 503, 504)
+    }
+
+    private fun mediaRuntimeMessage(): String =
+        "This provider needs the local SPICE runtime fallback. Standalone SoundCloud and NewPipe YouTube playback can run on the phone; for local fallback, start the runtime and run adb reverse tcp:3939 tcp:3939."
+
     private fun searchProvider(path: String, sourceId: String): List<Track> =
-        parseTracks(getJson(path), sourceId)
+        parseTracks(getJson(path, lane = ApiLane.Media), sourceId)
+
+    private fun requestExternalJson(url: String): JSONObject {
+        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 8_000
+            readTimeout = 10_000
+            instanceFollowRedirects = true
+            setRequestProperty("Accept", "application/json")
+            setRequestProperty("User-Agent", "Spice-Native-Android/1.0")
+        }
+        try {
+            val status = connection.responseCode
+            val body = (if (status in 200..299) connection.inputStream else connection.errorStream)
+                ?.bufferedReader()
+                ?.use { it.readText() }
+                .orEmpty()
+            if (status !in 200..299) {
+                throw SpiceApiException("Lyrics lookup failed with HTTP $status.")
+            }
+            return JSONObject(body)
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun requestExternalArray(url: String): JSONArray {
+        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 8_000
+            readTimeout = 10_000
+            instanceFollowRedirects = true
+            setRequestProperty("Accept", "application/json")
+            setRequestProperty("User-Agent", "Spice-Native-Android/1.0")
+        }
+        try {
+            val status = connection.responseCode
+            val body = (if (status in 200..299) connection.inputStream else connection.errorStream)
+                ?.bufferedReader()
+                ?.use { it.readText() }
+                .orEmpty()
+            if (status !in 200..299) {
+                throw SpiceApiException("Lyrics search failed with HTTP $status.")
+            }
+            return JSONArray(body)
+        } finally {
+            connection.disconnect()
+        }
+    }
 }
 
 data class ResolvedPlayback(
@@ -148,6 +646,150 @@ data class ResolvedPlayback(
     val stream: ResolvedStream,
     val usedFallback: Boolean,
 )
+
+interface StreamProbe {
+    fun probe(url: String): StreamProbeResult
+}
+
+data class StreamProbeResult(
+    val playable: Boolean,
+    val statusCode: Int? = null,
+    val contentType: String = "",
+    val message: String = "",
+)
+
+private class HttpStreamProbe : StreamProbe {
+    override fun probe(url: String): StreamProbeResult {
+        if (url.startsWith("android.resource://")) {
+            return StreamProbeResult(playable = true)
+        }
+
+        val connection = runCatching { URL(url).openConnection() as HttpURLConnection }.getOrElse { error ->
+            return StreamProbeResult(
+                playable = false,
+                message = error.message ?: "Stream URL is malformed.",
+            )
+        }
+
+        connection.requestMethod = "GET"
+        connection.connectTimeout = 6_000
+        connection.readTimeout = 8_000
+        connection.instanceFollowRedirects = true
+        connection.setRequestProperty("Accept", "*/*")
+        connection.setRequestProperty("Range", "bytes=0-0")
+        connection.setRequestProperty("User-Agent", "Spice-Native-Android/0.7")
+
+        return try {
+            val status = connection.responseCode
+            val contentType = connection.contentType.orEmpty()
+            if (status in 200..299) {
+                connection.inputStream?.close()
+                StreamProbeResult(
+                    playable = true,
+                    statusCode = status,
+                    contentType = contentType,
+                )
+            } else {
+                connection.errorStream?.close()
+                StreamProbeResult(
+                    playable = false,
+                    statusCode = status,
+                    contentType = contentType,
+                    message = "Stream probe failed with HTTP $status.",
+                )
+            }
+        } catch (error: Exception) {
+            StreamProbeResult(
+                playable = false,
+                message = error.message ?: "Stream probe failed before playback.",
+            )
+        } finally {
+            connection.disconnect()
+        }
+    }
+}
+
+private enum class ApiLane {
+    Cloud,
+    Media,
+}
+
+internal fun parseStreamCandidates(payload: JSONObject): List<ResolvedStream> {
+    val streams = payload.optJSONArray("streams") ?: return emptyList()
+
+    return buildList {
+        for (index in 0 until streams.length()) {
+            val stream = streams.optJSONObject(index) ?: continue
+            val url = stream.optString("url").trim()
+            if (!isAndroidPlayableStreamUrl(url)) continue
+            add(
+                ResolvedStream(
+                    url = url,
+                    container = stream.optString("container").trim(),
+                    bitrate = stream.optLong("bitrate", 0).coerceAtLeast(0),
+                    protocol = stream.optString("protocol").trim(),
+                    contentType = stream.optString("contentType")
+                        .ifEmpty { stream.optString("mimeType") }
+                        .trim(),
+                    expiresAt = stream.optString("expiresAt").trim(),
+                ),
+            )
+        }
+    }
+}
+
+internal fun orderStreamCandidates(candidates: List<ResolvedStream>, quality: StreamQuality): List<ResolvedStream> {
+    val bySupport = compareByDescending<ResolvedStream> { androidStreamSupportScore(it) }
+    return when (quality) {
+        StreamQuality.High -> candidates.sortedWith(bySupport.thenByDescending { it.bitrate })
+        StreamQuality.Standard -> candidates.sortedWith(
+            bySupport.thenBy { stream -> stream.bitrate.takeIf { it > 0 }?.let { kotlin.math.abs(it - 160_000) } ?: Long.MAX_VALUE },
+        )
+        StreamQuality.DataSaver -> candidates.sortedWith(
+            bySupport.thenBy { stream -> stream.bitrate.takeIf { it > 0 } ?: Long.MAX_VALUE },
+        )
+    }
+}
+
+internal fun isAndroidPlayableStreamUrl(url: String): Boolean {
+    if (url.startsWith("android.resource://")) return true
+    val parsed = runCatching { URL(url) }.getOrNull() ?: return false
+    val protocol = parsed.protocol.lowercase(Locale.ROOT)
+    val host = parsed.host.lowercase(Locale.ROOT)
+    return protocol == "https" || (protocol == "http" && isLoopbackHost(host))
+}
+
+internal fun localMediaPath(providerPath: String): String {
+    val normalized = providerPath.removePrefix("/api").let { path ->
+        if (path.startsWith("/")) path else "/$path"
+    }
+    return "/api/local$normalized"
+}
+
+internal fun parseBaseUrls(value: String): List<String> =
+    value.split(',')
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+
+internal fun normalizeBaseUrl(value: String): String = value.trim().trimEnd('/')
+
+private fun androidStreamSupportScore(stream: ResolvedStream): Int {
+    val descriptor = listOf(stream.protocol, stream.container, stream.contentType, stream.url)
+        .joinToString(" ")
+        .lowercase(Locale.ROOT)
+
+    return when {
+        "progressive" in descriptor -> 120
+        "mpeg" in descriptor || "mp4" in descriptor || "m4a" in descriptor || "aac" in descriptor -> 110
+        "hls" in descriptor || "m3u8" in descriptor -> 100
+        "webm" in descriptor || "opus" in descriptor -> 80
+        descriptor.contains("audio/") -> 70
+        else -> 40
+    }
+}
+
+private fun isLoopbackHost(host: String): Boolean =
+    host == "127.0.0.1" || host == "localhost" || host == "::1" || host == "[::1]"
 
 internal fun parseTracks(payload: JSONObject, defaultSourceId: String): List<Track> {
     val tracks = payload.optJSONArray("tracks") ?: return emptyList()
@@ -176,6 +818,345 @@ internal fun parseTracks(payload: JSONObject, defaultSourceId: String): List<Tra
         }
     }
 }
+
+internal fun parseAccountSession(payload: JSONObject): AccountSession {
+    val token = payload.optString("token").trim()
+    val accountPayload = payload.optJSONObject("account")
+        ?: payload.optJSONObject("user")
+        ?: JSONObject()
+    val account = parseAccount(accountPayload)
+
+    if (token.isEmpty() || account.id.isEmpty()) {
+        throw SpiceApiException("Spice returned an invalid account session.")
+    }
+
+    return AccountSession(token, account)
+}
+
+internal fun parseAccount(payload: JSONObject): SpiceAccount =
+    SpiceAccount(
+        id = payload.optString("id").trim(),
+        email = payload.optString("email").trim(),
+        username = payload.optString("username").trim(),
+        displayName = payload.optString("displayName").trim(),
+        avatarUrl = payload.optString("avatarUrl").trim(),
+        accountRole = payload.optString("accountRole", "user").trim().ifEmpty { "user" },
+        isAdmin = payload.optBoolean("isAdmin", false),
+    )
+
+internal fun parseProfileSummary(payload: JSONObject): ProfileSummary {
+    val profile = payload.optJSONObject("profile") ?: JSONObject()
+    val stats = payload.optJSONObject("stats") ?: JSONObject()
+    return ProfileSummary(
+        profile = SpiceProfile(
+            id = profile.optString("id").trim().ifEmpty { "default" },
+            displayName = profile.optString("displayName").trim()
+                .ifEmpty { profile.optString("username").trim() }
+                .ifEmpty { "Spice Listener" },
+            username = profile.optString("username").trim(),
+            avatarUrl = profile.optString("avatarUrl").trim(),
+            bio = profile.optString("bio").trim(),
+            joinedAt = profile.optString("joinedAt").trim(),
+            isPrivate = profile.optBoolean("isPrivate", false),
+        ),
+        stats = ProfileStats(
+            songsPlayed = stats.optInt("songsPlayed", 0).coerceAtLeast(0),
+            likedCount = stats.optInt("likedCount", 0).coerceAtLeast(0),
+            playlistsCount = stats.optInt("playlistsCount", 0).coerceAtLeast(0),
+        ),
+    )
+}
+
+internal fun parseRemoteDevices(payload: JSONObject): List<RemoteDevice> {
+    val devices = payload.optJSONArray("devices") ?: return emptyList()
+    return buildList {
+        for (index in 0 until devices.length()) {
+            val item = devices.optJSONObject(index) ?: continue
+            val deviceId = item.optString("deviceId").trim()
+            val displayName = item.optString("displayName").trim()
+            if (deviceId.isEmpty() || displayName.isEmpty()) continue
+            add(
+                RemoteDevice(
+                    deviceId = deviceId,
+                    displayName = displayName,
+                    currentTrack = parseRemoteTrack(item.optJSONObject("currentTrack")),
+                    isPlaying = item.optBoolean("isPlaying", false),
+                    progressMs = (item.optDouble("progress", 0.0) * 1000).toLong().coerceAtLeast(0),
+                    durationMs = (item.optDouble("duration", 0.0) * 1000).toLong().coerceAtLeast(0),
+                    volume = item.optInt("volume", 70).coerceIn(0, 100),
+                    updatedAt = item.optString("updatedAt").trim(),
+                ),
+            )
+        }
+    }
+}
+
+internal fun parseRemoteCommands(payload: JSONObject): List<RemoteCommand> {
+    val commands = payload.optJSONArray("commands") ?: return emptyList()
+    return buildList {
+        for (index in 0 until commands.length()) {
+            val item = commands.optJSONObject(index) ?: continue
+            val id = item.optString("id").trim()
+            val command = item.optString("command").trim()
+            if (id.isEmpty() || command.isEmpty()) continue
+            val commandPayload = item.optJSONObject("payload") ?: JSONObject()
+            val payloadTrack = parseRemoteTrack(
+                commandPayload.optJSONObject("track")
+                    ?: commandPayload.optJSONObject("currentTrack"),
+            )
+            val seekPositionMs = when {
+                commandPayload.has("positionMs") -> commandPayload.optLong("positionMs").coerceAtLeast(0)
+                commandPayload.has("progressMs") -> commandPayload.optLong("progressMs").coerceAtLeast(0)
+                commandPayload.has("position") -> (commandPayload.optDouble("position", 0.0) * 1000).toLong().coerceAtLeast(0)
+                else -> null
+            }
+            add(RemoteCommand(id, command, payloadTrack, seekPositionMs))
+        }
+    }
+}
+
+private fun parseRemoteTrack(payload: JSONObject?): Track? {
+    val item = payload ?: return null
+    val id = item.optString("id").trim().ifEmpty { item.optString("videoId").trim() }
+    val title = item.optString("title").trim().ifEmpty { item.optString("track").trim() }
+    if (id.isEmpty() && title.isEmpty()) return null
+    val artists = item.optJSONArray("artists")
+    val artist = artists?.optJSONObject(0)?.optString("name")?.trim().orEmpty()
+        .ifEmpty { item.optString("artist").trim() }
+    return Track(
+        id = id.ifEmpty { title },
+        title = title.ifEmpty { "Track" },
+        artist = artist.ifEmpty { "Unknown artist" },
+        album = item.optString("album").trim(),
+        durationMs = item.optLong("durationMs", 0).takeIf { it > 0 }
+            ?: (item.optDouble("duration", 0.0) * 1000).toLong().coerceAtLeast(0),
+        artworkUrl = item.optString("artworkUrl").trim().ifEmpty { item.optString("albumArt").trim() },
+        sourceId = item.optString("sourceId").trim().ifEmpty { "youtube_music" },
+    )
+}
+
+internal fun parsePlaylists(payload: JSONObject): List<Playlist> {
+    val playlists = payload.optJSONArray("playlists") ?: return emptyList()
+
+    return buildList {
+        for (index in 0 until playlists.length()) {
+            val item = playlists.optJSONObject(index) ?: continue
+            parsePlaylist(item)?.let(::add)
+        }
+    }
+}
+
+internal fun parsePlaylist(item: JSONObject): Playlist? {
+    val id = item.optString("id").trim()
+    val title = item.optString("title").trim()
+    if (id.isEmpty() || title.isEmpty()) return null
+    val tracks = item.optJSONArray("tracks") ?: JSONArray()
+    return Playlist(
+        id = id,
+        title = title,
+        description = item.optString("description"),
+        coverUrl = item.optString("coverUrl"),
+        shared = item.optBoolean("shared", false),
+        shareRole = item.optString("shareRole"),
+        isPublic = item.optBoolean("isPublic", true),
+        tracks = buildList {
+            for (trackIndex in 0 until tracks.length()) {
+                tracks.optJSONObject(trackIndex)?.let { track ->
+                    add(parseTrackSnapshot(track))
+                }
+            }
+        },
+    )
+}
+
+internal fun parsePlaylistInvite(payload: JSONObject): PlaylistInvite {
+    val token = payload.optString("token").trim()
+    val inviteUrl = payload.optString("inviteUrl").trim()
+    if (token.isEmpty() || inviteUrl.isEmpty()) {
+        throw SpiceApiException("Spice returned an invalid playlist invite.")
+    }
+    return PlaylistInvite(
+        token = token,
+        inviteUrl = inviteUrl,
+        expiresAt = payload.optString("expiresAt").trim(),
+    )
+}
+
+internal fun parsePlaylistInvitePreview(payload: JSONObject, fallbackToken: String = ""): PlaylistInvitePreview {
+    val invite = payload.optJSONObject("invite") ?: JSONObject()
+    val playlist = parsePlaylist(payload.optJSONObject("playlist") ?: JSONObject())
+        ?: throw SpiceApiException("Spice returned an invalid playlist invite preview.")
+    val token = invite.optString("token").trim().ifEmpty { fallbackToken.trim() }
+    if (token.isEmpty()) {
+        throw SpiceApiException("Spice returned an invalid playlist invite token.")
+    }
+    return PlaylistInvitePreview(
+        token = token,
+        role = invite.optString("role").trim(),
+        expiresAt = invite.optString("expiresAt").trim(),
+        playlist = playlist,
+    )
+}
+
+internal fun parsePendingPlaylistInvites(payload: JSONObject): List<PendingPlaylistInvite> {
+    val invites = payload.optJSONArray("invites") ?: return emptyList()
+    return buildList {
+        for (index in 0 until invites.length()) {
+            val item = invites.optJSONObject(index) ?: continue
+            val playlistId = item.optString("playlistId").trim()
+            val playlistTitle = item.optString("playlistTitle").trim()
+            if (playlistId.isEmpty() || playlistTitle.isEmpty()) continue
+            add(
+                PendingPlaylistInvite(
+                    playlistId = playlistId,
+                    playlistTitle = playlistTitle,
+                    ownerId = item.optString("ownerId").trim(),
+                    ownerUsername = item.optString("ownerUsername").trim(),
+                    ownerDisplayName = item.optString("ownerDisplayName").trim(),
+                ),
+            )
+        }
+    }
+}
+
+internal fun parsePlaylistMembersSummary(payload: JSONObject, fallbackPlaylistId: String = ""): PlaylistMembersSummary {
+    val owner = parsePlaylistMember(payload.optJSONObject("owner") ?: JSONObject())
+        ?: throw SpiceApiException("Spice returned an invalid playlist owner.")
+    val members = payload.optJSONArray("members") ?: JSONArray()
+    return PlaylistMembersSummary(
+        playlistId = payload.optString("playlistId").trim().ifEmpty { fallbackPlaylistId.trim() },
+        owner = owner,
+        members = buildList {
+            for (index in 0 until members.length()) {
+                members.optJSONObject(index)?.let { member ->
+                    parsePlaylistMember(member)?.let(::add)
+                }
+            }
+        },
+        maxMembers = payload.optInt("maxMembers", 4).coerceAtLeast(0),
+    )
+}
+
+internal fun parseSharedPlaylistTracks(payload: JSONObject, fallbackPlaylistId: String = ""): SharedPlaylistTracks {
+    val tracks = payload.optJSONArray("tracks") ?: JSONArray()
+    return SharedPlaylistTracks(
+        playlistId = payload.optString("playlistId").trim().ifEmpty { fallbackPlaylistId.trim() },
+        role = payload.optString("role").trim(),
+        tracks = buildList {
+            for (index in 0 until tracks.length()) {
+                val item = tracks.optJSONObject(index) ?: continue
+                val position = item.optInt("position", -1)
+                if (position < 0) continue
+                add(
+                    SharedPlaylistTrack(
+                        position = position,
+                        track = parseTrackSnapshot(item),
+                        addedBy = parsePlaylistMember(item.optJSONObject("addedBy") ?: JSONObject()),
+                    ),
+                )
+            }
+        },
+    )
+}
+
+internal fun parsePlaylistMember(payload: JSONObject): PlaylistMember? {
+    val userId = payload.optString("userId").trim()
+    if (userId.isEmpty()) return null
+    return PlaylistMember(
+        userId = userId,
+        username = payload.optString("username").trim(),
+        displayName = payload.optString("displayName").trim().ifEmpty { payload.optString("username").trim().ifEmpty { "Unknown" } },
+        avatarUrl = payload.optString("avatarUrl").trim(),
+        role = payload.optString("role").trim(),
+        status = payload.optString("status").trim(),
+        acceptedAt = payload.optString("acceptedAt").trim(),
+    )
+}
+
+internal fun parseTrackSnapshot(payload: JSONObject?, fallbackId: String = ""): Track {
+    val item = payload ?: JSONObject()
+    val id = item.optString("id").ifEmpty { fallbackId }.trim()
+    val artists = item.optJSONArray("artists")
+    val artist = artists?.optJSONObject(0)?.optString("name")?.trim().orEmpty()
+    return Track(
+        id = id,
+        title = item.optString("title").trim().ifEmpty { "Track" },
+        artist = artist.ifEmpty { item.optString("artist").trim().ifEmpty { "Unknown artist" } },
+        durationMs = item.optLong("durationMs", 0).coerceAtLeast(0),
+        artworkUrl = item.optString("artworkUrl"),
+        sourceId = item.optString("sourceId").ifEmpty { "youtube_music" },
+    )
+}
+
+internal fun Track.toSnapshotJson(): JSONObject =
+    JSONObject()
+        .put("id", id)
+        .put("title", title)
+        .put("artists", JSONArray().put(JSONObject().put("name", artist)))
+        .put("artworkUrl", artworkUrl)
+        .put("durationMs", durationMs)
+        .put("sourceId", sourceId)
+
+internal fun Track.toRemoteTrackJson(): JSONObject =
+    toSnapshotJson()
+        .put("artist", artist)
+        .put("album", album)
+
+internal fun Playlist.toSnapshotJson(): JSONObject =
+    JSONObject()
+        .put("id", id)
+        .put("title", title)
+        .put("description", description)
+        .put("coverUrl", coverUrl)
+        .put("shared", shared)
+        .put("shareRole", shareRole)
+        .put("isPublic", isPublic)
+        .put("tracks", JSONArray(tracks.map { it.toSnapshotJson() }))
+
+internal fun mergeSyncTracks(remote: List<Track>, local: List<Track>): List<Track> {
+    val merged = linkedMapOf<String, Track>()
+    (remote + local).forEach { incoming ->
+        val id = incoming.id.trim()
+        if (id.isEmpty()) return@forEach
+        val existing = merged[id]
+        merged[id] = if (existing == null) incoming else mergeTrackSnapshots(existing, incoming)
+    }
+    return merged.values.toList()
+}
+
+internal fun mergeSyncPlaylists(remote: List<Playlist>, local: List<Playlist>): List<Playlist> {
+    val merged = linkedMapOf<String, Playlist>()
+    (remote + local).forEach { incoming ->
+        val id = incoming.id.trim()
+        if (id.isEmpty()) return@forEach
+        val existing = merged[id]
+        merged[id] = if (existing == null) {
+            incoming
+        } else {
+            existing.copy(
+                title = incoming.title.ifBlank { existing.title },
+                description = incoming.description.ifBlank { existing.description },
+                coverUrl = incoming.coverUrl.ifBlank { existing.coverUrl },
+                shared = existing.shared || incoming.shared,
+                shareRole = incoming.shareRole.ifBlank { existing.shareRole },
+                isPublic = incoming.isPublic,
+                tracks = mergeSyncTracks(existing.tracks, incoming.tracks),
+            )
+        }
+    }
+    return merged.values.toList()
+}
+
+private fun mergeTrackSnapshots(base: Track, incoming: Track): Track =
+    Track(
+        id = incoming.id.ifEmpty { base.id },
+        title = incoming.title.takeUnless { it == "Track" }.orEmpty().ifEmpty { base.title },
+        artist = incoming.artist.takeUnless { it == "Unknown artist" }.orEmpty().ifEmpty { base.artist },
+        album = incoming.album.ifEmpty { base.album },
+        durationMs = incoming.durationMs.takeIf { it > 0 } ?: base.durationMs,
+        artworkUrl = incoming.artworkUrl.ifEmpty { base.artworkUrl },
+        sourceId = incoming.sourceId.ifEmpty { base.sourceId },
+    )
 
 internal fun mergeProviderTracks(providers: List<List<Track>>, limit: Int): List<Track> {
     val interleaved = buildList {
@@ -207,6 +1188,53 @@ internal fun StreamQuality.apiValue(): String = when (this) {
     StreamQuality.Standard -> "standard"
     StreamQuality.DataSaver -> "low"
 }
+
+private fun cleanLyricsTitle(title: String): String =
+    title
+        .replace(Regex("""\s*(?:\([^)]*(?:official|video|audio|visualizer|lyrics?|remaster(?:ed)?|4k|hd)[^)]*\)|\[[^\]]*(?:official|video|audio|visualizer|lyrics?|remaster(?:ed)?|4k|hd)[^\]]*\])""", RegexOption.IGNORE_CASE), "")
+        .trim()
+
+private fun cleanLyricsArtist(artist: String): String =
+    artist
+        .replace(Regex("""\s*-\s*topic$""", RegexOption.IGNORE_CASE), "")
+        .replace(Regex("""\s+official$""", RegexOption.IGNORE_CASE), "")
+        .replace(Regex("""vevo$""", RegexOption.IGNORE_CASE), "")
+        .trim()
+
+private fun selectLyricsMatch(results: JSONArray, title: String, artist: String, durationSec: Int): JSONObject? =
+    buildList {
+        for (index in 0 until results.length()) {
+            val item = results.optJSONObject(index) ?: continue
+            if (item.optString("syncedLyrics").isBlank() && item.optString("plainLyrics").isBlank()) continue
+            val score = scoreLyricsMatch(item, title, artist, durationSec)
+            if (score >= 7) add(item to score)
+        }
+    }
+        .sortedByDescending { it.second }
+        .firstOrNull()
+        ?.first
+
+private fun scoreLyricsMatch(track: JSONObject, title: String, artist: String, durationSec: Int): Int {
+    val normalizedTitle = normalizeMatchText(title)
+    val normalizedArtist = normalizeMatchText(artist)
+    val candidateTitle = normalizeMatchText(track.optString("trackName"))
+    val candidateArtist = normalizeMatchText(track.optString("artistName"))
+    var score = 0
+    if (candidateTitle == normalizedTitle) score += 8
+    else if (candidateTitle.contains(normalizedTitle) || normalizedTitle.contains(candidateTitle)) score += 4
+    if (normalizedArtist.isNotBlank() && candidateArtist == normalizedArtist) score += 6
+    else if (normalizedArtist.isNotBlank() && (candidateArtist.contains(normalizedArtist) || normalizedArtist.contains(candidateArtist))) score += 3
+    val durationDifference = kotlin.math.abs(track.optInt("duration", durationSec) - durationSec)
+    if (durationDifference <= 3) score += 3 else if (durationDifference <= 10) score += 1
+    if (track.optString("syncedLyrics").isNotBlank()) score += 1
+    return score
+}
+
+private fun normalizeMatchText(value: String): String =
+    value
+        .lowercase(Locale.ROOT)
+        .replace(Regex("""[^a-z0-9]+"""), " ")
+        .trim()
 
 class SpiceApiException(
     override val message: String,
