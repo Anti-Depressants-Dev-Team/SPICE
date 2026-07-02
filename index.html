@@ -98,6 +98,7 @@
                 case 'nativePrepareRuntime': return window.api.native && window.api.native.prepareRuntime();
                 case 'nativeAuth': return window.api.native && window.api.native.auth(args[0]);
                 case 'nativeContinueOffline': return window.api.native && window.api.native.continueOffline();
+                case 'nativeSetAutoOpen': return window.api.native && window.api.native.setAutoOpen(args[0]);
                 case 'nativeSignOut': return window.api.native && window.api.native.signOut();
                 case 'windowControls':
                     if (args[0] === 'minimize') return window.api.windowControls.minimize();
@@ -340,9 +341,23 @@
             }
         }
 
+        async function setNativeAutoOpen(enabled) {
+            setNativeBusy(true);
+            setNativeMessage(enabled ? 'SPICE Music will open automatically on launch.' : 'Native launcher will stay on this screen.');
+            try {
+                await callApi('nativeSetAutoOpen', enabled);
+                await refreshNativeStatus();
+            } catch (err) {
+                setNativeMessage(err && err.message ? err.message : 'Could not update native launch preference.');
+            } finally {
+                setNativeBusy(false);
+            }
+        }
+
         if (nativeMode) {
             var account = nativeStatus && nativeStatus.account;
             var runtime = nativeStatus && nativeStatus.runtime;
+            var autoOpen = !nativeStatus || nativeStatus.autoOpen !== false;
             var runtimeText = runtime
                 ? (runtime.running ? 'Runtime running on 127.0.0.1:3939' : runtime.installed ? 'Runtime installed' : runtime.bundled ? 'Bundled runtime ready' : 'Runtime not prepared')
                 : 'Checking runtime';
@@ -372,8 +387,8 @@
                                     <div class="text-sm text-gray-100">${account && account.user ? (account.user.email || 'Connected') : 'Optional'}</div>
                                 </div>
                                 <div class="rounded-xl border border-white/[0.07] bg-white/[0.035] p-4">
-                                    <div class="text-[10px] uppercase tracking-[0.2em] text-gray-500 mb-2">Updates</div>
-                                    <div class="text-sm text-gray-100">${nativeStatus && nativeStatus.updatesEnabled ? 'App + runtime auto-check' : 'Packaged builds'}</div>
+                                    <div class="text-[10px] uppercase tracking-[0.2em] text-gray-500 mb-2">Launch</div>
+                                    <div class="text-sm text-gray-100">${autoOpen ? 'Auto-opens SPICE' : 'Launcher screen'}</div>
                                 </div>
                             </div>
                         </div>
@@ -390,6 +405,11 @@
                                             disabled=${nativeBusy}
                                             onClick=${launchNativeSpice}>
                                         Open SPICE Music
+                                    </button>
+                                    <button class="rounded-lg border border-purple-500/30 px-4 py-2 text-sm font-semibold text-purple-100 hover:bg-purple-500/10 disabled:opacity-40"
+                                            disabled=${nativeBusy}
+                                            onClick=${function() { setNativeAutoOpen(!autoOpen); }}>
+                                        ${autoOpen ? 'Auto-open enabled' : 'Auto-open on launch'}
                                     </button>
                                     <button class="rounded-lg border border-white/10 px-4 py-2 text-sm font-semibold text-gray-300 hover:bg-white/5 disabled:opacity-40"
                                             disabled=${nativeBusy}

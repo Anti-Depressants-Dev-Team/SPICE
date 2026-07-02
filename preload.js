@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld("api", {
     prepareRuntime: () => ipcRenderer.invoke("native-runtime-prepare"),
     auth: (payload) => ipcRenderer.invoke("native-auth", payload),
     continueOffline: () => ipcRenderer.invoke("native-continue-offline"),
+    setAutoOpen: (enabled) => ipcRenderer.invoke("native-set-auto-open", enabled),
     signOut: () => ipcRenderer.invoke("native-sign-out"),
   },
   getSettings: () => ipcRenderer.invoke("get-settings"),

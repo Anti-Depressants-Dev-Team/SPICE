@@ -137,7 +137,12 @@ function nativeModeSettings() {
   return {
     nativeMode: APP_NATIVE_MODE,
     bundledRuntimeAvailable: hasBundledNativeRuntime(),
+    autoOpen: getNativeAutoOpen(),
   };
+}
+
+function getNativeAutoOpen() {
+  return store ? store.get("nativeAutoOpen", true) !== false : true;
 }
 
 function getNativeAccountSnapshot() {
@@ -171,6 +176,7 @@ function saveNativeAccount(token, user) {
   };
   store.set("nativeAccount", snapshot);
   store.set("nativeOnboarded", true);
+  store.set("nativeAutoOpen", true);
   return getNativeAccountSummary();
 }
 
@@ -462,7 +468,7 @@ function createWindow() {
 
     // Check for Default Service Startup.
     const startupService = APP_NATIVE_MODE
-      ? (store && store.get("nativeOnboarded", false) ? "spice_crazy" : DEFAULT_NATIVE_STARTUP_SERVICE)
+      ? (store && store.get("nativeOnboarded", false) && getNativeAutoOpen() ? "spice_crazy" : DEFAULT_NATIVE_STARTUP_SERVICE)
       : (store ? store.get("defaultService", DEFAULT_STARTUP_SERVICE) : DEFAULT_STARTUP_SERVICE);
 
     if (
@@ -2824,11 +2830,22 @@ app.whenReady().then(async () => {
   });
 
   ipcMain.handle("native-continue-offline", async () => {
-    if (store) store.set("nativeOnboarded", true);
+    if (store) {
+      store.set("nativeOnboarded", true);
+      store.set("nativeAutoOpen", true);
+    }
     await ensureNativeRuntimeReady();
     return {
       account: null,
       runtime: spiceRuntimeManager ? await spiceRuntimeManager.getStatus() : null,
+    };
+  });
+
+  ipcMain.handle("native-set-auto-open", async (event, enabled) => {
+    if (store) store.set("nativeAutoOpen", enabled !== false);
+    return {
+      ...nativeModeSettings(),
+      account: getNativeAccountSummary(),
     };
   });
 
