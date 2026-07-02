@@ -115,6 +115,40 @@ class SpiceLocalRuntimeManager {
   }
 
   async installOrUpdate() {
+    return this.installFromManifest(null);
+  }
+
+  async installLatestIfAvailable() {
+    if (!this.supported) {
+      throw new Error("The managed SPICE local runtime installer is currently Windows-only.");
+    }
+    if (this.busy) {
+      throw new Error("SPICE local runtime is already busy.");
+    }
+
+    if (await this.isRunning()) {
+      this.message = "SPICE local runtime is already running. Update check deferred until the next start.";
+      this.emitStatus();
+      return this.getStatus();
+    }
+
+    this.message = "Checking for SPICE local runtime updates...";
+    this.emitStatus();
+
+    const manifest = await this.fetchManifest();
+    const latestVersion = typeof manifest?.version === "string" ? manifest.version : null;
+    const installedVersion = this.getInstalledVersion();
+
+    if (!shouldInstallRuntimeUpdate(installedVersion, latestVersion)) {
+      this.message = `SPICE local runtime ${installedVersion || "latest"} is up to date.`;
+      this.emitStatus();
+      return this.getStatus();
+    }
+
+    return this.installFromManifest(manifest);
+  }
+
+  async installFromManifest(manifestOverride) {
     if (!this.supported) {
       throw new Error("The managed SPICE local runtime installer is currently Windows-only.");
     }
@@ -123,7 +157,7 @@ class SpiceLocalRuntimeManager {
     }
 
     this.busy = true;
-    this.message = "Fetching runtime manifest...";
+    this.message = manifestOverride ? "Preparing runtime update..." : "Fetching runtime manifest...";
     this.emitStatus();
 
     const scratchDir = path.join(this.tempDir, `install-${Date.now()}`);
@@ -136,7 +170,7 @@ class SpiceLocalRuntimeManager {
       }
 
       fs.mkdirSync(stagingDir, { recursive: true });
-      const manifest = await this.fetchManifest();
+      const manifest = manifestOverride || await this.fetchManifest();
       const download = manifest && manifest.download ? manifest.download : null;
       const downloadUrl = resolveRuntimeDownloadUrl(download && download.url, this.manifestUrl);
       if (!downloadUrl) {
@@ -341,14 +375,26 @@ function readRuntimeVersion(runtimeDir) {
 }
 
 function compareVersions(left, right) {
-  const leftParts = String(left || "").split(".").map((part) => Number(part) || 0);
-  const rightParts = String(right || "").split(".").map((part) => Number(part) || 0);
+  const leftParts = String(left || "").split(".").map(parseVersionPart);
+  const rightParts = String(right || "").split(".").map(parseVersionPart);
   const length = Math.max(leftParts.length, rightParts.length);
   for (let index = 0; index < length; index += 1) {
     const delta = (leftParts[index] || 0) - (rightParts[index] || 0);
     if (delta !== 0) return delta;
   }
   return 0;
+}
+
+function parseVersionPart(part) {
+  const match = String(part || "").match(/^\d+/);
+  return match ? Number(match[0]) : 0;
+}
+
+function shouldInstallRuntimeUpdate(installedVersion, latestVersion) {
+  if (!installedVersion) return true;
+  if (installedVersion === "unknown") return true;
+  if (!latestVersion) return false;
+  return compareVersions(installedVersion, latestVersion) < 0;
 }
 
 function copyDirectory(sourceDir, destinationDir) {
@@ -425,4 +471,7 @@ function psQuote(value) {
 
 module.exports = {
   SpiceLocalRuntimeManager,
+  compareVersions,
+  resolveRuntimeDownloadUrl,
+  shouldInstallRuntimeUpdate,
 };
