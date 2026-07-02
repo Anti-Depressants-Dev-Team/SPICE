@@ -1,5 +1,11 @@
 # SPICE Walkthrough
 
+## v1.0.115
+
+- [Spice.Music main] Reduce Vercel invocation pressure by limiting the emergency/austerity Proxy to `/api/sync/*` instead of every API request.
+- [Spice.Music main] Slow Spice Connect command polling, add idle/hidden-tab backoff, and reduce automatic device state sync frequency.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.115`.
+
 ## v1.0.114
 
 - [Spice.Music main] Add a topbar Settings button so application settings stay reachable even when the sidebar Settings shortcut is hidden.

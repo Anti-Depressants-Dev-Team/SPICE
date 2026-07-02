@@ -5,8 +5,9 @@ import { getProxySystemSettings } from '@/lib/proxy-system-settings';
 export async function proxy(request: NextRequest) {
   const url = request.nextUrl.clone();
 
-  // Only apply to /api routes, but ignore admin APIs so we can still manage the system
-  if (!url.pathname.startsWith('/api') || url.pathname.startsWith('/api/admin')) {
+  // Keep the emergency/austerity proxy off hot polling APIs. Route handlers
+  // still own auth; this proxy only gates sync writes when austerity is active.
+  if (!url.pathname.startsWith('/api/sync')) {
     return NextResponse.next();
   }
 
@@ -54,5 +55,5 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: '/api/:path*',
+  matcher: '/api/sync/:path*',
 };

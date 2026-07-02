@@ -27,8 +27,11 @@ import {
 import { isSpiceConnectCommandFresh, SPICE_CONNECT_COMMAND_TTL_MS } from '@/lib/spice-connect';
 import { SPICE_MEDIA_CORE_VERSION, RELEASE_NOTIFICATION_STORAGE_KEY, type ReleaseNotification } from '@/lib/release-notifications';
 
-const SPICE_CONNECT_COMMAND_POLL_INTERVAL_MS = 5000;
-const SPICE_CONNECT_DEVICE_SYNC_INTERVAL_MS = 30000;
+const SPICE_CONNECT_COMMAND_POLL_INTERVAL_MS = 30000;
+const SPICE_CONNECT_COMMAND_IDLE_POLL_INTERVAL_MS = 60000;
+const SPICE_CONNECT_COMMAND_HIDDEN_POLL_INTERVAL_MS = 120000;
+const SPICE_CONNECT_COMMAND_IDLE_BACKOFF_POLLS = 3;
+const SPICE_CONNECT_DEVICE_SYNC_INTERVAL_MS = 120000;
 const SPICE_CONNECT_POST_COMMAND_SYNC_DELAY_MS = 450;
 const SPICE_CONNECT_STALE_DEVICE_SECONDS = 120;
 const SPICE_VERSION_CHECK_INTERVAL_MS = 15 * 60 * 1000;
@@ -38,6 +41,10 @@ const LISTEN_TOGETHER_HOST_INVITE_POLL_INTERVAL_MS = 30 * 1000;
 const LISTEN_TOGETHER_SYNC_INTERVAL_MS = 5000;
 const UPDATE_RELOAD_REMOTE_SUPPRESS_MS = 30 * 1000;
 const UPDATE_RELOAD_REMOTE_SUPPRESS_KEY = 'spice_update_reload_remote_suppress_until';
+
+const isSpiceDocumentVisible = () => (
+  typeof document === 'undefined' || document.visibilityState === 'visible'
+);
 const PLAYBACK_STREAM_RETRY_LIMIT = 3;
 const PLAYBACK_STREAM_RETRY_DELAY_MS = 1200;
 const PLAYER_VOLUME_STORAGE_KEY = 'spice_player_volume';
@@ -2074,6 +2081,7 @@ export default function SpiceApp() {
   const remoteDeviceReportInFlightRef = useRef(false);
   const remoteDeviceLoadInFlightRef = useRef(false);
   const remoteCommandPollInFlightRef = useRef(false);
+  const emptyRemoteCommandPollsRef = useRef(0);
   const appliedRemoteCommandIdsRef = useRef<Set<string>>(new Set());
   const remoteStateSyncTimeoutRef = useRef<number | null>(null);
 
@@ -4425,6 +4433,7 @@ export default function SpiceApp() {
 
   const reportRemoteDeviceState = async () => {
     if (!cloudToken || !remoteControlEnabled || remoteDeviceReportInFlightRef.current) return;
+    if (!isSpiceDocumentVisible() && !isPlayingRef.current) return;
 
     const targetTrack = currentTrackRef.current;
     const currentQueue = queueRef.current || [];
@@ -4624,8 +4633,15 @@ export default function SpiceApp() {
         return true;
       });
 
+      emptyRemoteCommandPollsRef.current = freshCommands.length > 0
+        ? 0
+        : Math.min(emptyRemoteCommandPollsRef.current + 1, SPICE_CONNECT_COMMAND_IDLE_BACKOFF_POLLS);
       freshCommands.forEach((command) => applyRemoteCommand(command, now));
     } catch (error) {
+      emptyRemoteCommandPollsRef.current = Math.min(
+        emptyRemoteCommandPollsRef.current + 1,
+        SPICE_CONNECT_COMMAND_IDLE_BACKOFF_POLLS
+      );
       const message = error instanceof Error ? error.message : 'Spice Connect command poll failed.';
       setRemoteStatus(message);
       logDebug('error', `Spice Connect command poll failed: ${message}`);
@@ -4685,6 +4701,13 @@ export default function SpiceApp() {
     }
   };
 
+  const remoteCommandPollDelayMs = () => {
+    if (!isSpiceDocumentVisible()) return SPICE_CONNECT_COMMAND_HIDDEN_POLL_INTERVAL_MS;
+    return emptyRemoteCommandPollsRef.current >= SPICE_CONNECT_COMMAND_IDLE_BACKOFF_POLLS
+      ? SPICE_CONNECT_COMMAND_IDLE_POLL_INTERVAL_MS
+      : SPICE_CONNECT_COMMAND_POLL_INTERVAL_MS;
+  };
+
   useEffect(() => {
     if (!isMounted || !cloudToken) return;
 
@@ -4719,12 +4742,45 @@ export default function SpiceApp() {
   useEffect(() => {
     if (!isMounted || !cloudToken || !remoteControlEnabled) return;
 
-    void pollRemoteCommands();
-    const interval = setInterval(() => {
-      void pollRemoteCommands();
-    }, SPICE_CONNECT_COMMAND_POLL_INTERVAL_MS);
+    let cancelled = false;
+    let timeoutId: number | null = null;
 
-    return () => clearInterval(interval);
+    const clearScheduledPoll = () => {
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+    };
+
+    const schedulePoll = (delayMs: number) => {
+      clearScheduledPoll();
+      timeoutId = window.setTimeout(() => {
+        void runPoll();
+      }, delayMs);
+    };
+
+    const runPoll = async () => {
+      if (cancelled) return;
+      await pollRemoteCommands();
+      if (!cancelled) {
+        schedulePoll(remoteCommandPollDelayMs());
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (isSpiceDocumentVisible()) {
+        void runPoll();
+      }
+    };
+
+    void runPoll();
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      cancelled = true;
+      clearScheduledPoll();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, [isMounted, cloudToken, remoteControlEnabled, remoteDeviceId]);
 
   const fetchSearchProviderResults = async (query: string, provider: SearchProvider) => {
