@@ -703,6 +703,23 @@ function getActiveBackendView() {
   return view;
 }
 
+function markSpiceNativePlaybackIntent(reason = "shell") {
+  if (!APP_NATIVE_MODE || currentService !== "spice_crazy" || !view || !view.webContents || view.webContents.isDestroyed()) {
+    return;
+  }
+
+  view.webContents
+    .executeJavaScript(
+      `
+        if (typeof window.__spiceNativeAllowPlaybackIntent === 'function') {
+          window.__spiceNativeAllowPlaybackIntent(${JSON.stringify(reason)});
+        }
+        true;
+      `,
+    )
+    .catch(() => {});
+}
+
 // Send VK track info to the main window's renderer (for the app-frame player bar)
 function sendVkTrackUpdate(trackInfo) {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -1045,6 +1062,9 @@ ipcMain.on("vk-player-command", (event, cmd) => {
     })()`,
   };
   if (code[cmd]) {
+    if (cmd === "playpause") {
+      markSpiceNativePlaybackIntent("app-frame playpause");
+    }
     view.webContents
       .executeJavaScript(code[cmd])
       .then((res) => {
@@ -2266,6 +2286,10 @@ app.whenReady().then(async () => {
       const playerView = getActiveBackendView();
       if (!playerView) return;
 
+      if (action.action === "playpause" || action.action === "playQueueIndex") {
+        markSpiceNativePlaybackIntent(`mini-player ${action.action}`);
+      }
+
       // Execute actions on the main player view
       const code = `
             (function() {
@@ -2915,6 +2939,7 @@ app.whenReady().then(async () => {
 
   ipcMain.on("play-queue-index", (event, index) => {
     if (view && view.webContents) {
+      markSpiceNativePlaybackIntent("queue index");
       view.webContents
         .executeJavaScript(
           `
