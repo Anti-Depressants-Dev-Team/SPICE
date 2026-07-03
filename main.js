@@ -83,6 +83,7 @@ const APP_NATIVE_MODE =
   process.env.SPICE_NATIVE_APP === "1" ||
   process.env.SPICE_APP_MODE === "native" ||
   (app.isPackaged && hasBundledNativeRuntime());
+const UPDATE_CHANNEL = APP_NATIVE_MODE ? "native" : "latest";
 const SPICE_LOCAL_RUNTIME_URL = normalizeServiceUrl(
   process.env.SPICE_LOCAL_RUNTIME_URL || "http://127.0.0.1:3939/",
 );
@@ -2631,6 +2632,8 @@ app.whenReady().then(async () => {
   createWindow();
 
   // Initialize Auto Updater
+  autoUpdater.channel = UPDATE_CHANNEL;
+  autoUpdater.autoDownload = true;
   autoUpdater.on("checking-for-update", () => {
     if (mainWindow) mainWindow.webContents.send("update-status", { status: "checking" });
   });
@@ -2652,7 +2655,11 @@ app.whenReady().then(async () => {
 
   // Automatically check on startup
   try {
-    autoUpdater.checkForUpdatesAndNotify();
+    if (app.isPackaged) {
+      autoUpdater.checkForUpdatesAndNotify();
+    } else {
+      console.log(`Skipping auto-updater in development mode on ${UPDATE_CHANNEL} channel.`);
+    }
   } catch(e) {
     console.error("Auto-updater error on startup:", e);
   }
@@ -2800,6 +2807,9 @@ app.whenReady().then(async () => {
 
   // Auto Updater
   ipcMain.handle("check-for-updates", async () => {
+    if (!app.isPackaged) {
+      return { success: false, error: "Auto updates are only available in packaged builds." };
+    }
     try {
       const result = await autoUpdater.checkForUpdates();
       return { success: true, result };
@@ -2809,6 +2819,7 @@ app.whenReady().then(async () => {
   });
 
   ipcMain.on("install-update", () => {
+    if (!app.isPackaged) return;
     autoUpdater.quitAndInstall(false, true);
   });
 
@@ -3314,12 +3325,21 @@ app.whenReady().then(async () => {
         })();
     `;
 
-  function applySpiceAudioControls() {
+  function applySpiceAudioControls(retries = 4) {
     const targetView = getActiveBackendView();
     if (!targetView) return;
     targetView.webContents
       .executeJavaScript(getSpiceAudioSyncScript(currentVolume, currentBoostEnabled))
-      .catch(() => {});
+      .then((applied) => {
+        if (!applied && retries > 0) {
+          setTimeout(() => applySpiceAudioControls(retries - 1), 250);
+        }
+      })
+      .catch(() => {
+        if (retries > 0) {
+          setTimeout(() => applySpiceAudioControls(retries - 1), 250);
+        }
+      });
   }
 
   // Apply volume to current view
