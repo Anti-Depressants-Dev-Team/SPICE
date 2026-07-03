@@ -2987,36 +2987,51 @@ export default function SpiceApp() {
 
   // Sync volume
   useEffect(() => {
-    if (audioRef.current) {
-      if (volume <= 100) {
-        audioRef.current.volume = volume / 100;
-        if (gainNodeRef.current) {
-          gainNodeRef.current.gain.value = 1;
-        }
-      } else {
-        audioRef.current.volume = 1;
+    const audio = audioRef.current;
+    if (!audio) return;
 
-        if (!audioContextRef.current) {
-          const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-          if (AudioContextClass) {
-            audioContextRef.current = new AudioContextClass();
-            sourceNodeRef.current = audioContextRef.current.createMediaElementSource(audioRef.current);
-            gainNodeRef.current = audioContextRef.current.createGain();
-            sourceNodeRef.current.connect(gainNodeRef.current);
-            gainNodeRef.current.connect(audioContextRef.current.destination);
-          }
-        }
+    const shouldUseGainNode = volume > 100 || volumeBoosterAccepted;
 
-        if (audioContextRef.current?.state === 'suspended') {
-          audioContextRef.current.resume();
-        }
+    if (!shouldUseGainNode) {
+      audio.volume = volume / 100;
+      if (gainNodeRef.current) {
+        gainNodeRef.current.gain.value = 1;
+      }
+      return;
+    }
 
-        if (gainNodeRef.current) {
-          gainNodeRef.current.gain.value = volume / 100;
+    audio.volume = 1;
+
+    if (!audioContextRef.current) {
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioContextClass) {
+        try {
+          audioContextRef.current = new AudioContextClass();
+          sourceNodeRef.current = audioContextRef.current.createMediaElementSource(audio);
+          gainNodeRef.current = audioContextRef.current.createGain();
+          sourceNodeRef.current.connect(gainNodeRef.current);
+          gainNodeRef.current.connect(audioContextRef.current.destination);
+        } catch (error) {
+          console.error('Failed to initialize volume booster audio graph:', error);
+          audioContextRef.current = null;
+          sourceNodeRef.current = null;
+          gainNodeRef.current = null;
         }
       }
     }
-  }, [volume]);
+
+    if (audioContextRef.current?.state === 'suspended') {
+      void audioContextRef.current.resume().catch((error) => {
+        console.error('Failed to resume volume booster audio graph:', error);
+      });
+    }
+
+    if (gainNodeRef.current) {
+      gainNodeRef.current.gain.value = volume / 100;
+    } else {
+      audio.volume = Math.min(1, volume / 100);
+    }
+  }, [volume, volumeBoosterAccepted]);
 
   // Audio Handlers
   const handleTimeUpdate = () => {
@@ -8971,13 +8986,13 @@ const getMaskedEmail = (email: string) => {
               {currentPage === 'home' && (
                 <>
                   {/* cover greetings header */}
-                  <section style={{ marginBottom: '32px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255, 255, 255, 0.02)', border: '1px solid var(--border-color)', padding: '28px', borderRadius: '16px', backdropFilter: 'blur(10px)' }} className="home-greeting animate-in">
+                  <section style={{ marginBottom: '18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255, 255, 255, 0.02)', border: '1px solid var(--border-color)', padding: '14px 18px', borderRadius: '12px', backdropFilter: 'blur(10px)' }} className="home-greeting animate-in">
                     <div className="home-greeting__copy">
                       <h1 style={{
                         fontFamily: 'Outfit, sans-serif',
-                        fontSize: '2.25rem',
+                        fontSize: '1.55rem',
                         fontWeight: 800,
-                        margin: '0 0 6px 0',
+                        margin: '0 0 2px 0',
                         display: 'inline-block',
                         background: 'var(--accent-gradient)',
                         WebkitBackgroundClip: 'text',
@@ -8987,11 +9002,11 @@ const getMaskedEmail = (email: string) => {
                       }}>
                         Welcome back, {activeProfile.displayName}!
                       </h1>
-                      <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', margin: 0 }}>
+                      <p style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', margin: 0 }}>
                         Discover, stream, and sync your favorite music across all your devices.
                       </p>
                     </div>
-                    <div className="home-greeting__avatar" style={{ width: '96px', height: '96px', borderRadius: '50%', background: activeProfile.avatarUrl ? 'none' : activeProfile.gradient, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '2.5rem', fontWeight: 900, color: '#fff', boxShadow: '0 8px 32px rgba(0,0,0,0.4)', textShadow: activeProfile.avatarUrl ? 'none' : '0 2px 8px rgba(0,0,0,0.3)', flexShrink: 0, overflow: 'hidden', border: '3px solid rgba(255, 255, 255, 0.1)' }}>
+                    <div className="home-greeting__avatar" style={{ width: '54px', height: '54px', borderRadius: '50%', background: activeProfile.avatarUrl ? 'none' : activeProfile.gradient, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.35rem', fontWeight: 900, color: '#fff', boxShadow: '0 6px 18px rgba(0,0,0,0.34)', textShadow: activeProfile.avatarUrl ? 'none' : '0 2px 8px rgba(0,0,0,0.3)', flexShrink: 0, overflow: 'hidden', border: '2px solid rgba(255, 255, 255, 0.1)' }}>
                       {activeProfile.avatarUrl ? (
                         <img src={activeProfile.avatarUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                       ) : (

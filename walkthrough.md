@@ -1,5 +1,12 @@
 # SPICE Walkthrough
 
+## v1.0.118
+
+- [Spice.Music main] Compact the VK player bar, keep its volume slider visible at wrapper-sized desktop widths, and square off the search bar corners.
+- [Spice.Music main] Slim down the Home greeting banner so it no longer dominates the first screen.
+- [Spice.Music main] Make volume Boost explicitly use the gain-node audio path whenever Boost is enabled.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.118`.
+
 ## v1.0.117
 
 - [Spice.Admin main] Keep admin session bootstrap and cloud admin management endpoints reachable during emergency stop so operators can disable the stop from the dashboard.

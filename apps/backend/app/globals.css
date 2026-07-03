@@ -247,6 +247,7 @@ h4 { font-size: 1rem; }
   align-items: center;
   gap: var(--space-md);
   min-width: 0;
+  overflow: hidden;
   color: inherit;
   background: none;
   border: none;
@@ -284,6 +285,10 @@ h4 { font-size: 1rem; }
   font-family: 'Outfit', sans-serif;
   font-size: 1.25rem;
   font-weight: 700;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   background: var(--accent-gradient);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -1308,12 +1313,13 @@ h4 { font-size: 1rem; }
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: var(--space-sm);
-  min-height: 48px;
-  padding: 6px 6px 6px 14px;
+  gap: 8px;
+  min-height: 44px;
+  padding: 5px 5px 5px 12px;
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: var(--radius-full);
+  border-radius: 10px;
   background: rgba(255, 255, 255, 0.055);
+  overflow: hidden;
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background var(--transition-fast);
 }
 
@@ -1347,9 +1353,9 @@ h4 { font-size: 1rem; }
 }
 
 .app-topbar__search button {
-  min-height: 36px;
-  padding: 0 14px;
-  border-radius: var(--radius-full);
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 8px;
   background: var(--accent-gradient);
   color: #fff;
   font-size: 0.78rem;
@@ -2132,11 +2138,14 @@ h4 { font-size: 1rem; }
 }
 
 .player-style--vk .now-playing {
-  width: min(1180px, calc(100% - 32px));
-  min-height: 76px;
-  margin: 0 auto 10px;
+  width: min(1120px, calc(100% - 28px));
+  min-height: 64px;
+  margin: 0 auto 6px;
   border: 1px solid rgba(var(--accent-pink-rgb, 236, 72, 153), 0.22);
-  border-radius: 28px;
+  border-radius: 22px;
+  grid-template-columns: minmax(158px, auto) minmax(0, 1fr) minmax(212px, auto);
+  gap: clamp(6px, 1vw, 14px);
+  padding: 0 clamp(8px, 1.4vw, 18px);
   background:
     linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.025)),
     rgba(6, 6, 8, 0.94);
@@ -2159,29 +2168,36 @@ h4 { font-size: 1rem; }
 
 .player-style--vk .now-playing__left-controls,
 .player-style--vk .now-playing__right-controls {
-  padding: 6px;
+  padding: 4px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.045);
 }
 
 .player-style--vk .now-playing__song {
-  flex-basis: clamp(190px, 28vw, 360px);
-  max-width: clamp(190px, 28vw, 360px);
+  flex-basis: clamp(170px, 24vw, 310px);
+  max-width: clamp(170px, 24vw, 310px);
 }
 
 .player-style--vk .now-playing__art {
-  width: 52px;
-  height: 52px;
-  border-radius: 16px;
+  width: 44px;
+  height: 44px;
+  border-radius: 13px;
 }
 
 .player-style--vk .now-playing__title {
-  font-size: 0.92rem;
+  font-size: 0.88rem;
   font-weight: 850;
 }
 
+.player-style--vk .now-playing__btn {
+  width: 28px;
+  height: 28px;
+}
+
 .player-style--vk .now-playing__btn--play {
+  width: 40px;
+  height: 40px;
   background: #fff;
   color: #050507 !important;
   box-shadow:
@@ -2508,7 +2524,7 @@ h4 { font-size: 1rem; }
 .now-playing__volume-slider {
   -webkit-appearance: none;
   appearance: none;
-  width: clamp(52px, 7vw, 80px);
+  width: clamp(68px, 7vw, 94px);
   height: 4px;
   background: hsla(270, 10%, 25%, 0.5);
   border-radius: var(--radius-full);
@@ -3121,13 +3137,13 @@ h4 { font-size: 1rem; }
 .search-bar {
   display: flex;
   align-items: center;
-  gap: var(--space-md);
+  gap: var(--space-sm);
   background: var(--bg-glass);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--border-glass);
-  border-radius: var(--radius-full);
-  padding: var(--space-md) var(--space-xl);
+  border-radius: 12px;
+  padding: 10px 16px;
   transition: all var(--transition-normal);
 }
 
@@ -3160,7 +3176,7 @@ h4 { font-size: 1rem; }
   color: var(--text-secondary);
   background: rgba(0, 0, 0, 0.35);
   border: 1px solid var(--border-glass);
-  border-radius: var(--radius-full);
+  border-radius: 8px;
   outline: none;
   cursor: pointer;
   transition: all var(--transition-fast);
@@ -3670,8 +3686,7 @@ h4 { font-size: 1rem; }
 
   .now-playing__btn--wide-only,
   .now-playing__like,
-  .now-playing__waveform,
-  .now-playing__volume-slider {
+  .now-playing__waveform {
     display: none;
   }
 
@@ -3699,6 +3714,10 @@ h4 { font-size: 1rem; }
 
 @media (max-width: 720px) and (min-width: 601px) {
   .now-playing__artist {
+    display: none;
+  }
+
+  .now-playing__volume-slider {
     display: none;
   }
 
@@ -3781,7 +3800,7 @@ h4 { font-size: 1rem; }
     grid-template-columns: auto minmax(0, 1fr) !important;
     min-height: 46px !important;
     padding: 6px 12px !important;
-    border-radius: 16px !important;
+    border-radius: 12px !important;
   }
 
   .app-topbar__search-shell {
@@ -3902,7 +3921,7 @@ h4 { font-size: 1rem; }
   .search-bar {
     align-items: stretch !important;
     flex-wrap: wrap !important;
-    border-radius: 18px !important;
+    border-radius: 12px !important;
     padding: 12px !important;
   }
 
@@ -4023,16 +4042,16 @@ h4 { font-size: 1rem; }
 
   .home-greeting {
     display: grid !important;
-    grid-template-columns: minmax(0, 1fr) 78px !important;
+    grid-template-columns: minmax(0, 1fr) 48px !important;
     align-items: center !important;
-    gap: 16px !important;
-    margin: 4px 0 24px !important;
-    padding: 20px !important;
-    border-radius: 24px !important;
+    gap: 12px !important;
+    margin: 4px 0 18px !important;
+    padding: 12px 14px !important;
+    border-radius: 16px !important;
     background:
       radial-gradient(circle at 82% 28%, rgba(var(--accent-pink-rgb, 236, 72, 153), 0.22), transparent 36%),
       rgba(255, 255, 255, 0.035) !important;
-    box-shadow: 0 18px 52px rgba(0, 0, 0, 0.28) !important;
+    box-shadow: 0 12px 34px rgba(0, 0, 0, 0.24) !important;
   }
 
   .home-greeting__copy {
@@ -4040,22 +4059,22 @@ h4 { font-size: 1rem; }
   }
 
   .home-greeting h1 {
-    font-size: clamp(1.58rem, 7vw, 2rem) !important;
+    font-size: clamp(1.15rem, 5.2vw, 1.45rem) !important;
     line-height: 1.02 !important;
-    letter-spacing: -0.04em !important;
-    margin-bottom: 8px !important;
+    letter-spacing: 0 !important;
+    margin-bottom: 2px !important;
   }
 
   .home-greeting p {
     max-width: 28ch !important;
-    font-size: 0.84rem !important;
-    line-height: 1.35 !important;
+    font-size: 0.74rem !important;
+    line-height: 1.28 !important;
   }
 
   .home-greeting__avatar {
-    width: 78px !important;
-    height: 78px !important;
-    font-size: 2rem !important;
+    width: 48px !important;
+    height: 48px !important;
+    font-size: 1.2rem !important;
     border-width: 2px !important;
   }
 
