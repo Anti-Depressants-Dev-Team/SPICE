@@ -105,6 +105,32 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "Android release build failed with exit code $LASTEXITCODE."
     }
+
+    $buildToolsRoot = Join-Path $env:ANDROID_HOME "build-tools"
+    $apksigner = Get-ChildItem -LiteralPath $buildToolsRoot -Directory |
+        Sort-Object Name -Descending |
+        ForEach-Object { Join-Path $_.FullName "apksigner.bat" } |
+        Where-Object { Test-Path $_ } |
+        Select-Object -First 1
+
+    if (-not $apksigner) {
+        throw "apksigner.bat was not found under $buildToolsRoot."
+    }
+
+    $releaseOutput = Join-Path $androidRoot "app\build\outputs\apk\release"
+    $releaseApk = Get-ChildItem -LiteralPath $releaseOutput -Filter "*.apk" |
+        Where-Object { $_.Name -notmatch "unsigned" } |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1
+
+    if (-not $releaseApk) {
+        throw "No signed release APK was produced in $releaseOutput."
+    }
+
+    & $apksigner verify --verbose $releaseApk.FullName
+    if ($LASTEXITCODE -ne 0) {
+        throw "Release APK failed signature verification: $($releaseApk.FullName)"
+    }
 } finally {
     Pop-Location
 }
