@@ -2091,6 +2091,76 @@ export default function SpiceApp() {
   const playTrackRef = useRef<(track: Track, newQueue?: Track[], queueIndexHint?: number, isSyncLoopCall?: boolean, isRetryCall?: boolean) => Promise<void>>(async () => { });
   const handleNextRef = useRef<(overrideIndex?: any) => void>(() => { });
 
+  const applyAudioElementVolume = useCallback((
+    audio: HTMLAudioElement | null,
+    nextVolume = volumeRef.current,
+    options: { resumeAudioContext?: boolean } = {},
+  ) => {
+    if (!audio) return;
+
+    const safeVolume = normalizePlayerVolume(nextVolume, volumeBoosterAccepted) ?? 100;
+    const shouldUseGainNode = safeVolume > 100 || volumeBoosterAccepted;
+    if (!shouldUseGainNode) {
+      audio.volume = safeVolume / 100;
+      if (gainNodeRef.current) {
+        gainNodeRef.current.gain.value = 1;
+      }
+      return;
+    }
+
+    audio.volume = 1;
+
+    if (!audioContextRef.current) {
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioContextClass) {
+        try {
+          audioContextRef.current = new AudioContextClass();
+        } catch (error) {
+          console.error('Failed to initialize volume booster audio context:', error);
+          audioContextRef.current = null;
+        }
+      }
+    }
+
+    if (audioContextRef.current && !sourceNodeRef.current) {
+      try {
+        sourceNodeRef.current = audioContextRef.current.createMediaElementSource(audio);
+        gainNodeRef.current = audioContextRef.current.createGain();
+        sourceNodeRef.current.connect(gainNodeRef.current);
+        gainNodeRef.current.connect(audioContextRef.current.destination);
+      } catch (error) {
+        console.error('Failed to initialize volume booster audio graph:', error);
+        sourceNodeRef.current = null;
+        gainNodeRef.current = null;
+      }
+    }
+
+    if (options.resumeAudioContext && audioContextRef.current?.state === 'suspended') {
+      void audioContextRef.current.resume().catch(() => undefined);
+    }
+
+    if (gainNodeRef.current) {
+      gainNodeRef.current.gain.value = safeVolume / 100;
+    } else {
+      audio.volume = Math.min(1, safeVolume / 100);
+    }
+  }, [volumeBoosterAccepted]);
+
+  const bindAudioRef = useCallback((node: HTMLAudioElement | null) => {
+    if (audioRef.current && audioRef.current !== node) {
+      try { sourceNodeRef.current?.disconnect(); } catch { }
+      try { gainNodeRef.current?.disconnect(); } catch { }
+      sourceNodeRef.current = null;
+      gainNodeRef.current = null;
+    }
+
+    audioRef.current = node;
+    if (!node) return;
+
+    node.autoplay = false;
+    applyAudioElementVolume(node, volumeRef.current);
+  }, [applyAudioElementVolume]);
+
   useEffect(() => {
     activeProfileIdRef.current = activeProfileId;
     listenTogetherHostSessionIdRef.current = listenTogetherHostSessionId;
@@ -2597,6 +2667,11 @@ export default function SpiceApp() {
           setCurrentTrack(hydratedHistory[0]);
           setQueue([hydratedHistory[0]]);
         }
+        shouldAutoPlayRef.current = false;
+        isPlayingRef.current = false;
+        setIsPlaying(false);
+        setStreamUrl(null);
+        streamUrlRef.current = null;
 
         const cachedSearch = getLatestCachedSearch();
         if (cachedSearch) {
@@ -2988,51 +3063,8 @@ export default function SpiceApp() {
 
   // Sync volume
   useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-
-    const shouldUseGainNode = volume > 100 || volumeBoosterAccepted;
-
-    if (!shouldUseGainNode) {
-      audio.volume = volume / 100;
-      if (gainNodeRef.current) {
-        gainNodeRef.current.gain.value = 1;
-      }
-      return;
-    }
-
-    audio.volume = 1;
-
-    if (!audioContextRef.current) {
-      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-      if (AudioContextClass) {
-        try {
-          audioContextRef.current = new AudioContextClass();
-          sourceNodeRef.current = audioContextRef.current.createMediaElementSource(audio);
-          gainNodeRef.current = audioContextRef.current.createGain();
-          sourceNodeRef.current.connect(gainNodeRef.current);
-          gainNodeRef.current.connect(audioContextRef.current.destination);
-        } catch (error) {
-          console.error('Failed to initialize volume booster audio graph:', error);
-          audioContextRef.current = null;
-          sourceNodeRef.current = null;
-          gainNodeRef.current = null;
-        }
-      }
-    }
-
-    if (audioContextRef.current?.state === 'suspended') {
-      void audioContextRef.current.resume().catch((error) => {
-        console.error('Failed to resume volume booster audio graph:', error);
-      });
-    }
-
-    if (gainNodeRef.current) {
-      gainNodeRef.current.gain.value = volume / 100;
-    } else {
-      audio.volume = Math.min(1, volume / 100);
-    }
-  }, [volume, volumeBoosterAccepted]);
+    applyAudioElementVolume(audioRef.current, volume, { resumeAudioContext: isPlayingRef.current });
+  }, [applyAudioElementVolume, volume]);
 
   // Audio Handlers
   const handleTimeUpdate = () => {
@@ -3048,12 +3080,24 @@ export default function SpiceApp() {
   };
 
   const handleAudioCanPlay = () => {
-    if (!audioRef.current || !isPlaying) return;
-    audioRef.current.play().catch(() => {
-      shouldAutoPlayRef.current = false;
-      isPlayingRef.current = false;
-      setIsPlaying(false);
-      logDebug('stream', 'Direct audio is ready. Browser autoplay was blocked; use the play button to continue.');
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    applyAudioElementVolume(audio, volumeRef.current);
+    if (!shouldAutoPlayRef.current && !isPlayingRef.current) return;
+
+    requestAnimationFrame(() => {
+      const latestAudio = audioRef.current;
+      if (!latestAudio || latestAudio !== audio || !shouldAutoPlayRef.current) return;
+      applyAudioElementVolume(latestAudio, volumeRef.current, { resumeAudioContext: true });
+      latestAudio.play().then(() => {
+        setPlaybackPlaying(true);
+      }).catch(() => {
+        shouldAutoPlayRef.current = false;
+        isPlayingRef.current = false;
+        setIsPlaying(false);
+        logDebug('stream', 'Direct audio is ready. Browser autoplay was blocked; use the play button to continue.');
+      });
     });
   };
 
@@ -3659,6 +3703,7 @@ export default function SpiceApp() {
       } else if (audioRef.current) {
         logDebug('player', 'Repeat mode is ONE. Replaying HTML5 audio...');
         audioRef.current.currentTime = 0;
+        applyAudioElementVolume(audioRef.current, volumeRef.current, { resumeAudioContext: true });
         audioRef.current.play().catch(handleAudioError);
         setProgress(0);
         setIsPlaying(true);
@@ -4283,6 +4328,7 @@ export default function SpiceApp() {
     }
 
     if (audioRef.current && streamUrlRef.current) {
+      applyAudioElementVolume(audioRef.current, volumeRef.current, { resumeAudioContext: true });
       audioRef.current.play().then(() => {
         setPlaybackPlaying(true);
       }).catch(handleAudioError);
@@ -4449,6 +4495,7 @@ export default function SpiceApp() {
 
   const reportRemoteDeviceState = async () => {
     if (!cloudToken || !remoteControlEnabled || remoteDeviceReportInFlightRef.current) return;
+    if (!isSpiceDocumentVisible() && !isPlayingRef.current) return;
 
     const targetTrack = currentTrackRef.current;
     const currentQueue = queueRef.current || [];
@@ -6686,6 +6733,9 @@ const getMaskedEmail = (email: string) => {
       setProgress(0);
     }
     setStreamUrl(null);
+    streamUrlRef.current = null;
+    shouldAutoPlayRef.current = false;
+    isPlayingRef.current = false;
     setIsPlaying(false);
 
     // Lock screen trigger if passcode exists
@@ -7394,7 +7444,7 @@ const getMaskedEmail = (email: string) => {
     : false;
 
   return (
-    <div className={`app ${sidebarHidden ? 'app--sidebar-hidden' : ''} player-style--${playerVisualStyle}`}>
+    <div className={`app ${sidebarHidden ? 'app--sidebar-hidden' : ''} player-style--${playerVisualStyle} player-placement--${playerPlacement}`}>
       <style dangerouslySetInnerHTML={{ __html: getAccentStyles() }} />
 
       {(listenTogetherSession || listenTogetherHostSessionId) && (
@@ -7851,10 +7901,9 @@ const getMaskedEmail = (email: string) => {
       {streamUrl && streamUrl !== 'youtube-embed-active' && (
         <audio
           key={streamUrl}
-          ref={audioRef}
+          ref={bindAudioRef}
           crossOrigin="anonymous"
           src={streamUrl}
-          autoPlay={isPlaying}
           preload="auto"
           onCanPlay={handleAudioCanPlay}
           onTimeUpdate={handleTimeUpdate}

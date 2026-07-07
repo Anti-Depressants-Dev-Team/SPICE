@@ -1,5 +1,13 @@
 # SPICE Walkthrough
 
+## v1.0.120
+
+- [Spice.Music main] Apply saved player volume to the audio element before direct playback starts so startup and track changes do not briefly jump to 100%.
+- [Spice.Music main] Keep restored profile playback snapshots paused on first boot and profile switch until the listener explicitly presses play.
+- [Spice.Music main] Share platform song links from the share/download dialog while keeping the internal song token as a fallback.
+- [Spice.Music main] Expand the VK Compact SPICE player bar closer to the window edges and make Spice Connect open downward when the player bar is placed at the top.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.120`.
+
 ## v1.0.119
 
 - [Spice.Music main] Expand the VK compact player bar closer to the window edges so it uses the available desktop width.
