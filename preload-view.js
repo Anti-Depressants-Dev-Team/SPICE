@@ -50,9 +50,7 @@ function installNativeStartupPlaybackGuard() {
     }
 
     function shouldBlockStartupPlayback() {
-        const waitingForAudioSettings =
-            window.__spiceDesktopAudioReady === false &&
-            !(userPlaybackIntent && window.__spiceDesktopAudioSettingsQueued === true);
+        const waitingForAudioSettings = window.__spiceDesktopAudioReady === false;
         return waitingForAudioSettings || (isGuardActive() && !userPlaybackIntent);
     }
 

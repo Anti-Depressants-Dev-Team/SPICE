@@ -791,7 +791,7 @@ function getActiveBackendView() {
 }
 
 function markSpiceNativePlaybackIntent(reason = "shell") {
-  if (!APP_NATIVE_MODE || currentService !== "spice_crazy" || !view || !view.webContents || view.webContents.isDestroyed()) {
+  if (currentService !== "spice_crazy" || !view || !view.webContents || view.webContents.isDestroyed()) {
     return;
   }
 
@@ -813,6 +813,19 @@ async function prepareForUpdateInstall() {
   updateInstallInProgress = true;
   updateInstallCleanupCompleted = false;
   updateInstallCleanupPromise = (async () => {
+    const closeChildWindow = async (childWindow) => {
+      if (!childWindow || childWindow.isDestroyed()) return;
+      try {
+        childWindow.close();
+      } catch (_) {}
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      if (!childWindow.isDestroyed()) {
+        try {
+          childWindow.destroy();
+        } catch (_) {}
+      }
+    };
+
     stopTrackPolling();
     clearPlaybackSurfaces();
 
@@ -829,13 +842,14 @@ async function prepareForUpdateInstall() {
     }
     view = null;
 
-    for (const childWindow of [lyricsWindow, miniPlayerWindow, settingsWindow, toolbarSettingsWindow]) {
-      if (childWindow && !childWindow.isDestroyed()) {
-        try {
-          childWindow.close();
-        } catch (_) {}
-      }
+    for (const childWindow of [lyricsWindow, miniPlayerWindow, queueWindow, settingsWindow, toolbarSettingsWindow]) {
+      await closeChildWindow(childWindow);
     }
+    lyricsWindow = null;
+    miniPlayerWindow = null;
+    queueWindow = null;
+    settingsWindow = null;
+    toolbarSettingsWindow = null;
 
     if (spiceRuntimeManager) {
       try {
@@ -848,6 +862,10 @@ async function prepareForUpdateInstall() {
         discordRpc.disconnect();
       } catch (_) {}
     }
+
+    try {
+      app.releaseSingleInstanceLock();
+    } catch (_) {}
 
     updateInstallCleanupCompleted = true;
   })();
@@ -1674,8 +1692,11 @@ function startTrackPolling() {
                                     'spice music',
                                     'spice listener',
                                     'local profile',
+                                    'sidebar',
                                     'playlists',
                                     'no playlists yet',
+                                    'welcome back',
+                                    'discover, stream, and sync your favorite music across all your devices.',
                                     'home',
                                     'search',
                                     'library',
@@ -1715,6 +1736,7 @@ function startTrackPolling() {
                                     'spice music',
                                     'spice listener',
                                     'local profile',
+                                    'sidebar',
                                     'library',
                                     'search',
                                     'profile',
@@ -1770,6 +1792,15 @@ function startTrackPolling() {
                             let title = metadataTitle || explicitTitle || lines[0] || '';
                             let artist = metadataArtist || explicitArtist || lines.find((line) => line !== title) || '';
                             let album = metadataAlbum || '';
+                            const hasPlayableMedia = Boolean(media && (
+                                media.currentSrc ||
+                                media.src ||
+                                (Number.isFinite(media.duration) && media.duration > 0)
+                            ));
+                            const hasTrustedMediaSession = Boolean(
+                                metadataTitle &&
+                                !isShellTrackCandidate(metadataTitle, metadataArtist)
+                            );
 
                             const img = player
                                 ? player.querySelector('img[src]')
@@ -1782,7 +1813,7 @@ function startTrackPolling() {
                                 title = cleanLine(parts.slice(1).join(' - '));
                             }
 
-                            if (isShellTrackCandidate(title, artist)) {
+                            if (isShellTrackCandidate(title, artist) || (!hasPlayableMedia && !hasTrustedMediaSession)) {
                                 return {
                                     sourceService: 'spice_crazy',
                                     shellOnly: true,
@@ -1811,7 +1842,7 @@ function startTrackPolling() {
                                 album: album,
                                 albumArt: albumArt,
                                 duration: media && Number.isFinite(media.duration) && media.duration > 0 ? media.duration : uiDuration,
-                                paused: media ? media.paused : false,
+                                paused: media ? media.paused : true,
                                 currentTime: media && Number.isFinite(media.currentTime) ? media.currentTime : uiCurrentTime,
                                 listenUrl: listenUrl,
                                 shuffle: false,
