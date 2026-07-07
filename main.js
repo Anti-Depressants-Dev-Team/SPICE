@@ -739,12 +739,22 @@ function supportsInjectedPlayback(serviceKey) {
   );
 }
 
-function clearPlaybackSurfaces(rawData = {}) {
+function resetActiveScrobbleState() {
+  if (!scrobbler) return;
+  scrobbler.currentTrack = null;
+  scrobbler.trackStartTime = null;
+  scrobbler.hasScrobbled = false;
+}
+
+function clearPlaybackSurfaces(rawData = {}, options = {}) {
   lastTrack = null;
   lastPolledTrackKey = null;
   lastScrobbledTrackKey = null;
   lastPolledTime = 0;
   lastInlineLyricsKey = null;
+  if (options.resetScrobbler) {
+    resetActiveScrobbleState();
+  }
   discordRpc.clearPresence();
   miniPlayerServer.updateState({
     track: null,
@@ -2105,7 +2115,7 @@ function startTrackPolling() {
       // This ensures play/pause, shuffle, repeat, and volume stay in sync
       if (!track && rawData) {
         if (rawData.shellOnly || rawData.sourceService === "spice_crazy") {
-          clearPlaybackSurfaces(rawData);
+          clearPlaybackSurfaces(rawData, { resetScrobbler: true });
         } else {
           miniPlayerServer.updateState({
             paused: rawData.paused,
