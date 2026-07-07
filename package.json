@@ -1,6 +1,6 @@
 {
   "name": "spice",
-  "version": "1.4.16",
+  "version": "1.4.17",
   "description": "",
   "main": "main.js",
   "scripts": {
@@ -36,6 +36,7 @@
     ],
     "appId": "com.spice.app",
     "productName": "Spice",
+    "artifactName": "Spice-Setup-${version}.${ext}",
     "win": {
       "target": "nsis",
       "icon": "icon.png"
