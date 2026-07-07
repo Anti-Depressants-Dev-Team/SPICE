@@ -1,5 +1,12 @@
 # SPICE Walkthrough
 
+## v1.0.119
+
+- [Spice.Music main] Expand the VK compact player bar closer to the window edges so it uses the available desktop width.
+- [Spice.Music main] Keep Spice Connect receiver menus opening downward when the player bar is docked to the top of the app.
+- [Spice.Music main] Make song share dialogs copy the upstream provider URL first, falling back to a SPICE deep link when a track has no provider URL or only a legacy SoundCloud-prefixed id.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.119`.
+
 ## v1.0.118
 
 - [Spice.Music main] Compact the VK player bar, keep its volume slider visible at wrapper-sized desktop widths, and square off the search bar corners.

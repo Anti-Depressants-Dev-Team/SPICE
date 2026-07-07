@@ -2138,9 +2138,10 @@ h4 { font-size: 1rem; }
 }
 
 .player-style--vk .now-playing {
-  width: min(1120px, calc(100% - 28px));
+  width: calc(100% - 16px);
   min-height: 64px;
-  margin: 0 auto 6px;
+  max-width: none;
+  margin: 0 8px 6px;
   border: 1px solid rgba(var(--accent-pink-rgb, 236, 72, 153), 0.22);
   border-radius: 22px;
   grid-template-columns: minmax(158px, auto) minmax(0, 1fr) minmax(212px, auto);

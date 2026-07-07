@@ -911,6 +911,7 @@ const profileArtistName = (track: Track) =>
 
 const profileOriginUrl = (track: Track) => {
   if (track.permalinkUrl) return track.permalinkUrl;
+  if (isSoundCloudTrack(track)) return undefined;
   if (track.sourceId === 'youtube_video') return `https://www.youtube.com/watch?v=${track.id}`;
   if (track.sourceId === 'youtube_music' || !track.sourceId) return `https://music.youtube.com/watch?v=${track.id}`;
   return undefined;
@@ -1434,7 +1435,7 @@ export default function SpiceApp() {
       return;
     }
 
-    setSongShareDialog({ track, shareUrl: buildSongShareUrl(track) });
+    setSongShareDialog({ track, shareUrl: profileOriginUrl(track) || buildSongShareUrl(track) });
   }, [showSpiceNotice]);
 
   const copySongShareLink = useCallback(async () => {
@@ -7329,6 +7330,10 @@ const getMaskedEmail = (email: string) => {
         }
         .main {
           grid-row: 2 / 3 !important;
+        }
+        .now-playing .spice-connect-receiver__menu {
+          top: calc(100% + 10px) !important;
+          bottom: auto !important;
         }
       `;
     }
