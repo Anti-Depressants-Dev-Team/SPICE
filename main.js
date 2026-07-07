@@ -78,6 +78,12 @@ let currentVolume = 1.0; // Volume gain value (0.0 - 10.0), shared across scopes
 let currentBoostEnabled = false;
 let spiceRuntimeManager = null;
 let applyVolumeToActiveView = () => {};
+let updateInstallInProgress = false;
+let updateInstallCleanupPromise = null;
+let updateInstallCleanupCompleted = false;
+let downloadedUpdateInfo = null;
+let updateInstallPromptActive = false;
+let skipDownloadedUpdateOnClose = false;
 
 const APP_NATIVE_MODE =
   process.env.SPICE_NATIVE_APP === "1" ||
@@ -295,6 +301,15 @@ async function resolveServiceUrl(serviceKey) {
   if (serviceKey !== "spice_crazy") return SERVICES[serviceKey];
   if (await isLocalSpiceRuntimeReady()) return SPICE_LOCAL_RUNTIME_URL;
 
+  if (APP_NATIVE_MODE && spiceRuntimeManager) {
+    try {
+      await ensureNativeRuntimeReady();
+      return SPICE_LOCAL_RUNTIME_URL;
+    } catch (error) {
+      console.warn("Native runtime prepare failed before loading SPICE Music:", error && error.message);
+    }
+  }
+
   if (spiceRuntimeManager) {
     const status = await spiceRuntimeManager.getStatus();
 
@@ -497,6 +512,43 @@ function createWindow() {
     }
   });
 
+  mainWindow.on("close", async (event) => {
+    if (
+      !downloadedUpdateInfo ||
+      !app.isPackaged ||
+      updateInstallInProgress ||
+      skipDownloadedUpdateOnClose
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    if (updateInstallPromptActive) return;
+
+    updateInstallPromptActive = true;
+    try {
+      const result = await dialog.showMessageBox(mainWindow, {
+        type: "info",
+        buttons: ["Install update", "Quit without installing", "Cancel"],
+        defaultId: 0,
+        cancelId: 2,
+        title: "SPICE update ready",
+        message: "A downloaded SPICE update is ready to install.",
+        detail:
+          "Install it now to start the new version, or quit without installing if you want to keep this build for now.",
+      });
+
+      if (result.response === 0) {
+        await installDownloadedUpdate();
+      } else if (result.response === 1) {
+        skipDownloadedUpdateOnClose = true;
+        mainWindow.close();
+      }
+    } finally {
+      updateInstallPromptActive = false;
+    }
+  });
+
   // Handle Main Window Close - Ensure App Quits
   mainWindow.on("closed", () => {
     mainWindow = null;
@@ -514,7 +566,9 @@ function createWindow() {
       discordRpc.disconnect();
     }
     // Force quit to ensure no background processes remain
-    app.quit();
+    if (!updateInstallInProgress) {
+      app.quit();
+    }
   });
 }
 
@@ -685,15 +739,37 @@ function supportsInjectedPlayback(serviceKey) {
   );
 }
 
-function resetTrackedPlayback() {
-  stopTrackPolling();
+function resetActiveScrobbleState() {
+  if (!scrobbler) return;
+  scrobbler.currentTrack = null;
+  scrobbler.trackStartTime = null;
+  scrobbler.hasScrobbled = false;
+}
+
+function clearPlaybackSurfaces(rawData = {}, options = {}) {
   lastTrack = null;
+  lastPolledTrackKey = null;
+  lastScrobbledTrackKey = null;
+  lastPolledTime = 0;
   lastInlineLyricsKey = null;
+  if (options.resetScrobbler) {
+    resetActiveScrobbleState();
+  }
   discordRpc.clearPresence();
   miniPlayerServer.updateState({
     track: null,
     currentTime: 0,
     paused: true,
+    volume: currentVolume,
+    shuffle: rawData.shuffle || false,
+    repeat: rawData.repeat || "off",
+    likeStatus: false,
+  });
+}
+
+function resetTrackedPlayback() {
+  stopTrackPolling();
+  clearPlaybackSurfaces({
     shuffle: false,
     repeat: "off",
   });
@@ -719,6 +795,93 @@ function markSpiceNativePlaybackIntent(reason = "shell") {
       `,
     )
     .catch(() => {});
+}
+
+async function prepareForUpdateInstall() {
+  if (updateInstallCleanupPromise) return updateInstallCleanupPromise;
+
+  updateInstallInProgress = true;
+  updateInstallCleanupCompleted = false;
+  updateInstallCleanupPromise = (async () => {
+    stopTrackPolling();
+    clearPlaybackSurfaces();
+
+    if (mainWindow && view) {
+      try {
+        mainWindow.setBrowserView(null);
+      } catch (_) {}
+    }
+
+    if (view && view.webContents && !view.webContents.isDestroyed()) {
+      try {
+        view.webContents.destroy();
+      } catch (_) {}
+    }
+    view = null;
+
+    for (const childWindow of [lyricsWindow, miniPlayerWindow, settingsWindow, toolbarSettingsWindow]) {
+      if (childWindow && !childWindow.isDestroyed()) {
+        try {
+          childWindow.close();
+        } catch (_) {}
+      }
+    }
+
+    if (spiceRuntimeManager) {
+      try {
+        await spiceRuntimeManager.stop();
+      } catch (_) {}
+    }
+
+    if (discordRpc) {
+      try {
+        discordRpc.disconnect();
+      } catch (_) {}
+    }
+
+    updateInstallCleanupCompleted = true;
+  })();
+
+  return updateInstallCleanupPromise;
+}
+
+async function installDownloadedUpdate() {
+  if (!app.isPackaged || updateInstallInProgress) return;
+  try {
+    await prepareForUpdateInstall();
+  } catch (error) {
+    console.error("Failed to prepare for update install:", error);
+  }
+  autoUpdater.quitAndInstall(false, true);
+}
+
+async function promptForDownloadedUpdate(info) {
+  if (!app.isPackaged || updateInstallInProgress || updateInstallPromptActive) return;
+  const parentWindow = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+
+  updateInstallPromptActive = true;
+  try {
+    const version = info && info.version ? ` ${info.version}` : "";
+    const options = {
+      type: "info",
+      buttons: ["Restart and install", "Later"],
+      defaultId: 0,
+      cancelId: 1,
+      title: "SPICE update ready",
+      message: `SPICE update${version} is ready to install.`,
+      detail:
+        "Restart SPICE now to apply it. If you choose Later, SPICE will ask again when you close the app.",
+    };
+    const result = parentWindow
+      ? await dialog.showMessageBox(parentWindow, options)
+      : await dialog.showMessageBox(options);
+
+    if (result.response === 0) {
+      await installDownloadedUpdate();
+    }
+  } finally {
+    updateInstallPromptActive = false;
+  }
 }
 
 // Send VK track info to the main window's renderer (for the app-frame player bar)
@@ -1224,6 +1387,7 @@ function goHome() {
 // This bypasses the broken preload IPC by polling directly from main
 let trackPollingInterval = null;
 let lastPolledTrackKey = null;
+let lastScrobbledTrackKey = null;
 let lastPolledTime = 0;
 
 let queuePollingInterval = null;
@@ -1511,6 +1675,47 @@ function startTrackPolling() {
                                 ].includes(text);
                             }
 
+                            function firstText(selector) {
+                                const element = document.querySelector(selector);
+                                return cleanLine(element && element.textContent);
+                            }
+
+                            function isShellTrackCandidate(songTitle, songArtist) {
+                                const titleText = normalize(songTitle);
+                                const artistText = normalize(songArtist);
+                                const hardShellTitles = [
+                                    'select a track to play',
+                                    'spice player'
+                                ];
+                                const uiTitles = [
+                                    'spice',
+                                    'spice music',
+                                    'search',
+                                    'library',
+                                    'profile',
+                                    'settings',
+                                    'home',
+                                    'local profile',
+                                    'spice listener'
+                                ];
+                                const shellArtists = [
+                                    '',
+                                    'spice player',
+                                    'spice',
+                                    'spice music',
+                                    'spice listener',
+                                    'local profile',
+                                    'library',
+                                    'search',
+                                    'profile',
+                                    'settings',
+                                    'home',
+                                    'hybrid'
+                                ];
+                                if (!titleText || hardShellTitles.includes(titleText)) return true;
+                                return uiTitles.includes(titleText) && shellArtists.includes(artistText);
+                            }
+
                             function bottomDistance(el) {
                                 const rect = el.getBoundingClientRect();
                                 return Math.abs(window.innerHeight - rect.bottom);
@@ -1549,8 +1754,11 @@ function startTrackPolling() {
                                 ? mediaSession.artwork[mediaSession.artwork.length - 1].src
                                 : '';
 
-                            let title = metadataTitle || lines[0] || '';
-                            let artist = metadataArtist || lines.find((line) => line !== title) || '';
+                            const explicitTitle = firstText('.now-playing__title, .mini-player__title, [data-now-playing-title]');
+                            const explicitArtist = firstText('.now-playing__artist, .mini-player__artist, [data-now-playing-artist]');
+
+                            let title = metadataTitle || explicitTitle || lines[0] || '';
+                            let artist = metadataArtist || explicitArtist || lines.find((line) => line !== title) || '';
                             let album = metadataAlbum || '';
 
                             const img = player
@@ -1562,6 +1770,25 @@ function startTrackPolling() {
                                 const parts = title.split(' - ');
                                 artist = cleanLine(parts[0]);
                                 title = cleanLine(parts.slice(1).join(' - '));
+                            }
+
+                            if (isShellTrackCandidate(title, artist)) {
+                                return {
+                                    sourceService: 'spice_crazy',
+                                    shellOnly: true,
+                                    title: '',
+                                    artist: '',
+                                    album: '',
+                                    albumArt: '',
+                                    duration: media && Number.isFinite(media.duration) && media.duration > 0 ? media.duration : uiDuration,
+                                    paused: true,
+                                    currentTime: media && Number.isFinite(media.currentTime) ? media.currentTime : uiCurrentTime,
+                                    listenUrl: '',
+                                    shuffle: false,
+                                    repeat: 'off',
+                                    likeStatus: false,
+                                    repeatDebug: ''
+                                };
                             }
 
                             const listenUrl = buildListenUrl(title, artist, player);
@@ -1696,6 +1923,8 @@ function startTrackPolling() {
           likeStatus: false,
           repeatDebug: "",
         };
+      } else if (rawData && rawData.sourceService === "spice_crazy") {
+        track = null;
       } else if (rawData && rawData.rawText) {
         const lines = rawData.rawText.split("\n");
         let title = rawData.title || (lines.length > 1 ? lines[1].trim() : "");
@@ -1802,8 +2031,10 @@ function startTrackPolling() {
         // Update lastPolledTime
         lastPolledTime = currentTime;
 
+        const trackChangedOrRepeated = trackKey !== lastPolledTrackKey || isRepeat;
+
         // Update components on track change OR repeat
-        if (trackKey !== lastPolledTrackKey || isRepeat) {
+        if (trackChangedOrRepeated) {
           lastPolledTrackKey = trackKey;
           console.log(
             "[Main] TRACK POLLED:",
@@ -1820,12 +2051,6 @@ function startTrackPolling() {
             lastTrack.artwork = track.albumArt;
           }
 
-          // Update Scrobbler
-          console.log("[Main Poll] Updating scrobbler...");
-          if (scrobbler) {
-            scrobbler.updateNowPlaying(track);
-          }
-
           // Update Lyrics Window
           console.log("[Main Poll] Updating Lyrics Window...");
           if (lyricsWindow) {
@@ -1833,6 +2058,12 @@ function startTrackPolling() {
           }
 
           injectInlineLyrics(track);
+        }
+
+        if (scrobbler && !track.paused && (trackChangedOrRepeated || trackKey !== lastScrobbledTrackKey)) {
+          console.log("[Main Poll] Updating scrobbler...");
+          scrobbler.updateNowPlaying(track);
+          lastScrobbledTrackKey = trackKey;
         }
 
         // ALWAYS update Mini Player and Discord (for progress/time sync)
@@ -1883,12 +2114,16 @@ function startTrackPolling() {
       // ALWAYS send basic playback state to mini player, even when track is null
       // This ensures play/pause, shuffle, repeat, and volume stay in sync
       if (!track && rawData) {
-        miniPlayerServer.updateState({
-          paused: rawData.paused,
-          volume: currentVolume,
-          shuffle: rawData.shuffle || false,
-          repeat: rawData.repeat || "off",
-        });
+        if (rawData.shellOnly || rawData.sourceService === "spice_crazy") {
+          clearPlaybackSurfaces(rawData, { resetScrobbler: true });
+        } else {
+          miniPlayerServer.updateState({
+            paused: rawData.paused,
+            volume: currentVolume,
+            shuffle: rawData.shuffle || false,
+            repeat: rawData.repeat || "off",
+          });
+        }
       }
     } catch (e) {
       console.log("[Main Poll] Error:", e.message);
@@ -1906,6 +2141,7 @@ function stopTrackPolling() {
     queuePollingInterval = null;
   }
   lastPolledTrackKey = null;
+  lastScrobbledTrackKey = null;
 }
 // ============== END TRACK POLLING ==============
 
@@ -2634,6 +2870,7 @@ app.whenReady().then(async () => {
   // Initialize Auto Updater
   autoUpdater.channel = UPDATE_CHANNEL;
   autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.on("checking-for-update", () => {
     if (mainWindow) mainWindow.webContents.send("update-status", { status: "checking" });
   });
@@ -2650,7 +2887,27 @@ app.whenReady().then(async () => {
     if (mainWindow) mainWindow.webContents.send("update-status", { status: "downloading", progress: progressObj });
   });
   autoUpdater.on("update-downloaded", (info) => {
+    downloadedUpdateInfo = info;
+    skipDownloadedUpdateOnClose = false;
     if (mainWindow) mainWindow.webContents.send("update-status", { status: "downloaded", info });
+    setTimeout(() => {
+      promptForDownloadedUpdate(info).catch((error) => {
+        console.error("Failed to prompt for downloaded update:", error);
+      });
+    }, 250);
+  });
+  autoUpdater.on("before-quit-for-update", () => {
+    updateInstallInProgress = true;
+    if (!updateInstallCleanupCompleted) {
+      console.warn("Updater quit started before cleanup completed; running synchronous cleanup fallback.");
+      stopTrackPolling();
+      clearPlaybackSurfaces();
+      if (discordRpc) {
+        try {
+          discordRpc.disconnect();
+        } catch (_) {}
+      }
+    }
   });
 
   // Automatically check on startup
@@ -2818,9 +3075,9 @@ app.whenReady().then(async () => {
     }
   });
 
-  ipcMain.on("install-update", () => {
+  ipcMain.on("install-update", async () => {
     if (!app.isPackaged) return;
-    autoUpdater.quitAndInstall(false, true);
+    await installDownloadedUpdate();
   });
 
   ipcMain.handle("spice-runtime-status", async () => {
@@ -3378,6 +3635,9 @@ app.whenReady().then(async () => {
   });
 
   ipcMain.on("spice-audio-state-changed", (event, state) => {
+    if (currentService === "spice_crazy" && !(state && state.desktopReady)) {
+      return;
+    }
     const volume = Number(state && state.volume);
     if (Number.isFinite(volume)) {
       currentVolume = Math.max(0, Math.min(10, volume / 100));
