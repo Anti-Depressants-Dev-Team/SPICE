@@ -81,6 +81,9 @@ let applyVolumeToActiveView = () => {};
 let updateInstallInProgress = false;
 let updateInstallCleanupPromise = null;
 let updateInstallCleanupCompleted = false;
+let downloadedUpdateInfo = null;
+let updateInstallPromptActive = false;
+let skipDownloadedUpdateOnClose = false;
 
 const APP_NATIVE_MODE =
   process.env.SPICE_NATIVE_APP === "1" ||
@@ -509,6 +512,43 @@ function createWindow() {
     }
   });
 
+  mainWindow.on("close", async (event) => {
+    if (
+      !downloadedUpdateInfo ||
+      !app.isPackaged ||
+      updateInstallInProgress ||
+      skipDownloadedUpdateOnClose
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    if (updateInstallPromptActive) return;
+
+    updateInstallPromptActive = true;
+    try {
+      const result = await dialog.showMessageBox(mainWindow, {
+        type: "info",
+        buttons: ["Install update", "Quit without installing", "Cancel"],
+        defaultId: 0,
+        cancelId: 2,
+        title: "SPICE update ready",
+        message: "A downloaded SPICE update is ready to install.",
+        detail:
+          "Install it now to start the new version, or quit without installing if you want to keep this build for now.",
+      });
+
+      if (result.response === 0) {
+        await installDownloadedUpdate();
+      } else if (result.response === 1) {
+        skipDownloadedUpdateOnClose = true;
+        mainWindow.close();
+      }
+    } finally {
+      updateInstallPromptActive = false;
+    }
+  });
+
   // Handle Main Window Close - Ensure App Quits
   mainWindow.on("closed", () => {
     mainWindow = null;
@@ -793,6 +833,45 @@ async function prepareForUpdateInstall() {
   })();
 
   return updateInstallCleanupPromise;
+}
+
+async function installDownloadedUpdate() {
+  if (!app.isPackaged || updateInstallInProgress) return;
+  try {
+    await prepareForUpdateInstall();
+  } catch (error) {
+    console.error("Failed to prepare for update install:", error);
+  }
+  autoUpdater.quitAndInstall(false, true);
+}
+
+async function promptForDownloadedUpdate(info) {
+  if (!app.isPackaged || updateInstallInProgress || updateInstallPromptActive) return;
+  const parentWindow = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+
+  updateInstallPromptActive = true;
+  try {
+    const version = info && info.version ? ` ${info.version}` : "";
+    const options = {
+      type: "info",
+      buttons: ["Restart and install", "Later"],
+      defaultId: 0,
+      cancelId: 1,
+      title: "SPICE update ready",
+      message: `SPICE update${version} is ready to install.`,
+      detail:
+        "Restart SPICE now to apply it. If you choose Later, SPICE will ask again when you close the app.",
+    };
+    const result = parentWindow
+      ? await dialog.showMessageBox(parentWindow, options)
+      : await dialog.showMessageBox(options);
+
+    if (result.response === 0) {
+      await installDownloadedUpdate();
+    }
+  } finally {
+    updateInstallPromptActive = false;
+  }
 }
 
 // Send VK track info to the main window's renderer (for the app-frame player bar)
@@ -2798,7 +2877,14 @@ app.whenReady().then(async () => {
     if (mainWindow) mainWindow.webContents.send("update-status", { status: "downloading", progress: progressObj });
   });
   autoUpdater.on("update-downloaded", (info) => {
+    downloadedUpdateInfo = info;
+    skipDownloadedUpdateOnClose = false;
     if (mainWindow) mainWindow.webContents.send("update-status", { status: "downloaded", info });
+    setTimeout(() => {
+      promptForDownloadedUpdate(info).catch((error) => {
+        console.error("Failed to prompt for downloaded update:", error);
+      });
+    }, 250);
   });
   autoUpdater.on("before-quit-for-update", () => {
     updateInstallInProgress = true;
@@ -2981,12 +3067,7 @@ app.whenReady().then(async () => {
 
   ipcMain.on("install-update", async () => {
     if (!app.isPackaged) return;
-    try {
-      await prepareForUpdateInstall();
-    } catch (error) {
-      console.error("Failed to prepare for update install:", error);
-    }
-    autoUpdater.quitAndInstall(false, true);
+    await installDownloadedUpdate();
   });
 
   ipcMain.handle("spice-runtime-status", async () => {
