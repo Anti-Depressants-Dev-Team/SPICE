@@ -9,6 +9,7 @@ Thumbs.db
 
 # Build artifacts
 dist/
+dist-native/
 release/
 build/
 out/

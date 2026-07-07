@@ -36,6 +36,7 @@
     ],
     "appId": "com.spice.app",
     "productName": "Spice",
+    "artifactName": "Spice-Setup-${version}.${ext}",
     "win": {
       "target": "nsis",
       "icon": "icon.png"
