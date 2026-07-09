@@ -2097,6 +2097,8 @@ private fun RemoteDevice.toPlayerUiState(): PlayerUiState = PlayerUiState(
     isPlaying = isPlaying,
     positionMs = progressMs,
     durationMs = durationMs,
+    shuffleEnabled = shuffleEnabled,
+    repeatMode = repeatMode,
 )
 
 @Composable
@@ -2165,26 +2167,18 @@ private fun MiniPlayer(
                     onSelected = onDeviceSelected,
                     modifier = Modifier.size(34.dp),
                 )
-                IconButton(onClick = onShuffle, enabled = !remotePlayback, modifier = Modifier.size(34.dp)) {
+                IconButton(onClick = onShuffle, modifier = Modifier.size(34.dp)) {
                     Icon(
                         Icons.Rounded.Shuffle,
                         "Shuffle",
-                        tint = when {
-                            remotePlayback -> SpiceTextMuted
-                            player.shuffleEnabled -> MaterialTheme.colorScheme.primary
-                            else -> Color.White
-                        },
+                        tint = if (player.shuffleEnabled) MaterialTheme.colorScheme.primary else Color.White,
                     )
                 }
-                IconButton(onClick = onRepeat, enabled = !remotePlayback, modifier = Modifier.size(34.dp)) {
+                IconButton(onClick = onRepeat, modifier = Modifier.size(34.dp)) {
                     Icon(
                         if (player.repeatMode == RepeatMode.One) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
                         "Repeat",
-                        tint = when {
-                            remotePlayback -> SpiceTextMuted
-                            player.repeatMode != RepeatMode.Off -> MaterialTheme.colorScheme.primary
-                            else -> Color.White
-                        },
+                        tint = if (player.repeatMode != RepeatMode.Off) MaterialTheme.colorScheme.primary else Color.White,
                     )
                 }
                 if (resolving || player.isBuffering) {
@@ -2332,15 +2326,11 @@ private fun FullPlayer(
                 Text(formatTime(player.durationMs), color = SpiceTextMuted, fontSize = 12.sp)
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                IconButton(onClick = onShuffle, enabled = !remotePlayback) {
+                IconButton(onClick = onShuffle) {
                     Icon(
                         Icons.Rounded.Shuffle,
                         "Shuffle",
-                        tint = when {
-                            remotePlayback -> SpiceTextMuted
-                            player.shuffleEnabled -> MaterialTheme.colorScheme.primary
-                            else -> Color.White
-                        },
+                        tint = if (player.shuffleEnabled) MaterialTheme.colorScheme.primary else Color.White,
                     )
                 }
                 IconButton(onClick = onPrevious) { Icon(Icons.Rounded.SkipPrevious, "Previous track") }
@@ -2348,15 +2338,11 @@ private fun FullPlayer(
                     Icon(if (player.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, "Play or pause", modifier = Modifier.size(34.dp))
                 }
                 IconButton(onClick = onNext) { Icon(Icons.Rounded.SkipNext, "Next track") }
-                IconButton(onClick = onRepeat, enabled = !remotePlayback) {
+                IconButton(onClick = onRepeat) {
                     Icon(
                         if (player.repeatMode == RepeatMode.One) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
                         "Repeat",
-                        tint = when {
-                            remotePlayback -> SpiceTextMuted
-                            player.repeatMode != RepeatMode.Off -> MaterialTheme.colorScheme.primary
-                            else -> Color.White
-                        },
+                        tint = if (player.repeatMode != RepeatMode.Off) MaterialTheme.colorScheme.primary else Color.White,
                     )
                 }
             }

@@ -153,6 +153,8 @@ data class RemoteDevice(
     val queue: List<Track> = emptyList(),
     val queueIndex: Int = 0,
     val isPlaying: Boolean = false,
+    val shuffleEnabled: Boolean = false,
+    val repeatMode: RepeatMode = RepeatMode.Off,
     val progressMs: Long = 0,
     val durationMs: Long = 0,
     val volume: Int = 70,
@@ -166,6 +168,8 @@ data class RemoteCommand(
     val payloadQueue: List<Track> = emptyList(),
     val payloadQueueIndex: Int = 0,
     val seekPositionMs: Long? = null,
+    val shuffleEnabled: Boolean? = null,
+    val repeatMode: RepeatMode? = null,
 )
 
 enum class RepeatMode {

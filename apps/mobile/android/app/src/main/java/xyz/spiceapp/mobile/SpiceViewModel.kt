@@ -340,19 +340,37 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
     fun seekBy(deltaMs: Long) = playerConnection.seekBy(deltaMs)
 
     fun toggleShuffle() {
-        if (activeRemoteTargetId() != null) {
-            _uiState.value = _uiState.value.copy(message = "Shuffle is controlled on the receiving device.")
-        } else {
+        val targetDeviceId = activeRemoteTargetId()
+        if (targetDeviceId == null) {
             playerConnection.toggleShuffle()
+            return
         }
+
+        val device = selectedRemoteDevice()
+        if (device == null) {
+            unavailableRemoteTarget()
+            return
+        }
+        val enabled = !device.shuffleEnabled
+        patchRemoteDevice(targetDeviceId) { it.copy(shuffleEnabled = enabled) }
+        sendRemoteCommand(targetDeviceId, "shuffle", JSONObject().put("enabled", enabled))
     }
 
     fun cycleRepeat() {
-        if (activeRemoteTargetId() != null) {
-            _uiState.value = _uiState.value.copy(message = "Repeat is controlled on the receiving device.")
-        } else {
+        val targetDeviceId = activeRemoteTargetId()
+        if (targetDeviceId == null) {
             playerConnection.cycleRepeat()
+            return
         }
+
+        val device = selectedRemoteDevice()
+        if (device == null) {
+            unavailableRemoteTarget()
+            return
+        }
+        val mode = device.repeatMode.next()
+        patchRemoteDevice(targetDeviceId) { it.copy(repeatMode = mode) }
+        sendRemoteCommand(targetDeviceId, "repeat", JSONObject().put("mode", mode.remoteValue()))
     }
 
     fun setAccentTheme(theme: AccentTheme) {
@@ -1578,6 +1596,8 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
             displayName = "Spice Android",
             currentTrack = _uiState.value.currentTrack,
             isPlaying = player.isPlaying,
+            shuffleEnabled = player.shuffleEnabled,
+            repeatMode = player.repeatMode,
             progressMs = player.positionMs,
             durationMs = player.durationMs,
             queue = _uiState.value.playbackQueue,
@@ -1594,6 +1614,8 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
                 "next" -> playNextLocally()
                 "previous" -> playPreviousLocally()
                 "seek" -> command.seekPositionMs?.let(playerConnection::seekTo)
+                "shuffle" -> command.shuffleEnabled?.let(playerConnection::setShuffle)
+                "repeat" -> command.repeatMode?.let(playerConnection::setRepeatMode)
                 "play_track" -> command.payloadTrack?.let { track ->
                     val queue = normalizeQueue(command.payloadQueue, track)
                     val requestedIndex = command.payloadQueueIndex.takeIf { it in queue.indices }
@@ -1761,6 +1783,18 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
         mapIndexed { itemIndex, item -> if (itemIndex == index) track else item }
 
     private fun Track.queueKey(): String = "$sourceId:$id"
+
+    private fun RepeatMode.next(): RepeatMode = when (this) {
+        RepeatMode.Off -> RepeatMode.All
+        RepeatMode.All -> RepeatMode.One
+        RepeatMode.One -> RepeatMode.Off
+    }
+
+    private fun RepeatMode.remoteValue(): String = when (this) {
+        RepeatMode.Off -> "none"
+        RepeatMode.All -> "all"
+        RepeatMode.One -> "one"
+    }
 
     override fun onCleared() {
         playJob?.cancel()
