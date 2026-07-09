@@ -1,5 +1,9 @@
 # SPICE Walkthrough
 
+## v1.0.121
+
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.121`.
+
 ## v1.0.120
 
 - [Spice.Music main] Extend Spice Connect device presence with persisted shuffle and repeat state.
