@@ -1,14 +1,19 @@
 const { build: baseBuild } = require("./package.json");
 
+const NATIVE_UPDATE_CHANNEL = "native";
+const NATIVE_UPDATER_CACHE = "spice-native-updater";
+
 const nativePublish = Array.isArray(baseBuild.publish)
   ? baseBuild.publish.map((publisher) => ({
       ...publisher,
-      channel: "native",
+      channel: NATIVE_UPDATE_CHANNEL,
+      updaterCacheDirName: NATIVE_UPDATER_CACHE,
     }))
   : baseBuild.publish && typeof baseBuild.publish === "object"
     ? {
         ...baseBuild.publish,
-        channel: "native",
+        channel: NATIVE_UPDATE_CHANNEL,
+        updaterCacheDirName: NATIVE_UPDATER_CACHE,
       }
     : baseBuild.publish;
 
