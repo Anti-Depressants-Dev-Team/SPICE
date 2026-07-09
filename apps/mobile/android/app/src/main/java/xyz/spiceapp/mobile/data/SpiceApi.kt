@@ -23,6 +23,7 @@ import xyz.spiceapp.mobile.model.ProfileStats
 import xyz.spiceapp.mobile.model.ProfileSummary
 import xyz.spiceapp.mobile.model.RemoteCommand
 import xyz.spiceapp.mobile.model.RemoteDevice
+import xyz.spiceapp.mobile.model.RepeatMode
 import xyz.spiceapp.mobile.model.ResolvedStream
 import xyz.spiceapp.mobile.model.SharedPlaylistTrack
 import xyz.spiceapp.mobile.model.SharedPlaylistTracks
@@ -251,6 +252,8 @@ class SpiceApi(
         displayName: String,
         currentTrack: Track?,
         isPlaying: Boolean,
+        shuffleEnabled: Boolean = false,
+        repeatMode: RepeatMode = RepeatMode.Off,
         progressMs: Long,
         durationMs: Long,
         volume: Int = 70,
@@ -266,6 +269,8 @@ class SpiceApi(
                 .put("queue", JSONArray(queue.map { it.toRemoteTrackJson() }))
                 .put("queueIndex", queueIndex.coerceIn(0, queue.lastIndex.coerceAtLeast(0)))
                 .put("isPlaying", isPlaying)
+                .put("shuffleEnabled", shuffleEnabled)
+                .put("repeatMode", repeatMode.toRemoteValue())
                 .put("progress", progressMs.coerceAtLeast(0) / 1000.0)
                 .put("duration", durationMs.coerceAtLeast(0) / 1000.0)
                 .put("volume", volume.coerceIn(0, 100)),
@@ -937,6 +942,8 @@ internal fun parseRemoteDevices(payload: JSONObject): List<RemoteDevice> {
                     queue = parseRemoteTracks(item.optJSONArray("queue")),
                     queueIndex = item.optInt("queueIndex", 0).coerceAtLeast(0),
                     isPlaying = item.optBoolean("isPlaying", false),
+                    shuffleEnabled = item.optBoolean("shuffleEnabled", false),
+                    repeatMode = parseRemoteRepeatMode(item.optString("repeatMode")),
                     progressMs = (item.optDouble("progress", 0.0) * 1000).toLong().coerceAtLeast(0),
                     durationMs = (item.optDouble("duration", 0.0) * 1000).toLong().coerceAtLeast(0),
                     volume = item.optInt("volume", 70).coerceIn(0, 100),
@@ -969,9 +976,36 @@ internal fun parseRemoteCommands(payload: JSONObject): List<RemoteCommand> {
                 commandPayload.has("position") -> (commandPayload.optDouble("position", 0.0) * 1000).toLong().coerceAtLeast(0)
                 else -> null
             }
-            add(RemoteCommand(id, command, payloadTrack, payloadQueue, payloadQueueIndex, seekPositionMs))
+            val shuffleEnabled = commandPayload.optBoolean("enabled").takeIf { commandPayload.has("enabled") }
+            val repeatMode = parseRemoteRepeatMode(commandPayload.optString("mode")).takeIf {
+                commandPayload.has("mode")
+            }
+            add(
+                RemoteCommand(
+                    id = id,
+                    command = command,
+                    payloadTrack = payloadTrack,
+                    payloadQueue = payloadQueue,
+                    payloadQueueIndex = payloadQueueIndex,
+                    seekPositionMs = seekPositionMs,
+                    shuffleEnabled = shuffleEnabled,
+                    repeatMode = repeatMode,
+                ),
+            )
         }
     }
+}
+
+internal fun parseRemoteRepeatMode(value: String): RepeatMode = when (value.trim().lowercase()) {
+    "all" -> RepeatMode.All
+    "one" -> RepeatMode.One
+    else -> RepeatMode.Off
+}
+
+internal fun RepeatMode.toRemoteValue(): String = when (this) {
+    RepeatMode.Off -> "none"
+    RepeatMode.All -> "all"
+    RepeatMode.One -> "one"
 }
 
 private fun parseRemoteTracks(payload: JSONArray?): List<Track> {

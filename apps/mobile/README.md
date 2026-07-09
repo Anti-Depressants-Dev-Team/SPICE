@@ -25,7 +25,7 @@ Native Android preview for Spice Music, built with Jetpack Compose and Media3.
 - Downloads library tab with completed download history, open/share/remove actions, and active download cancellation
 - Compact full-player download action with progress and cancellation for explicit audio downloads
 - Lyrics sheet using LRCLIB-style lookup for the current track
-- Compact Spice Connect receiver menus in both players, with local/remote track state and transport routing
+- Compact Spice Connect receiver menus in both players, with local/remote track, shuffle, repeat, and transport routing
 - Settings Terms and Licenses tabs for native resolver and download dependencies
 - Media3/ExoPlayer playback service with Android media session and notification
 - Lock-screen controls, audio focus, headset/Bluetooth commands, noisy-output pause, and background playback
@@ -153,6 +153,6 @@ NewPipe Extractor and youtubedl-android are GPL-3.0-family dependencies, with FF
 
 ## Release Status
 
-Version 1.0.4 is a private sideload release target. No public store release is planned. The APK is installable and the native media stack is wired for direct SoundCloud, NewPipe-resolved YouTube, queue playback with next/previous, shuffle and repeat-all auto-advance, explicit downloads, account sync, profile stats, notifications, invite acceptance, member management, shared playlist editing, lyrics, player-integrated Spice Connect, and local-runtime fallback streams.
+Version 1.0.5 is a private sideload release target. No public store release is planned. The APK is installable and the native media stack is wired for direct SoundCloud, NewPipe-resolved YouTube, queue playback with next/previous, shuffle and repeat-all auto-advance, explicit downloads, account sync, profile stats, notifications, invite acceptance, member management, shared playlist editing, lyrics, player-integrated Spice Connect playback modes, and local-runtime fallback streams.
 
 Remaining QA is device-side: playback, downloads, share intents, invite links, member management, shared editing, lyrics, Spice Connect command flow, and resolver stability on the target phones.
