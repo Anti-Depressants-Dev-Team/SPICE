@@ -1,6 +1,6 @@
 {
   "name": "spice",
-  "version": "1.4.21",
+  "version": "1.4.22",
   "description": "",
   "main": "main.js",
   "scripts": {
@@ -11,7 +11,7 @@
     "dist": "electron-builder",
     "native:prepare-runtime": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-native-runtime.ps1",
     "dist:native": "npm run native:prepare-runtime && electron-builder --win --config electron-builder.native.cjs",
-    "test": "node --test test/lyrics-core.test.js test/runtime-manager.test.js",
+    "test": "node --test test/lyrics-core.test.js test/runtime-manager.test.js test/native-release-config.test.js",
     "mobile:test": "npm --prefix apps/mobile test",
     "mobile:build": "npm --prefix apps/mobile run android:debug",
     "mobile:android:debug": "npm --prefix apps/mobile run android:debug",
