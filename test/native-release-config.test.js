@@ -1,7 +1,14 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
+const { build: wrapperConfig } = require("../package.json");
 const nativeConfig = require("../electron-builder.native.cjs");
+
+test("wrapper Linux releases include a Fedora RPM distinct from Native", () => {
+  assert.deepEqual(wrapperConfig.linux.target, ["AppImage", "flatpak", "deb", "rpm", "tar.gz"]);
+  assert.equal(wrapperConfig.rpm.packageName, "spice");
+  assert.equal(nativeConfig.rpm.packageName, "spice-native");
+});
 
 test("native releases use an isolated update channel and cache", () => {
   const publishers = Array.isArray(nativeConfig.publish)

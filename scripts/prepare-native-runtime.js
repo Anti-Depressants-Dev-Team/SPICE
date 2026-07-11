@@ -4,7 +4,7 @@ const path = require("path");
 const { spawnSync } = require("child_process");
 const { Readable } = require("stream");
 const { pipeline } = require("stream/promises");
-const extractZip = require("extract-zip");
+const { extractRuntimeArchive } = require("../runtime-archive");
 
 const repoRoot = path.resolve(__dirname, "..");
 const platform = process.env.SPICE_NATIVE_TARGET_PLATFORM || process.platform;
@@ -77,7 +77,7 @@ async function installReleaseRuntime() {
     if (!response.body) throw new Error("Runtime download returned an empty response body.");
     await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(archive));
     fs.mkdirSync(expanded, { recursive: true });
-    await extractZip(archive, { dir: expanded });
+    await extractRuntimeArchive(archive, expanded);
     const sourceRuntime = findRuntimeRoot(expanded);
     if (!sourceRuntime) throw new Error(`Downloaded archive did not contain a valid ${runtimeName} runtime.`);
     installPreparedRuntime(sourceRuntime);

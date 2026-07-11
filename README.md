@@ -26,7 +26,7 @@
 ## 🚀 Installation
 
 ### Download
-Grab the latest installer from the [Releases](https://github.com/Anti-Depressants-Dev-Team/spice/releases) page. Native Linux releases include AppImage, `.deb`, Fedora-compatible `.rpm`, and `.tar.gz` bundles.
+Grab the latest installer from the [Releases](https://github.com/Anti-Depressants-Dev-Team/spice/releases) page. Both the classic wrapper and Native Linux releases include AppImage, `.deb`, Fedora-compatible `.rpm`, and `.tar.gz` bundles with distinct package names.
 AppImage builds use the in-app updater. Package-managed `.deb` and `.rpm` installs update by installing the matching package from a newer release.
 
 ### Build from Source

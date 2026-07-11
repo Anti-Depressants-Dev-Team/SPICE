@@ -3,7 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const { spawn } = require("child_process");
 const { pipeline } = require("stream/promises");
-const extractZip = require("extract-zip");
+const { extractRuntimeArchive } = require("./runtime-archive");
 
 const DEFAULT_LOCAL_URL = "http://127.0.0.1:3939/";
 const RUNTIME_PLATFORMS = {
@@ -218,7 +218,7 @@ class SpiceLocalRuntimeManager {
 
       this.message = "Extracting SPICE local runtime...";
       this.emitStatus();
-      await expandZip(zipPath, stagingDir);
+      await extractRuntimeArchive(zipPath, stagingDir);
 
       await this.stop();
       fs.mkdirSync(this.rootDir, { recursive: true });
@@ -456,10 +456,6 @@ function sha256File(filePath) {
     stream.on("error", reject);
     stream.on("end", () => resolve(hash.digest("hex")));
   });
-}
-
-function expandZip(zipPath, destinationPath) {
-  return extractZip(zipPath, { dir: path.resolve(destinationPath) });
 }
 
 function killProcessTree(pid, platform = process.platform) {
