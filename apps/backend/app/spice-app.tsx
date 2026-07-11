@@ -26,7 +26,7 @@ import {
 } from './recommendations';
 import { isSpiceConnectCommandFresh, SPICE_CONNECT_COMMAND_TTL_MS } from '@/lib/spice-connect';
 import { SPICE_MEDIA_CORE_VERSION, RELEASE_NOTIFICATION_STORAGE_KEY, type ReleaseNotification } from '@/lib/release-notifications';
-import { readCloudSessionFromStorage } from '@/lib/profile-cloud-session';
+import { isHydratedCloudToken, readCloudSessionFromStorage } from '@/lib/profile-cloud-session';
 import {
   normalizePlayerVolume,
   playerVolumeGain,
@@ -1601,6 +1601,7 @@ export default function SpiceApp() {
   // ── Multi-Profile Accounts Setup ──────────────────────────────────
   const [profiles, setProfiles] = useState<UserProfile[]>([initialDefaultProfile]);
   const [activeProfileId, setActiveProfileId] = useState<string>('default');
+  const [isProfileHydrated, setIsProfileHydrated] = useState(false);
 
   const activeProfile = profiles.find(p => p.id === activeProfileId) || profiles[0] || initialDefaultProfile;
 
@@ -1764,15 +1765,7 @@ export default function SpiceApp() {
   const [newSharedPlDesc, setNewSharedPlDesc] = useState('');
 
   // Cloud Sync & Accounts state
-  const [cloudToken, setCloudToken] = useState<string | null>(() => {
-    if (typeof window !== 'undefined') {
-      return readCloudSessionFromStorage<CloudAccount>(
-        localStorage,
-        localStorage.getItem('spice_active_profile_id') || 'default',
-      ).token;
-    }
-    return null;
-  });
+  const [cloudToken, setCloudToken] = useState<string | null>(null);
   const [cloudUser, setCloudUser] = useState<CloudAccount | null>(() => {
     if (typeof window !== 'undefined') {
       return readCloudSessionFromStorage<CloudAccount>(
@@ -2638,6 +2631,7 @@ export default function SpiceApp() {
           lastUnlockedProfileIdRef.current = activeProf.id;
         }
         setActiveProfileId(activeProf.id);
+        activeProfileIdRef.current = activeProf.id;
         setLikedTracks(new Set(activeProf.likedTracks));
         setLikedTrackDetails(hydratedLikedDetails);
         setCustomPlaylists(hydratedPlaylists);
@@ -2694,6 +2688,7 @@ export default function SpiceApp() {
           }
         }
         logDebug('system', `Loaded active profile "${activeProf.displayName}" successfully. Hydration secured.`);
+        setIsProfileHydrated(true);
       }
     }
   }, []);
@@ -3604,10 +3599,9 @@ export default function SpiceApp() {
 
   // Sync on load or profile switch
   useEffect(() => {
-    if (cloudToken) {
-      syncWithCloud(cloudToken, activeProfileId);
-    }
-  }, [cloudToken, activeProfileId]);
+    if (!isHydratedCloudToken(isProfileHydrated, cloudToken)) return;
+    void syncWithCloud(cloudToken, activeProfileId);
+  }, [cloudToken, activeProfileId, isProfileHydrated]);
 
   const currentTrackKey = playbackTrackKey(currentTrack);
   const setPlaybackPlaying = (nextPlaying: boolean) => {

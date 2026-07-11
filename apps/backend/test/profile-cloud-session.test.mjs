@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { readCloudSessionFromStorage } from '../lib/profile-cloud-session.ts';
+import { isHydratedCloudToken, readCloudSessionFromStorage } from '../lib/profile-cloud-session.ts';
 
 function storage(values) {
   return {
@@ -10,6 +10,12 @@ function storage(values) {
     },
   };
 }
+
+test('cloud tokens cannot start sync before profile hydration completes', () => {
+  assert.equal(isHydratedCloudToken(false, 'native-token'), false);
+  assert.equal(isHydratedCloudToken(true, null), false);
+  assert.equal(isHydratedCloudToken(true, 'native-token'), true);
+});
 
 test('active profile cloud sessions take precedence over the Native fallback', () => {
   const result = readCloudSessionFromStorage(storage({

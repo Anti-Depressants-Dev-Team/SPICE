@@ -1,5 +1,10 @@
 # SPICE Walkthrough
 
+## v1.0.124
+
+- [Spice.Music main] Defer the Native cloud token and automatic Neon sync until the saved active profile has finished hydrating, preventing startup sync from targeting the temporary default profile.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.124`.
+
 ## v1.0.123
 
 - [Spice.Music main] Preserve the Native desktop account session when an existing local profile has no embedded cloud token, restoring Neon-backed sync on Fedora and other fresh Native installs.

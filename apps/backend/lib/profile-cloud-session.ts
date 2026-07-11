@@ -15,6 +15,13 @@ export interface StoredCloudSession<TUser> {
   username: string | null;
 }
 
+export function isHydratedCloudToken(
+  isProfileHydrated: boolean,
+  token: string | null,
+): token is string {
+  return isProfileHydrated && readString(token) !== null;
+}
+
 export function readCloudSessionFromStorage<TUser>(
   storage: StorageReader,
   activeProfileId = 'default',
