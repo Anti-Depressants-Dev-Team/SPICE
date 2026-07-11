@@ -58,7 +58,20 @@ jobs:
         run: pnpm --filter @spice/backend package:local:windows
       - name: zip local runtime
         shell: pwsh
-        run: tar.exe -a -cf apps/backend/dist/spice-local-windows.zip -C apps/backend/dist/spice-local-windows .
+        run: |
+          $packageDir = (Resolve-Path 'apps/backend/dist/spice-local-windows').Path
+          $zipPath = Join-Path (Split-Path $packageDir -Parent) 'spice-local-windows.zip'
+          $entries = @(Get-ChildItem -LiteralPath $packageDir -Force | ForEach-Object { $_.Name })
+          if ($entries.Count -eq 0) { throw 'Local Windows runtime package is empty.' }
+          Push-Location $packageDir
+          try {
+            tar.exe -a -cf $zipPath @entries
+            if ($LASTEXITCODE -ne 0) { throw "tar.exe exited with code $LASTEXITCODE." }
+          } finally {
+            Pop-Location
+          }
+          $archiveEntries = @(tar.exe -tf $zipPath)
+          if ($archiveEntries -contains './') { throw 'Runtime ZIP contains an unsafe root-dot entry.' }
       - name: hash local runtime artifact
         id: package-metadata
         shell: pwsh
@@ -106,7 +119,16 @@ jobs:
       - name: zip local runtime
         run: |
           cd apps/backend/dist/spice-local-linux
-          zip -qr ../spice-local-linux.zip .
+          mapfile -d '' entries < <(find . -mindepth 1 -maxdepth 1 -printf '%f\0')
+          if [ "${#entries[@]}" -eq 0 ]; then
+            echo 'Local Linux runtime package is empty.' >&2
+            exit 1
+          fi
+          zip -qr ../spice-local-linux.zip -- "${entries[@]}"
+          if zipinfo -1 ../spice-local-linux.zip | grep -Fxq './'; then
+            echo 'Runtime ZIP contains an unsafe root-dot entry.' >&2
+            exit 1
+          fi
       - name: hash local runtime artifact
         id: package-metadata
         run: |

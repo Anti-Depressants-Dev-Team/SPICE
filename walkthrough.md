@@ -1,5 +1,11 @@
 # SPICE Walkthrough
 
+## v1.0.123
+
+- [Spice.Music main] Preserve the Native desktop account session when an existing local profile has no embedded cloud token, restoring Neon-backed sync on Fedora and other fresh Native installs.
+- [Spice.Music main] Publish Windows and Linux runtime ZIPs without a synthetic `./` root entry so Windows Native builds and runtime updates can extract them safely.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.123`.
+
 ## v1.0.122
 
 - [Spice.Music main] Make `1000%` Boost apply a real `10x` gain and move boosted YouTube embed playback onto the gain-capable local proxy path.

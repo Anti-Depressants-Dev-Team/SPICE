@@ -26,6 +26,7 @@ import {
 } from './recommendations';
 import { isSpiceConnectCommandFresh, SPICE_CONNECT_COMMAND_TTL_MS } from '@/lib/spice-connect';
 import { SPICE_MEDIA_CORE_VERSION, RELEASE_NOTIFICATION_STORAGE_KEY, type ReleaseNotification } from '@/lib/release-notifications';
+import { readCloudSessionFromStorage } from '@/lib/profile-cloud-session';
 import {
   normalizePlayerVolume,
   playerVolumeGain,
@@ -1714,15 +1715,10 @@ export default function SpiceApp() {
   // Username & Shared Playlist Collaboration state
   const [cloudUsername, setCloudUsername] = useState<string | null>(() => {
     if (typeof window !== 'undefined') {
-      const activeId = localStorage.getItem('spice_active_profile_id') || 'default';
-      const saved = localStorage.getItem('spice_profiles_list');
-      if (saved) {
-        try {
-          const list: UserProfile[] = JSON.parse(saved);
-          const found = list.find(p => p.id === activeId);
-          if (found && found.cloudUsername) return found.cloudUsername;
-        } catch { }
-      }
+      return readCloudSessionFromStorage<CloudAccount>(
+        localStorage,
+        localStorage.getItem('spice_active_profile_id') || 'default',
+      ).username;
     }
     return null;
   });
@@ -1770,34 +1766,19 @@ export default function SpiceApp() {
   // Cloud Sync & Accounts state
   const [cloudToken, setCloudToken] = useState<string | null>(() => {
     if (typeof window !== 'undefined') {
-      const activeId = localStorage.getItem('spice_active_profile_id') || 'default';
-      const saved = localStorage.getItem('spice_profiles_list');
-      if (saved) {
-        try {
-          const list: UserProfile[] = JSON.parse(saved);
-          const found = list.find(p => p.id === activeId);
-          if (found) return found.cloudToken || null;
-        } catch { }
-      }
-      return localStorage.getItem('spice_cloud_token');
+      return readCloudSessionFromStorage<CloudAccount>(
+        localStorage,
+        localStorage.getItem('spice_active_profile_id') || 'default',
+      ).token;
     }
     return null;
   });
   const [cloudUser, setCloudUser] = useState<CloudAccount | null>(() => {
     if (typeof window !== 'undefined') {
-      const activeId = localStorage.getItem('spice_active_profile_id') || 'default';
-      const saved = localStorage.getItem('spice_profiles_list');
-      if (saved) {
-        try {
-          const list: UserProfile[] = JSON.parse(saved);
-          const found = list.find(p => p.id === activeId);
-          if (found) return found.cloudUser || null;
-        } catch { }
-      }
-      const savedUser = localStorage.getItem('spice_cloud_user');
-      if (savedUser) {
-        try { return JSON.parse(savedUser); } catch { return null; }
-      }
+      return readCloudSessionFromStorage<CloudAccount>(
+        localStorage,
+        localStorage.getItem('spice_active_profile_id') || 'default',
+      ).user;
     }
     return null;
   });
@@ -2667,13 +2648,17 @@ export default function SpiceApp() {
         setEditPasscode(activeProf.passcode || '');
         setEditAvatarUrl(activeProf.avatarUrl || '');
 
-        // Restore cloud token, user, and username from active profile on mount
-        const nextToken = activeProf.cloudToken || null;
-        const nextUser = activeProf.cloudUser || null;
-        const nextUsername = activeProf.cloudUsername || null;
+        // Native injects its account into global storage before this profile hydrates.
+        const storedCloudSession = readCloudSessionFromStorage<CloudAccount>(localStorage, activeProf.id);
+        const nextToken = storedCloudSession.token;
+        const nextUser = storedCloudSession.user;
+        const nextUsername = storedCloudSession.username;
         setCloudToken(nextToken);
         setCloudUser(nextUser);
         setCloudUsername(nextUsername);
+        cloudTokenRef.current = nextToken;
+        cloudUserRef.current = nextUser;
+        cloudUsernameRef.current = nextUsername;
 
         const savedPlayback = getPlaybackState(activeProf.id);
         if (savedPlayback) {
