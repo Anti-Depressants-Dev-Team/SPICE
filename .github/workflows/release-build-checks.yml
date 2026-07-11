@@ -95,4 +95,5 @@ jobs:
           bash apps/mobile/scripts/android-release-ci.sh
 
       - name: Verify APK signature
-        run: "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+        run: |
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose apps/mobile/android/app/build/outputs/apk/release/app-release.apk
