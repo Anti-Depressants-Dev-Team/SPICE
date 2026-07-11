@@ -1,6 +1,6 @@
 {
   "name": "spice",
-  "version": "1.4.24",
+  "version": "1.4.25",
   "description": "",
   "main": "main.js",
   "scripts": {
@@ -13,7 +13,7 @@
     "dist:native": "npm run native:prepare-runtime && electron-builder --config electron-builder.native.cjs",
     "dist:native:windows": "npm run native:prepare-runtime && electron-builder --win --config electron-builder.native.cjs",
     "dist:native:linux": "npm run native:prepare-runtime && electron-builder --linux --config electron-builder.native.cjs",
-    "test": "node --test test/lyrics-core.test.js test/runtime-manager.test.js test/native-release-config.test.js",
+    "test": "node --test test/lyrics-core.test.js test/runtime-manager.test.js test/runtime-archive.test.js test/native-release-config.test.js",
     "mobile:test": "npm --prefix apps/mobile test",
     "mobile:build": "npm --prefix apps/mobile run android:debug",
     "mobile:android:debug": "npm --prefix apps/mobile run android:debug",
@@ -56,10 +56,14 @@
         "AppImage",
         "flatpak",
         "deb",
+        "rpm",
         "tar.gz"
       ],
       "icon": "icon.png",
       "category": "AudioVideo"
+    },
+    "rpm": {
+      "packageName": "spice"
     },
     "nsis": {
       "oneClick": false,
@@ -88,7 +92,7 @@
     "@xhayper/discord-rpc": "^1.3.0",
     "electron-store": "^8.1.0",
     "electron-updater": "^6.8.3",
-    "extract-zip": "^2.0.1",
-    "node-fetch": "^2.7.0"
+    "node-fetch": "^2.7.0",
+    "yauzl": "^2.10.0"
   }
 }
