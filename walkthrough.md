@@ -1,5 +1,13 @@
 # SPICE Walkthrough
 
+## v1.0.126
+
+- [Spice.Music main] Preserve a meaningful local profile name and avatar when an uninitialized cloud profile still contains `Spice Listener` and no avatar.
+- [Spice.Music main] Fall back to the authenticated account username when neither local nor cloud profile has a customized display name.
+- [Spice.Music main] Include the account username in authentication snapshots so browser and Native sessions hydrate the same identity immediately.
+- [Spice.Music main] Refresh profile editor fields from the merged profile instead of the stale pre-sync profile.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.126`.
+
 ## v1.0.125
 
 - [Spice.Music main] Reconcile the monotonic songs-streamed counter across local state, cloud profiles, and synced history so a stale cloud zero cannot erase listener progress.

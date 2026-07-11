@@ -32,6 +32,7 @@ export interface AccountSubscriptionSnapshot {
 export interface AccountSnapshot {
   id: string;
   email: string;
+  username: string | null;
   accountRole: AccountRole;
   isAdmin: boolean;
   subscription: AccountSubscriptionSnapshot;
@@ -40,6 +41,7 @@ export interface AccountSnapshot {
 interface AccountRecord {
   id: string;
   email: string;
+  username?: string | null;
   accountRole?: string | null;
 }
 
@@ -112,10 +114,12 @@ export function serializeSubscription(subscription?: SubscriptionRecord | null):
 
 export function serializeAccount(account: AccountRecord, subscription?: SubscriptionRecord | null): AccountSnapshot {
   const accountRole = normalizeAccountRole(account.accountRole);
+  const username = typeof account.username === 'string' ? account.username.trim() : '';
 
   return {
     id: account.id,
     email: account.email,
+    username: username || null,
     accountRole,
     isAdmin: isAdminRole(accountRole),
     subscription: serializeSubscription(subscription),

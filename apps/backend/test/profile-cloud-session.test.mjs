@@ -41,13 +41,31 @@ test('Native account session fills an active profile with no saved cloud session
   const result = readCloudSessionFromStorage(storage({
     spice_profiles_list: JSON.stringify([{ id: 'default', cloudToken: null, cloudUser: null }]),
     spice_cloud_token: 'native-token',
-    spice_cloud_user: JSON.stringify({ email: 'native@example.com' }),
+    spice_cloud_user: JSON.stringify({ email: 'native@example.com', username: 'native-user' }),
   }), 'default');
 
   assert.deepEqual(result, {
     token: 'native-token',
-    user: { email: 'native@example.com' },
-    username: null,
+    user: { email: 'native@example.com', username: 'native-user' },
+    username: 'native-user',
+  });
+});
+
+test('profile account snapshot supplies its username when the legacy profile field is empty', () => {
+  const result = readCloudSessionFromStorage(storage({
+    spice_active_profile_id: 'default',
+    spice_profiles_list: JSON.stringify([{
+      id: 'default',
+      cloudToken: 'profile-token',
+      cloudUser: { email: 'profile@example.com', username: 'profile-user' },
+      cloudUsername: null,
+    }]),
+  }), 'default');
+
+  assert.deepEqual(result, {
+    token: 'profile-token',
+    user: { email: 'profile@example.com', username: 'profile-user' },
+    username: 'profile-user',
   });
 });
 
@@ -55,7 +73,7 @@ test('profile and Native account fields are never combined across sessions', () 
   const result = readCloudSessionFromStorage(storage({
     spice_profiles_list: JSON.stringify([{ id: 'default', cloudToken: 'profile-token', cloudUser: null }]),
     spice_cloud_token: 'native-token',
-    spice_cloud_user: JSON.stringify({ email: 'native@example.com' }),
+    spice_cloud_user: JSON.stringify({ email: 'native@example.com', username: 'native-user' }),
   }), 'default');
 
   assert.deepEqual(result, { token: 'profile-token', user: null, username: null });

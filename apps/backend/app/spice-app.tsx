@@ -27,6 +27,11 @@ import {
 import { isSpiceConnectCommandFresh, SPICE_CONNECT_COMMAND_TTL_MS } from '@/lib/spice-connect';
 import { SPICE_MEDIA_CORE_VERSION, RELEASE_NOTIFICATION_STORAGE_KEY, type ReleaseNotification } from '@/lib/release-notifications';
 import { isHydratedCloudToken, readCloudSessionFromStorage } from '@/lib/profile-cloud-session';
+import {
+  DEFAULT_PROFILE_DISPLAY_NAME,
+  mergeProfileAvatarUrl,
+  mergeProfileDisplayName,
+} from '@/lib/profile-identity';
 import { mergeSongsPlayedCount } from '@/lib/profile-sync';
 import {
   normalizePlayerVolume,
@@ -698,6 +703,7 @@ interface PlaylistInvitePreview {
 interface CloudAccount {
   id: string;
   email: string;
+  username?: string | null;
   accountRole?: AccountRole;
   isAdmin?: boolean;
   subscription?: {
@@ -1297,7 +1303,7 @@ function parsePlainLyrics(lyricsText: string): LyricLine[] {
 
 const initialDefaultProfile: UserProfile = {
   id: 'default',
-  displayName: 'Spice Listener',
+  displayName: DEFAULT_PROFILE_DISPLAY_NAME,
   bio: 'Chasing the craziest tunes.',
   gradient: PRESET_GRADIENTS[0],
   songsPlayed: 0,
@@ -3173,9 +3179,11 @@ export default function SpiceApp() {
       const activeSessionUser = sessionOverride.cloudUser !== undefined
         ? sessionOverride.cloudUser
         : (activeProf.cloudUser ?? (canUseCurrentSession ? cloudUserRef.current : null));
-      const activeSessionUsername = sessionOverride.cloudUsername !== undefined
-        ? sessionOverride.cloudUsername
-        : (activeProf.cloudUsername ?? (canUseCurrentSession ? cloudUsernameRef.current : null));
+      const activeSessionUsername = sessionOverride.cloudUsername
+        ?? activeProf.cloudUsername
+        ?? (canUseCurrentSession ? cloudUsernameRef.current : null)
+        ?? activeSessionUser?.username
+        ?? null;
 
       const localLikes = new Set<string>(activeProf.likedTracks || []);
       const localLikedDetails = activeProf.likedTrackDetails || {};
@@ -3297,33 +3305,49 @@ export default function SpiceApp() {
       serverProfiles.forEach((serverProf: any) => {
         const existingIdx = mergedProfiles.findIndex(p => p.id === serverProf.id);
         if (existingIdx !== -1) {
+          const existingProfile = mergedProfiles[existingIdx];
+          const mergedUsername = serverProf.username !== undefined
+            ? serverProf.username
+            : (existingProfile.cloudUsername ?? activeSessionUsername);
           mergedProfiles[existingIdx] = {
-            ...mergedProfiles[existingIdx],
-            displayName: serverProf.displayName,
+            ...existingProfile,
+            displayName: mergeProfileDisplayName(
+              existingProfile.displayName,
+              serverProf.displayName,
+              mergedUsername,
+            ),
             bio: serverProf.bio || '',
             gradient: serverProf.gradient,
             songsPlayed: mergeSongsPlayedCount(
-              mergedProfiles[existingIdx].songsPlayed,
+              existingProfile.songsPlayed,
               serverProf.songsPlayed,
             ),
             joinedAt: serverProf.joinedAt,
             passcode: serverProf.passcode || undefined,
-            avatarUrl: serverProf.avatarUrl || undefined,
+            avatarUrl: mergeProfileAvatarUrl(
+              existingProfile.avatarUrl,
+              serverProf.avatarUrl,
+              serverProf.displayName,
+            ),
             // Explicitly preserve credentials in case they are missing from serverProf
-            cloudToken: mergedProfiles[existingIdx].cloudToken ?? null,
-            cloudUser: mergedProfiles[existingIdx].cloudUser ?? null,
-            cloudUsername: serverProf.username !== undefined ? serverProf.username : (mergedProfiles[existingIdx].cloudUsername ?? null),
+            cloudToken: existingProfile.cloudToken ?? null,
+            cloudUser: existingProfile.cloudUser ?? null,
+            cloudUsername: mergedUsername ?? null,
           };
         } else {
           mergedProfiles.push({
             id: serverProf.id,
-            displayName: serverProf.displayName,
+            displayName: mergeProfileDisplayName(
+              undefined,
+              serverProf.displayName,
+              serverProf.username ?? activeSessionUsername,
+            ),
             bio: serverProf.bio || '',
             gradient: serverProf.gradient,
             songsPlayed: mergeSongsPlayedCount(0, serverProf.songsPlayed),
             joinedAt: serverProf.joinedAt,
             passcode: serverProf.passcode || undefined,
-            avatarUrl: serverProf.avatarUrl || undefined,
+            avatarUrl: mergeProfileAvatarUrl(undefined, serverProf.avatarUrl, serverProf.displayName),
             likedTracks: [],
             likedTrackDetails: {},
             customPlaylists: [],
@@ -3340,6 +3364,11 @@ export default function SpiceApp() {
         if (p.id === activeProf.id) {
           return {
             ...p,
+            displayName: mergeProfileDisplayName(
+              p.displayName,
+              p.displayName,
+              activeSessionUsername ?? p.cloudUsername,
+            ),
             songsPlayed: mergeSongsPlayedCount(
               p.songsPlayed,
               activeProf.songsPlayed,
@@ -3352,7 +3381,7 @@ export default function SpiceApp() {
             // Keep the authenticated account bound to this exact profile.
             cloudToken: token,
             cloudUser: activeSessionUser,
-            cloudUsername: activeSessionUsername,
+            cloudUsername: activeSessionUsername ?? p.cloudUsername ?? null,
           };
         }
         return p;
@@ -3402,6 +3431,7 @@ export default function SpiceApp() {
       // 8. Update visible client state only if this sync still belongs to the selected profile.
       if (activeProf && syncStillMatchesActiveProfile()) {
         const persistedActiveProfile = profilesToPersist.find(profile => profile.id === activeProf.id);
+        const visibleProfile = persistedActiveProfile ?? activeProf;
         const visibleSessionUser = persistedActiveProfile?.cloudUser ?? activeSessionUser ?? null;
         const visibleSessionUsername = persistedActiveProfile?.cloudUsername ?? activeSessionUsername ?? null;
         setLikedTracks(mergedLikes);
@@ -3410,11 +3440,11 @@ export default function SpiceApp() {
         setCustomPlaylists(mergedPlaylists);
         setActiveProfileId(activeProf.id);
         localStorage.setItem('spice_active_profile_id', activeProf.id);
-        setEditName(activeProf.displayName);
-        setEditBio(activeProf.bio);
-        setEditGradient(activeProf.gradient);
-        setEditPasscode(activeProf.passcode || '');
-        setEditAvatarUrl(activeProf.avatarUrl || '');
+        setEditName(visibleProfile.displayName);
+        setEditBio(visibleProfile.bio);
+        setEditGradient(visibleProfile.gradient);
+        setEditPasscode(visibleProfile.passcode || '');
+        setEditAvatarUrl(visibleProfile.avatarUrl || '');
         setCloudToken(token);
         setCloudUser(visibleSessionUser);
         setCloudUsername(visibleSessionUsername);
@@ -3529,7 +3559,10 @@ export default function SpiceApp() {
       localStorage.setItem('spice_cloud_user', JSON.stringify(data.user));
       setCloudToken(data.token);
       setCloudUser(data.user);
-      const registeredUsername = authMode === 'register' ? authUsername.trim().toLowerCase() : null;
+      const accountUsername = typeof data.user?.username === 'string'
+        ? data.user.username.trim().toLowerCase()
+        : '';
+      const registeredUsername = accountUsername || (authMode === 'register' ? authUsername.trim().toLowerCase() : null);
       setCloudUsername(registeredUsername);
       cloudTokenRef.current = data.token;
       cloudUserRef.current = data.user;
@@ -7012,7 +7045,7 @@ const getMaskedEmail = (email: string) => {
 
     const sanitizedUrl = sanitizePfpUrl(editAvatarUrl);
     updateActiveProfileData({
-      displayName: editName.trim() || 'Spice Listener',
+      displayName: editName.trim() || DEFAULT_PROFILE_DISPLAY_NAME,
       bio: editBio.trim() || 'No bio written yet.',
       gradient: editGradient,
       passcode: passcodeVal ? passcodeVal : undefined,

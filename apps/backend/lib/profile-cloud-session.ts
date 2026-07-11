@@ -30,10 +30,11 @@ export function readCloudSessionFromStorage<TUser>(
   const activeProfile = profiles.find((profile) => profile.id === activeProfileId);
   const profileToken = readString(activeProfile?.cloudToken);
   if (profileToken) {
+    const profileUser = readObject<TUser>(activeProfile?.cloudUser);
     return {
       token: profileToken,
-      user: readObject<TUser>(activeProfile?.cloudUser),
-      username: readString(activeProfile?.cloudUsername),
+      user: profileUser,
+      username: readString(activeProfile?.cloudUsername) ?? readUserUsername(profileUser),
     };
   }
 
@@ -42,7 +43,7 @@ export function readCloudSessionFromStorage<TUser>(
   return {
     token: readString(storage.getItem('spice_cloud_token')),
     user: fallbackUser,
-    username: null,
+    username: readUserUsername(fallbackUser),
   };
 }
 
@@ -73,6 +74,10 @@ function readObject<T>(value: unknown): T | null {
 
 function readString(value: unknown) {
   return typeof value === 'string' && value.trim() ? value : null;
+}
+
+function readUserUsername(value: unknown) {
+  return isObject(value) ? readString(value.username) : null;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

@@ -27,10 +27,11 @@ test('configured admin emails bootstrap new admin accounts', () => {
 
 test('account serialization includes role and default free subscription snapshot', () => {
   assert.deepEqual(
-    serializeAccount({ id: 'user-1', email: 'listener@example.com', accountRole: null }),
+    serializeAccount({ id: 'user-1', email: 'listener@example.com', username: 'listener', accountRole: null }),
     {
       id: 'user-1',
       email: 'listener@example.com',
+      username: 'listener',
       accountRole: 'user',
       isAdmin: false,
       subscription: {
