@@ -2294,14 +2294,11 @@ private fun FullPlayer(
                         Icon(Icons.Rounded.Download, "Download audio")
                     }
                 }
+                IconButton(onClick = onLyrics, modifier = Modifier.size(40.dp)) {
+                    Icon(Icons.Rounded.MusicNote, "Lyrics")
+                }
                 IconButton(onClick = onLike) {
                     Icon(if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, "Like", tint = if (liked) MaterialTheme.colorScheme.primary else Color.White)
-                }
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = onLyrics, modifier = Modifier.weight(1f)) {
-                    Icon(Icons.Rounded.MusicNote, null)
-                    Text("Lyrics", modifier = Modifier.padding(start = 6.dp))
                 }
             }
             if (downloading && !downloadProgress.isNullOrBlank()) {
