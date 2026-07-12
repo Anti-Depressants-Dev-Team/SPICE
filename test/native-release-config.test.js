@@ -134,3 +134,14 @@ test("native installer identity remains separate from the wrapper", () => {
   assert.equal(nativeConfig.deb.packageName, "spice-native");
   assert.equal(nativeConfig.rpm.packageName, "spice-native");
 });
+
+test("native runtime preparation avoids spawning the Windows npm command shim", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "..", "scripts", "prepare-native-runtime.js"),
+    "utf8",
+  );
+
+  assert.match(source, /process\.env\.npm_execpath/);
+  assert.match(source, /npmCli \? process\.execPath : "npm"/);
+  assert.doesNotMatch(source, /["']npm\.cmd["']/);
+});
