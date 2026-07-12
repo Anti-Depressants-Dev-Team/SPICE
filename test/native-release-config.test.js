@@ -15,6 +15,7 @@ const expectedRuntimeFiles = [
   "scrobbler.js",
   "spice-local-runtime-manager.js",
   "runtime-archive.js",
+  "desktop-helpers.js",
   "index.html",
   "settings.html",
   "queue.html",
