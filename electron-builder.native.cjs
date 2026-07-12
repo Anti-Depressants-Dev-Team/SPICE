@@ -51,6 +51,7 @@ module.exports = {
     uninstallDisplayName: "Spice Native",
   },
   extraResources: [
+    ...(Array.isArray(baseBuild.extraResources) ? baseBuild.extraResources : []),
     {
       from: "native-runtime",
       to: "native-runtime",

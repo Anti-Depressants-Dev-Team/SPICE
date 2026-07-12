@@ -38,13 +38,13 @@ test("runtimePlatformConfig selects platform-correct update artifacts", () => {
     id: "windows",
     archiveName: "spice-local-windows.zip",
     manifestUrl: "https://music.spice-app.xyz/api/updates/local-windows",
-    downloadUrl: "https://github.com/Anti-Depressants-Dev-Team/SPICE-but-its-crazier-cuz-yes-/releases/latest/download/spice-local-windows.zip",
+    downloadUrl: "https://github.com/Anti-Depressants-Dev-Team/spice/releases/download/spice-local-runtime/spice-local-windows.zip",
   });
   assert.deepEqual(runtimePlatformConfig("linux"), {
     id: "linux",
     archiveName: "spice-local-linux.zip",
     manifestUrl: "https://music.spice-app.xyz/api/updates/local-linux",
-    downloadUrl: "https://github.com/Anti-Depressants-Dev-Team/SPICE-but-its-crazier-cuz-yes-/releases/latest/download/spice-local-linux.zip",
+    downloadUrl: "https://github.com/Anti-Depressants-Dev-Team/spice/releases/download/spice-local-runtime/spice-local-linux.zip",
   });
   assert.equal(runtimePlatformConfig("darwin"), null);
 });

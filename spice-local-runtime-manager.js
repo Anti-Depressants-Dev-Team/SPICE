@@ -23,7 +23,7 @@ function runtimePlatformConfig(platform = process.platform) {
   return {
     ...base,
     manifestUrl: `https://music.spice-app.xyz/api/updates/local-${base.id}`,
-    downloadUrl: `https://github.com/Anti-Depressants-Dev-Team/SPICE-but-its-crazier-cuz-yes-/releases/latest/download/${base.archiveName}`,
+    downloadUrl: `https://github.com/Anti-Depressants-Dev-Team/spice/releases/download/spice-local-runtime/${base.archiveName}`,
   };
 }
 

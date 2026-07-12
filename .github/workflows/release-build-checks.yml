@@ -21,7 +21,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           cache: npm
 
       - name: Install Linux package tools
@@ -48,18 +48,14 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           cache: npm
 
       - name: Install Dependencies
         run: npm ci
 
-      - name: Prepare published Windows runtime
-        shell: pwsh
-        run: |
-          $env:SPICE_BACKEND_REPO = Join-Path $env:RUNNER_TEMP 'missing-backend'
-          $env:SPICE_NATIVE_TARGET_PLATFORM = 'win32'
-          npm run native:prepare-runtime
+      - name: Prepare in-repository Windows runtime
+        run: npm run native:prepare-runtime
 
       - name: Package Windows Native app
         run: npx electron-builder --win --dir --config electron-builder.native.cjs

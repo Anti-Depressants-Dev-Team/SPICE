@@ -301,9 +301,6 @@
                     <option value="ublock">
                         uBlock Origin (Best Protection)
                     </option>
-                    <option value="ublock_lite">
-                        uBlock Origin Lite (Faster)
-                    </option>
                     <option value="none">Disabled</option>
                 </select>
             </div>
@@ -637,8 +634,10 @@
             // Load settings
             window.api.getSettings().then((settings) => {
                 applyNativeModeSettings(settings);
-                // Migration: if adBlockerType is undefined, map boolean to 'spice' or 'none'
-                if (settings.adBlockerType) {
+                // Normalize legacy choices and fall back to the old boolean setting.
+                if (settings.adBlockerType === "ublock_lite") {
+                    adBlockTypeSelect.value = "spice";
+                } else if (settings.adBlockerType) {
                     adBlockTypeSelect.value = settings.adBlockerType;
                 } else {
                     adBlockTypeSelect.value = settings.adBlockerEnabled
@@ -663,7 +662,9 @@
                 } else {
                     // Revert
                     window.api.getSettings().then((settings) => {
-                        if (settings.adBlockerType) {
+                        if (settings.adBlockerType === "ublock_lite") {
+                            adBlockTypeSelect.value = "spice";
+                        } else if (settings.adBlockerType) {
                             adBlockTypeSelect.value = settings.adBlockerType;
                         } else {
                             adBlockTypeSelect.value = settings.adBlockerEnabled

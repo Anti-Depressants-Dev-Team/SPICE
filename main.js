@@ -2809,6 +2809,13 @@ app.whenReady().then(async () => {
     // Persist migration
     if (store) store.set("adBlockerType", adBlockerType);
   }
+  if (adBlockerType === "ublock_lite") {
+    adBlockerType = "spice";
+    if (store) {
+      store.set("adBlockerType", adBlockerType);
+      store.set("adBlockerEnabled", true);
+    }
+  }
   if (APP_NATIVE_MODE) {
     adBlockerType = "none";
   }
@@ -2882,13 +2889,20 @@ app.whenReady().then(async () => {
   // 2. uBlock Origin (Extension)
   else if (adBlockerType === "ublock") {
     try {
-      const extPath = path.join(
-        __dirname,
-        "src",
-        "extensions",
-        "ublock0",
-        "uBlock0.chromium",
-      );
+      const extPath = app.isPackaged
+        ? path.join(
+            process.resourcesPath,
+            "extensions",
+            "ublock0",
+            "uBlock0.chromium",
+          )
+        : path.join(
+            __dirname,
+            "src",
+            "extensions",
+            "ublock0",
+            "uBlock0.chromium",
+          );
       console.log(`Loading uBlock Origin from: ${extPath} `);
       await session.defaultSession.loadExtension(extPath);
       console.log("uBlock Origin loaded successfully.");
@@ -2896,18 +2910,7 @@ app.whenReady().then(async () => {
       console.error("Failed to load uBlock Origin extension:", e);
     }
   }
-  // 3. uBlock Origin Lite (Extension)
-  else if (adBlockerType === "ublock_lite") {
-    try {
-      const extPath = path.join(__dirname, "src", "extensions", "ubolite");
-      console.log(`Loading uBlock Origin Lite from: ${extPath} `);
-      await session.defaultSession.loadExtension(extPath);
-      console.log("uBlock Origin Lite loaded successfully.");
-    } catch (e) {
-      console.error("Failed to load uBlock Origin Lite extension:", e);
-    }
-  }
-  // 4. Disabled
+  // 3. Disabled
   else {
     console.log("AdBlocker is DISABLED.");
   }
@@ -3720,13 +3723,19 @@ app.whenReady().then(async () => {
 
   // Settings IPC
   ipcMain.handle("get-settings", () => {
+    const storedAdBlockerType = store
+      ? store.get("adBlockerType", "spice")
+      : "spice";
     return {
       ...nativeModeSettings(),
       nativeAccount: getNativeAccountSummary(),
       nativeOnboarded: store ? store.get("nativeOnboarded", false) : false,
       adBlockerEnabled: store ? store.get("adBlockerEnabled", true) : true,
       // Return type explicitly so UI can show correct state
-      adBlockerType: store ? store.get("adBlockerType", "spice") : "spice",
+      adBlockerType:
+        storedAdBlockerType === "ublock_lite"
+          ? "spice"
+          : storedAdBlockerType,
       defaultService: store
         ? store.get("defaultService", DEFAULT_STARTUP_SERVICE)
         : DEFAULT_STARTUP_SERVICE,
@@ -3805,6 +3814,9 @@ app.whenReady().then(async () => {
       type = value ? "spice" : "none";
     } else if (typeof value === "string") {
       type = value;
+    }
+    if (type === "ublock_lite") {
+      type = "spice";
     }
 
     console.log(`IPC: Setting AdBlocker to [${type}]`);
