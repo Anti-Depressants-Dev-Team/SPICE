@@ -18,11 +18,9 @@ if (!platformName) {
 const runtimeName = `spice-local-${platformName}`;
 const targetRoot = path.join(repoRoot, "native-runtime");
 const targetRuntime = path.join(targetRoot, runtimeName);
-const backendRepo = path.resolve(
-  process.env.SPICE_BACKEND_REPO || path.join(repoRoot, "..", "SPICE-but-its-crazier-and-closed-source-cuz-yes-"),
-);
+const backendRepo = path.resolve(process.env.SPICE_BACKEND_REPO || repoRoot);
 const releaseUrl = process.env.SPICE_NATIVE_RUNTIME_ZIP_URL
-  || `https://github.com/Anti-Depressants-Dev-Team/SPICE-but-its-crazier-cuz-yes-/releases/latest/download/${runtimeName}.zip`;
+  || `https://github.com/Anti-Depressants-Dev-Team/spice/releases/download/spice-local-runtime/${runtimeName}.zip`;
 
 main().catch((error) => {
   console.error(error);
@@ -37,8 +35,8 @@ async function main() {
   if (platform === process.platform && fs.existsSync(backendPackage)) {
     console.log(`Preparing ${platformName} Native runtime from ${backendRepo}`);
     if (process.env.SPICE_NATIVE_SKIP_BACKEND_BUILD !== "1") {
-      runPnpm(["--filter", "@spice/backend", "build:local"], backendRepo);
-      runPnpm(["--filter", "@spice/backend", `package:local:${platformName}`], backendRepo);
+      runNpmWorkspace("build:local", backendRepo);
+      runNpmWorkspace(`package:local:${platformName}`, backendRepo);
     }
     installPreparedRuntime(path.join(backendRepo, "apps", "backend", "dist", runtimeName));
   } else {
@@ -50,8 +48,9 @@ async function main() {
   console.log(`Prepared SPICE Native ${platformName} runtime ${manifest.version || "unknown"} at ${targetRuntime}`);
 }
 
-function runPnpm(args, cwd) {
-  const executable = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+function runNpmWorkspace(script, cwd) {
+  const executable = process.platform === "win32" ? "npm.cmd" : "npm";
+  const args = ["--workspace", "@spice/backend", "run", script];
   const result = spawnSync(executable, args, { cwd, stdio: "inherit" });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`${executable} ${args.join(" ")} exited with code ${result.status}.`);

@@ -1,0 +1,451 @@
+.shell {
+  min-height: 100vh;
+  padding: 28px 0 42px;
+  background:
+    linear-gradient(180deg, rgba(20, 184, 166, 0.08), transparent 360px),
+    linear-gradient(135deg, #050509 0%, #0a0d11 52%, #07080a 100%);
+  color: #f8fafc;
+}
+
+.hero,
+.operatingModel,
+.featureLedger,
+.accountSection,
+.technicalDetails {
+  width: min(1180px, calc(100% - 40px));
+  margin: 0 auto;
+}
+
+.hero {
+  display: block;
+}
+
+.heroCopy,
+.modelGrid article,
+.ledgerItem,
+.accountCard,
+.accountSummary,
+.accountForm,
+.technicalDetails {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.045);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
+}
+
+.heroCopy {
+  min-height: auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: clamp(24px, 5vw, 48px);
+}
+
+.brandLine {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 28px;
+}
+
+.logoMark {
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #14b8a6, #f59e0b);
+  color: #041312;
+  font-weight: 950;
+}
+
+.brandLine span,
+.sectionHeading span,
+.modelGrid span,
+.ledgerItem span,
+.accountSummary span,
+.accountForm span,
+.quickStats dt {
+  color: #5eead4;
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.brandLine strong,
+.brandLine strong {
+  display: block;
+  margin-top: 3px;
+  color: #f8fafc;
+}
+
+.hero h1 {
+  max-width: 780px;
+  margin: 0;
+  font-size: clamp(2.35rem, 6vw, 4.6rem);
+  line-height: 0.98;
+  letter-spacing: 0;
+}
+
+.hero p,
+.modelGrid p,
+.ledgerItem p {
+  color: #cbd5e1;
+  line-height: 1.65;
+}
+
+.heroCopy > p {
+  max-width: 720px;
+  margin: 22px 0 0;
+  font-size: clamp(1rem, 2vw, 1.12rem);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 30px;
+}
+
+.primaryAction,
+.secondaryAction,
+.textAction {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 16px;
+  border-radius: 8px;
+  font-size: 0.88rem;
+  font-weight: 850;
+  text-decoration: none;
+}
+
+.primaryAction {
+  background: #5eead4;
+  color: #031211;
+}
+
+.secondaryAction {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.07);
+  color: #f8fafc;
+}
+
+.textAction {
+  color: #facc15;
+}
+
+.quickStats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 32px 0 0;
+}
+
+.quickStats div {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.quickStats dt,
+.quickStats dd {
+  margin: 0;
+}
+
+.quickStats dd {
+  margin-top: 8px;
+  color: #f8fafc;
+  font-size: 1.02rem;
+  font-weight: 850;
+}
+
+.routeStrip {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  color: #94a3b8;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.74rem;
+}
+
+.routeStrip span {
+  overflow: hidden;
+  padding: 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.technicalDetails {
+  margin-top: 18px;
+  padding: 18px;
+}
+
+.technicalDetails summary {
+  cursor: pointer;
+  color: #ccfbf1;
+  font-weight: 850;
+}
+
+.technicalDetails .operatingModel,
+.technicalDetails .featureLedger {
+  width: 100%;
+  margin-top: 24px;
+}
+
+.operatingModel,
+.featureLedger,
+.accountSection {
+  margin-top: 18px;
+}
+
+.sectionHeading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 12px;
+}
+
+.sectionHeading h2 {
+  max-width: 740px;
+  margin: 0;
+  color: #f8fafc;
+  font-size: clamp(1.45rem, 3vw, 2.35rem);
+  line-height: 1.08;
+}
+
+.modelGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.modelGrid article {
+  padding: 18px;
+}
+
+.modelGrid h3,
+.ledgerItem h3 {
+  margin: 10px 0 8px;
+  color: #f8fafc;
+  font-size: 1.08rem;
+}
+
+.modelGrid p,
+.ledgerItem p,
+.ledgerItem small {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+.ledgerList {
+  display: grid;
+  gap: 10px;
+}
+
+.ledgerItem {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.5fr) minmax(0, 0.72fr) minmax(220px, 0.58fr);
+  gap: 16px;
+  align-items: start;
+  padding: 16px;
+}
+
+.ledgerItem small {
+  color: #94a3b8;
+  line-height: 1.55;
+}
+
+.accountCard {
+  padding: 18px;
+}
+
+.accountGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.72fr);
+  gap: 12px;
+}
+
+.accountSummary,
+.accountForm {
+  min-width: 0;
+  padding: 18px;
+  box-shadow: none;
+}
+
+.accountSummary h3,
+.accountForm h3 {
+  margin: 8px 0 14px;
+  color: #f8fafc;
+  font-size: 1.28rem;
+}
+
+.accountSummary p,
+.statusNote {
+  color: #cbd5e1;
+  line-height: 1.58;
+}
+
+.accountSummary dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.accountSummary dl div {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.accountSummary dt,
+.accountSummary dd {
+  margin: 0;
+}
+
+.accountSummary dt {
+  color: #94a3b8;
+  font-size: 0.72rem;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.accountSummary dd {
+  margin-top: 7px;
+  color: #f8fafc;
+  overflow-wrap: anywhere;
+}
+
+.accountActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.accountActions a,
+.accountActions button,
+.accountForm button,
+.modeSwitch button {
+  min-height: 40px;
+  border-radius: 8px;
+  padding: 0 12px;
+  font-size: 0.84rem;
+  font-weight: 850;
+  text-decoration: none;
+}
+
+.accountActions a,
+.accountForm button {
+  border: 0;
+  background: #5eead4;
+  color: #031211;
+}
+
+.accountActions button,
+.modeSwitch button {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: #f8fafc;
+}
+
+.accountForm {
+  display: grid;
+  gap: 12px;
+}
+
+.accountForm label {
+  display: grid;
+  gap: 7px;
+  color: #cbd5e1;
+  font-size: 0.86rem;
+  font-weight: 750;
+}
+
+.accountForm input {
+  min-height: 42px;
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.28);
+  color: #f8fafc;
+  padding: 0 12px;
+}
+
+.accountForm input:focus {
+  border-color: #5eead4;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(94, 234, 212, 0.13);
+}
+
+.accountForm button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.modeSwitch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.modeActive {
+  background: rgba(94, 234, 212, 0.16) !important;
+  border-color: rgba(94, 234, 212, 0.32) !important;
+  color: #ccfbf1 !important;
+}
+
+.statusNote {
+  margin: 0;
+  font-size: 0.88rem;
+}
+
+@media (max-width: 920px) {
+  .modelGrid,
+  .ledgerItem,
+  .accountGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .heroCopy {
+    min-height: auto;
+  }
+}
+
+@media (max-width: 640px) {
+  .hero,
+  .operatingModel,
+  .featureLedger,
+  .accountSection {
+    width: min(100% - 28px, 1180px);
+  }
+
+  .quickStats {
+    grid-template-columns: 1fr;
+  }
+
+  .actions {
+    flex-direction: column;
+  }
+
+  .primaryAction,
+  .secondaryAction,
+  .textAction {
+    width: 100%;
+  }
+
+  .accountSummary dl {
+    grid-template-columns: 1fr;
+  }
+}
