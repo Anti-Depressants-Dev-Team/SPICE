@@ -31,6 +31,7 @@ import {
   DEFAULT_PROFILE_DISPLAY_NAME,
   mergeProfileAvatarUrl,
   mergeProfileDisplayName,
+  mergeProfileUsername,
 } from '@/lib/profile-identity';
 import { mergeSongsPlayedCount } from '@/lib/profile-sync';
 import {
@@ -3306,9 +3307,12 @@ export default function SpiceApp() {
         const existingIdx = mergedProfiles.findIndex(p => p.id === serverProf.id);
         if (existingIdx !== -1) {
           const existingProfile = mergedProfiles[existingIdx];
-          const mergedUsername = serverProf.username !== undefined
-            ? serverProf.username
-            : (existingProfile.cloudUsername ?? activeSessionUsername);
+          const mergedUsername = mergeProfileUsername(
+            serverProf.username,
+            existingProfile.cloudUsername,
+            activeSessionUsername,
+            serverProf.id === activeProf.id,
+          );
           mergedProfiles[existingIdx] = {
             ...existingProfile,
             displayName: mergeProfileDisplayName(
@@ -3335,12 +3339,18 @@ export default function SpiceApp() {
             cloudUsername: mergedUsername ?? null,
           };
         } else {
+          const mergedUsername = mergeProfileUsername(
+            serverProf.username,
+            null,
+            activeSessionUsername,
+            serverProf.id === activeProf.id,
+          );
           mergedProfiles.push({
             id: serverProf.id,
             displayName: mergeProfileDisplayName(
               undefined,
               serverProf.displayName,
-              serverProf.username ?? activeSessionUsername,
+              mergedUsername,
             ),
             bio: serverProf.bio || '',
             gradient: serverProf.gradient,
@@ -3354,7 +3364,7 @@ export default function SpiceApp() {
             history: [],
             cloudToken: token,
             cloudUser: activeSessionUser,
-            cloudUsername: serverProf.username || null,
+            cloudUsername: mergedUsername,
           });
         }
       });
@@ -3406,7 +3416,7 @@ export default function SpiceApp() {
               ...profile,
               cloudToken: token,
               cloudUser: latest.cloudUser !== undefined ? latest.cloudUser : profile.cloudUser,
-              cloudUsername: latest.cloudUsername !== undefined ? latest.cloudUsername : profile.cloudUsername,
+              cloudUsername: mergeProfileUsername(latest.cloudUsername, profile.cloudUsername, null, false),
             };
           }
           return profile;
@@ -3416,7 +3426,7 @@ export default function SpiceApp() {
           ...profile,
           cloudToken: latest.cloudToken !== undefined ? latest.cloudToken : (profile.cloudToken ?? null),
           cloudUser: latest.cloudUser !== undefined ? latest.cloudUser : (profile.cloudUser ?? null),
-          cloudUsername: latest.cloudUsername !== undefined ? latest.cloudUsername : (profile.cloudUsername ?? null),
+          cloudUsername: mergeProfileUsername(latest.cloudUsername, profile.cloudUsername, null, false),
         };
       });
 

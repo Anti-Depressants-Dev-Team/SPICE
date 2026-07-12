@@ -1,5 +1,13 @@
 # SPICE Walkthrough
 
+## v1.0.127
+
+- [Spice.Music main] Coalesce nullable cloud profile usernames through saved local and authenticated account identity instead of treating database `null` as authoritative.
+- [Spice.Music main] Limit account-username fallback to the active profile so secondary profiles retain separate identities.
+- [Spice.Music main] Preserve derived usernames when persisting merged profiles instead of replacing them with a stale stored `null`.
+- [Spice.Music main] Add regression coverage for nullable, active-profile-only, and persistence username resolution.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.127`.
+
 ## v1.0.126
 
 - [Spice.Music main] Preserve a meaningful local profile name and avatar when an uninitialized cloud profile still contains `Spice Listener` and no avatar.

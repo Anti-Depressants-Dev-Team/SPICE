@@ -14,6 +14,19 @@ export function mergeProfileDisplayName(
   return username || remote || local || DEFAULT_PROFILE_DISPLAY_NAME;
 }
 
+export function mergeProfileUsername(
+  remoteUsername: unknown,
+  localUsername: unknown,
+  accountUsername: unknown,
+  allowAccountFallback: boolean,
+) {
+  const remote = readUsername(remoteUsername);
+  const local = readUsername(localUsername);
+  if (remote) return remote;
+  if (local) return local;
+  return allowAccountFallback ? readUsername(accountUsername) : null;
+}
+
 export function mergeProfileAvatarUrl(
   localAvatarUrl: unknown,
   remoteAvatarUrl: unknown,
@@ -38,4 +51,8 @@ export function isDefaultProfileDisplayName(value: unknown) {
 
 function readText(value: unknown) {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function readUsername(value: unknown) {
+  return readText(value)?.replace(/^@+/, '') || null;
 }
