@@ -1,3 +1,5 @@
+import { compactPlaybackQueueWindow } from './playlist-performance.ts';
+
 export interface TrackArtistSnapshot {
   id: string;
   name: string;
@@ -47,12 +49,20 @@ interface StoredTrackSnapshot {
   savedAt: number;
 }
 
+interface PlaybackProgressSnapshot {
+  trackKey: string;
+  progress: number;
+  savedAt: number;
+}
+
 const TRACK_SNAPSHOTS_KEY = 'spice_track_snapshots_v1';
 const SEARCH_CACHE_KEY = 'spice_search_cache_v1';
 const PLAYBACK_STATES_KEY = 'spice_playback_states_v1';
+const PLAYBACK_PROGRESS_KEY = 'spice_playback_progress_v1';
 const MAX_TRACK_SNAPSHOTS = 500;
 const MAX_SEARCH_ENTRIES = 12;
 const MAX_SEARCH_TRACKS = 30;
+const MAX_PLAYBACK_PROFILES = 6;
 
 function getStorage(): Storage | null {
   return typeof window === 'undefined' ? null : window.localStorage;
@@ -87,6 +97,10 @@ function normalizeQuery(query: string) {
 
 function isUsefulTrack(track: TrackSnapshot | undefined): track is TrackSnapshot {
   return !!track && !!track.id && track.id !== 'placeholder';
+}
+
+function playbackTrackKey(track: TrackSnapshot) {
+  return `${track.sourceId ?? 'unknown'}:${track.id}`;
 }
 
 function snapshotScore(track: TrackSnapshot) {
@@ -126,6 +140,29 @@ function getTrackSnapshotStore() {
   return readJson<Record<string, StoredTrackSnapshot>>(TRACK_SNAPSHOTS_KEY, {});
 }
 
+function enrichTrackSnapshotFromStore(
+  track: TrackSnapshot,
+  snapshots: Record<string, StoredTrackSnapshot>,
+): TrackSnapshot {
+  const saved = snapshots[track.id]?.track;
+  return saved ? mergeTrackSnapshots(saved, track) : track;
+}
+
+function enrichTrackSnapshotsFromStore(
+  tracks: TrackSnapshot[],
+  snapshots: Record<string, StoredTrackSnapshot>,
+): TrackSnapshot[] {
+  return tracks.map((track) => enrichTrackSnapshotFromStore(track, snapshots));
+}
+
+function trimPlaybackProfiles<T extends { savedAt: number }>(states: Record<string, T>) {
+  return Object.fromEntries(
+    Object.entries(states)
+      .sort(([, a], [, b]) => b.savedAt - a.savedAt)
+      .slice(0, MAX_PLAYBACK_PROFILES),
+  );
+}
+
 export function rememberTrackSnapshots(tracks: TrackSnapshot[]) {
   const snapshots = getTrackSnapshotStore();
   const savedAt = Date.now();
@@ -147,17 +184,30 @@ export function rememberTrackSnapshots(tracks: TrackSnapshot[]) {
 }
 
 export function enrichTrackSnapshot(track: TrackSnapshot): TrackSnapshot {
-  const saved = getTrackSnapshotStore()[track.id]?.track;
-  return saved ? mergeTrackSnapshots(saved, track) : track;
+  return enrichTrackSnapshotFromStore(track, getTrackSnapshotStore());
+}
+
+export function enrichTrackSnapshots(tracks: TrackSnapshot[]): TrackSnapshot[] {
+  if (tracks.length === 0) return [];
+
+  const snapshots = getTrackSnapshotStore();
+  return enrichTrackSnapshotsFromStore(tracks, snapshots);
 }
 
 export function mergeTrackLists(...lists: TrackSnapshot[][]): TrackSnapshot[] {
   const merged = new Map<string, TrackSnapshot>();
+  const snapshots = getTrackSnapshotStore();
 
   for (const list of lists) {
     for (const track of list) {
       if (!isUsefulTrack(track)) continue;
-      merged.set(track.id, enrichTrackSnapshot(mergeTrackSnapshots(merged.get(track.id), track)));
+      merged.set(
+        track.id,
+        enrichTrackSnapshotFromStore(
+          mergeTrackSnapshots(merged.get(track.id), track),
+          snapshots,
+        ),
+      );
     }
   }
 
@@ -179,7 +229,7 @@ export function rememberSearchResults(
 
   entries.unshift({
     query: trimmedQuery,
-    tracks: tracks.slice(0, MAX_SEARCH_TRACKS).map(enrichTrackSnapshot),
+    tracks: enrichTrackSnapshots(tracks.slice(0, MAX_SEARCH_TRACKS)),
     savedAt: Date.now(),
     sourceId,
   });
@@ -196,7 +246,7 @@ export function getCachedSearch(query: string, sourceId = 'youtube_music'): Sear
       && (candidate.sourceId ?? 'youtube_music') === sourceId,
     );
   return entry
-    ? { ...entry, tracks: entry.tracks.map(enrichTrackSnapshot) }
+    ? { ...entry, tracks: enrichTrackSnapshots(entry.tracks) }
     : null;
 }
 
@@ -204,7 +254,7 @@ export function getLatestCachedSearch(): SearchCacheEntry | null {
   const [entry] = readJson<SearchCacheEntry[]>(SEARCH_CACHE_KEY, [])
     .sort((a, b) => b.savedAt - a.savedAt);
   return entry
-    ? { ...entry, tracks: entry.tracks.map(enrichTrackSnapshot) }
+    ? { ...entry, tracks: enrichTrackSnapshots(entry.tracks) }
     : null;
 }
 
@@ -220,9 +270,10 @@ export function getRecentCachedSearches(limit = 6): SearchCacheEntry[] {
     })
     .slice(0, limit);
 
+  const snapshots = getTrackSnapshotStore();
   return entries.map((entry) => ({
     ...entry,
-    tracks: entry.tracks.map(enrichTrackSnapshot),
+    tracks: enrichTrackSnapshotsFromStore(entry.tracks, snapshots),
   }));
 }
 
@@ -245,20 +296,55 @@ export function deleteRecentSearchEntry(query: string, sourceId = 'youtube_music
 
 export function savePlaybackState(profileId: string, state: PlaybackSaveState) {
   if (!profileId || !isUsefulTrack(state.currentTrack)) return;
-  rememberTrackSnapshots([state.currentTrack, ...state.queue]);
+  const compactedQueue = compactPlaybackQueueWindow(state.queue, state.queueIndex);
+  rememberTrackSnapshots([state.currentTrack, ...compactedQueue.queue]);
 
   const states = readJson<Record<string, PlaybackSaveState>>(PLAYBACK_STATES_KEY, {});
   states[profileId] = state;
-  writeJson(PLAYBACK_STATES_KEY, states);
+  writeJson(PLAYBACK_STATES_KEY, trimPlaybackProfiles(states));
+  savePlaybackProgress(profileId, state.currentTrack, state.progress, state.savedAt);
+}
+
+export function savePlaybackProgress(
+  profileId: string,
+  track: TrackSnapshot,
+  progress: number,
+  savedAt = Date.now(),
+) {
+  if (!profileId || !isUsefulTrack(track) || !Number.isFinite(progress)) return;
+
+  const progressByProfile = readJson<Record<string, PlaybackProgressSnapshot>>(PLAYBACK_PROGRESS_KEY, {});
+  progressByProfile[profileId] = {
+    trackKey: playbackTrackKey(track),
+    progress: Math.max(0, progress),
+    savedAt,
+  };
+  writeJson(PLAYBACK_PROGRESS_KEY, trimPlaybackProfiles(progressByProfile));
 }
 
 export function getPlaybackState(profileId: string): PlaybackSaveState | null {
   const state = readJson<Record<string, PlaybackSaveState>>(PLAYBACK_STATES_KEY, {})[profileId];
   if (!state || !isUsefulTrack(state.currentTrack)) return null;
+  const progress = readJson<Record<string, PlaybackProgressSnapshot>>(PLAYBACK_PROGRESS_KEY, {})[profileId];
+  const snapshots = getTrackSnapshotStore();
+  const [currentTrack, ...queue] = enrichTrackSnapshotsFromStore(
+    [state.currentTrack, ...state.queue],
+    snapshots,
+  );
 
   return {
     ...state,
-    currentTrack: enrichTrackSnapshot(state.currentTrack),
-    queue: state.queue.map(enrichTrackSnapshot),
+    currentTrack,
+    queue,
+    progress: progress
+      && progress.trackKey === playbackTrackKey(state.currentTrack)
+      && progress.savedAt >= state.savedAt
+      ? progress.progress
+      : state.progress,
+    savedAt: progress
+      && progress.trackKey === playbackTrackKey(state.currentTrack)
+      && progress.savedAt >= state.savedAt
+      ? progress.savedAt
+      : state.savedAt,
   };
 }

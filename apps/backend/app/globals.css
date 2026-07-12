@@ -1252,7 +1252,7 @@ h4 { font-size: 1rem; }
 }
 
 .main__content {
-  padding: var(--space-2xl) var(--space-3xl) calc(var(--space-4xl) + 40px);
+  padding: var(--spice-content-y, var(--space-2xl)) var(--spice-content-x, var(--space-3xl)) var(--space-xl);
   min-height: 100%;
   animation: fadeIn 0.3s var(--ease-out-expo);
 }
@@ -1967,8 +1967,8 @@ h4 { font-size: 1rem; }
   align-items: center;
   gap: var(--space-md);
   min-width: 0;
-  flex: 0 1 clamp(170px, 25vw, 340px);
-  max-width: clamp(170px, 25vw, 340px);
+  flex: 0 1 clamp(150px, 18vw, 240px);
+  max-width: clamp(150px, 18vw, 240px);
 }
 
 .now-playing__art {
@@ -3295,6 +3295,37 @@ h4 { font-size: 1rem; }
   gap: var(--space-xs);
 }
 
+.virtual-track-list {
+  position: relative;
+  width: 100%;
+  min-height: 72px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  contain: strict;
+}
+
+.virtual-track-list:focus-visible,
+.library-item__play:focus-visible,
+.virtual-track-list__row > [role='button']:focus-visible {
+  outline: 2px solid var(--accent-pink);
+  outline-offset: -2px;
+}
+
+.virtual-track-list__row {
+  overflow: hidden;
+  contain: layout paint style;
+}
+
+.virtual-track-list__row > .library-item {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.playlist-track-window {
+  border-radius: var(--radius-md);
+}
+
 .library-item {
   display: flex;
   align-items: center;
@@ -3320,6 +3351,16 @@ h4 { font-size: 1rem; }
 
 .library-item__art--round {
   border-radius: 50%;
+}
+
+.library-item__play {
+  display: flex;
+  align-items: center;
+  gap: var(--space-lg);
+  min-width: 0;
+  flex: 1;
+  color: inherit;
+  text-align: left;
 }
 
 .library-item__info {
@@ -3613,7 +3654,7 @@ h4 { font-size: 1rem; }
   }
 
   .main__content {
-    padding: var(--space-xl) var(--space-2xl) calc(var(--space-4xl) + 40px);
+    padding: min(var(--spice-content-y, var(--space-2xl)), var(--space-xl)) min(var(--spice-content-x, var(--space-3xl)), var(--space-2xl)) var(--space-xl);
   }
 
   .app-topbar {
@@ -3629,8 +3670,8 @@ h4 { font-size: 1rem; }
   }
 
   .now-playing__song {
-    flex-basis: clamp(150px, 23vw, 240px);
-    max-width: clamp(150px, 23vw, 240px);
+    flex-basis: clamp(140px, 18vw, 210px);
+    max-width: clamp(140px, 18vw, 210px);
   }
 }
 

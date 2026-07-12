@@ -8,6 +8,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   enrichTrackSnapshot,
+  enrichTrackSnapshots,
   getCachedSearch,
   getLatestCachedSearch,
   getPlaybackState,
@@ -16,9 +17,14 @@ import {
   rememberSearchResults,
   rememberTrackSnapshots,
   savePlaybackState,
+  savePlaybackProgress,
   clearSearchCache,
   deleteRecentSearchEntry,
 } from './spice-storage';
+import {
+  computePlaylistWindow,
+  PLAYLIST_ROW_HEIGHT_PX,
+} from './playlist-performance';
 import {
   buildPrivateTasteProfile,
   buildRecommendationSeeds,
@@ -711,6 +717,132 @@ interface Playlist {
   members?: PlaylistMember[];
 }
 
+const trackListFingerprint = (tracks: Track[]) => {
+  const trackKey = (track: Track | undefined) => track
+    ? `${track.sourceId ?? 'unknown'}:${track.id}`
+    : 'empty';
+  const middleIndex = Math.floor(tracks.length / 2);
+  return `${tracks.length}:${trackKey(tracks[0])}:${trackKey(tracks[middleIndex])}:${trackKey(tracks.at(-1))}`;
+};
+
+interface VirtualTrackRowsProps {
+  tracks: Track[];
+  height: number | string;
+  rowHeight?: number;
+  resetKey: string;
+  focusIndex?: number;
+  className?: string;
+  ariaLabel: string;
+  renderRow: (track: Track, index: number) => React.ReactNode;
+}
+
+function VirtualTrackRows({
+  tracks,
+  height,
+  rowHeight = PLAYLIST_ROW_HEIGHT_PX,
+  resetKey,
+  focusIndex,
+  className = '',
+  ariaLabel,
+  renderRow,
+}: VirtualTrackRowsProps) {
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  const [scrollOffset, setScrollOffset] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(rowHeight * 8);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+
+    const updateHeight = () => {
+      setViewportHeight(Math.max(rowHeight, viewport.clientHeight));
+    };
+    updateHeight();
+
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', updateHeight);
+      return () => window.removeEventListener('resize', updateHeight);
+    }
+
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, [rowHeight]);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    viewport.scrollTop = 0;
+    setScrollOffset(0);
+  }, [resetKey]);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport || focusIndex === undefined || focusIndex < 0 || tracks.length === 0) return;
+    const boundedFocusIndex = Math.min(tracks.length - 1, focusIndex);
+    const itemTop = boundedFocusIndex * rowHeight;
+    const itemBottom = itemTop + rowHeight;
+    if (itemTop < viewport.scrollTop || itemBottom > viewport.scrollTop + viewport.clientHeight) {
+      viewport.scrollTop = Math.max(0, itemTop - Math.max(0, (viewport.clientHeight - rowHeight) / 2));
+      setScrollOffset(viewport.scrollTop);
+    }
+  }, [focusIndex, resetKey, rowHeight, tracks.length, viewportHeight]);
+
+  useEffect(() => () => {
+    if (animationFrameRef.current !== null) {
+      cancelAnimationFrame(animationFrameRef.current);
+    }
+  }, []);
+
+  const renderWindow = computePlaylistWindow({
+    itemCount: tracks.length,
+    scrollOffset,
+    viewportHeight,
+    rowHeight,
+  });
+  const visibleTracks = tracks.slice(renderWindow.startIndex, renderWindow.endIndex);
+
+  return (
+    <div
+      ref={viewportRef}
+      className={`virtual-track-list custom-scrollbar ${className}`.trim()}
+      style={{ height }}
+      role="list"
+      aria-label={ariaLabel}
+      tabIndex={0}
+      onScroll={(event) => {
+        const nextOffset = event.currentTarget.scrollTop;
+        if (animationFrameRef.current !== null) {
+          cancelAnimationFrame(animationFrameRef.current);
+        }
+        animationFrameRef.current = requestAnimationFrame(() => {
+          setScrollOffset(nextOffset);
+          animationFrameRef.current = null;
+        });
+      }}
+    >
+      <div aria-hidden="true" style={{ height: renderWindow.paddingStart }} />
+      {visibleTracks.map((track, visibleIndex) => {
+        const index = renderWindow.startIndex + visibleIndex;
+        return (
+          <div
+            key={`${track.sourceId || 'track'}:${track.id}:${index}`}
+            className="virtual-track-list__row"
+            style={{ height: rowHeight }}
+            role="listitem"
+            aria-posinset={index + 1}
+            aria-setsize={tracks.length}
+          >
+            {renderRow(track, index)}
+          </div>
+        );
+      })}
+      <div aria-hidden="true" style={{ height: renderWindow.paddingEnd }} />
+    </div>
+  );
+}
+
 interface PlaylistInvitePreview {
   token: string;
   playlist: Playlist;
@@ -1174,7 +1306,7 @@ const normalizePlaylistSnapshot = (playlist: any): Playlist => ({
   id: typeof playlist?.id === 'string' && playlist.id ? playlist.id : createPlaylistId(),
   title: typeof playlist?.title === 'string' && playlist.title ? playlist.title : 'Shared Playlist',
   description: typeof playlist?.description === 'string' ? playlist.description : '',
-  tracks: Array.isArray(playlist?.tracks) ? playlist.tracks.map(enrichTrackSnapshot) : [],
+  tracks: Array.isArray(playlist?.tracks) ? enrichTrackSnapshots(playlist.tracks) : [],
   gradient: typeof playlist?.gradient === 'string' && playlist.gradient ? playlist.gradient : PRESET_GRADIENTS[0],
   coverUrl: typeof playlist?.coverUrl === 'string' ? playlist.coverUrl : undefined,
   isPublic: playlist?.isPublic !== false,
@@ -2667,13 +2799,15 @@ export default function SpiceApp() {
 
       const activeProf = parsedProfiles.find(p => p.id === savedActiveId) || parsedProfiles[0];
       if (activeProf) {
-        const hydratedHistory = (activeProf.history || []).map(enrichTrackSnapshot);
+        const hydratedHistory = enrichTrackSnapshots(activeProf.history || []);
+        const likedDetailEntries = Object.entries(activeProf.likedTrackDetails || {});
+        const hydratedLikedTracks = enrichTrackSnapshots(likedDetailEntries.map(([, track]) => track));
         const hydratedLikedDetails = Object.fromEntries(
-          Object.entries(activeProf.likedTrackDetails || {}).map(([id, track]) => [id, enrichTrackSnapshot(track)]),
+          likedDetailEntries.map(([id], index) => [id, hydratedLikedTracks[index]]),
         );
         const hydratedPlaylists = (activeProf.customPlaylists || []).map((playlist) => ({
           ...playlist,
-          tracks: (playlist.tracks || []).map(enrichTrackSnapshot),
+          tracks: enrichTrackSnapshots(playlist.tracks || []),
         }));
         rememberTrackSnapshots([
           ...hydratedHistory,
@@ -2862,23 +2996,29 @@ export default function SpiceApp() {
   useEffect(() => {
     if (!isMounted || currentTrack.id === 'placeholder') return;
 
-    const persistPlayback = () => {
-      savePlaybackState(activeProfileId, {
-        currentTrack,
-        queue,
-        queueIndex,
-        progress: progressRef.current,
-        repeatMode,
-        isShuffle,
-        volume,
-        savedAt: Date.now(),
-      });
-    };
-    persistPlayback();
+    savePlaybackState(activeProfileId, {
+      currentTrack,
+      queue,
+      queueIndex,
+      progress: progressRef.current,
+      repeatMode,
+      isShuffle,
+      volume,
+      savedAt: Date.now(),
+    });
+  }, [activeProfileId, currentTrack, isMounted, queue, queueIndex]);
 
-    const interval = setInterval(persistPlayback, 5000);
-    return () => clearInterval(interval);
-  }, [activeProfileId, currentTrack, isMounted, isShuffle, queue, queueIndex, repeatMode, volume]);
+  useEffect(() => {
+    if (!isMounted || currentTrack.id === 'placeholder') return;
+
+    const persistProgress = () => savePlaybackProgress(activeProfileId, currentTrack, progressRef.current);
+    persistProgress();
+    const interval = window.setInterval(persistProgress, 5000);
+    return () => {
+      window.clearInterval(interval);
+      persistProgress();
+    };
+  }, [activeProfileId, currentTrack, isMounted]);
 
   useEffect(() => {
     if (!isMounted || typeof window === 'undefined') return;
@@ -4704,7 +4844,7 @@ export default function SpiceApp() {
         ? data.devices.map((device: RemoteDevice) => ({
           ...device,
           currentTrack: device.currentTrack ? enrichTrackSnapshot(device.currentTrack) : null,
-          queue: Array.isArray(device.queue) ? device.queue.map(enrichTrackSnapshot) : [],
+          queue: Array.isArray(device.queue) ? enrichTrackSnapshots(device.queue) : [],
           shuffleEnabled: device.shuffleEnabled === true,
           repeatMode: isRepeatMode(device.repeatMode) ? device.repeatMode : 'none',
           lastSeenSeconds: Math.max(0, Math.round((Date.now() - new Date(device.updatedAt).getTime()) / 1000)),
@@ -4826,7 +4966,7 @@ export default function SpiceApp() {
         if (payloadTrack && typeof payloadTrack === 'object' && payloadTrack.id) {
           const hydratedTrack = enrichTrackSnapshot(payloadTrack as Track);
           const hydratedQueue = Array.isArray(command.payload?.queue)
-            ? command.payload.queue.map(enrichTrackSnapshot)
+            ? enrichTrackSnapshots(command.payload.queue)
             : [hydratedTrack];
           playTrack(hydratedTrack, hydratedQueue.length > 0 ? hydratedQueue : [hydratedTrack]);
         }
@@ -5032,7 +5172,7 @@ export default function SpiceApp() {
       const res = await spiceFetch('local', endpoint, undefined, params);
       if (!res.ok) throw new Error(`${SEARCH_PROVIDER_LABELS[targetProvider]} search failed`);
       const data = await res.json();
-      return playableSearchTracks((data.tracks ?? []).map(enrichTrackSnapshot) as Track[]);
+      return playableSearchTracks(enrichTrackSnapshots(data.tracks ?? []) as Track[]);
     };
 
     if (provider === 'hybrid') {
@@ -6264,7 +6404,7 @@ export default function SpiceApp() {
 
         if (hostTrack && (!localTrack || localTrack.id !== hostTrack.id)) {
           const hydratedQueue = hostQueue.length > 0 ? hostQueue : [hostTrack];
-          void playTrackRef.current(enrichTrackSnapshotRef.current(hostTrack), hydratedQueue.map(enrichTrackSnapshotRef.current), undefined, true);
+          void playTrackRef.current(enrichTrackSnapshotRef.current(hostTrack), enrichTrackSnapshots(hydratedQueue), undefined, true);
           return;
         }
 
@@ -6385,7 +6525,7 @@ export default function SpiceApp() {
       if (!response.ok) return; // silently ignore — the cached view still works
       const data = await response.json().catch(() => ({}));
       if (!Array.isArray(data.tracks)) return;
-      const freshTracks = (data.tracks as any[]).map(enrichTrackSnapshot);
+      const freshTracks = enrichTrackSnapshots(data.tracks as any[]);
       setCustomPlaylists((prev) => {
         const updated = prev.map((pl) =>
           pl.id === playlist.id ? { ...pl, tracks: freshTracks } : pl,
@@ -6926,13 +7066,15 @@ const getMaskedEmail = (email: string) => {
     logDebug('profile', `Switched active profile to "${target.displayName}" (Playlists: ${target.customPlaylists?.length || 0}, Likes: ${target.likedTracks?.length || 0})`);
 
     // Synchronize states immediately to prevent cascading renders
-    const targetHistory = (target.history || []).map(enrichTrackSnapshot);
+    const targetHistory = enrichTrackSnapshots(target.history || []);
+    const targetLikedEntries = Object.entries(target.likedTrackDetails || {});
+    const targetLikedTracks = enrichTrackSnapshots(targetLikedEntries.map(([, track]) => track));
     const targetLikedDetails = Object.fromEntries(
-      Object.entries(target.likedTrackDetails || {}).map(([id, track]) => [id, enrichTrackSnapshot(track)]),
+      targetLikedEntries.map(([id], index) => [id, targetLikedTracks[index]]),
     );
     const targetPlaylists = (target.customPlaylists || []).map((playlist) => ({
       ...playlist,
-      tracks: (playlist.tracks || []).map(enrichTrackSnapshot),
+      tracks: enrichTrackSnapshots(playlist.tracks || []),
     }));
     setLikedTracks(new Set(target.likedTracks));
     setLikedTrackDetails(targetLikedDetails);
@@ -7497,8 +7639,8 @@ const getMaskedEmail = (email: string) => {
         }
         .now-playing__song {
           gap: 10px !important;
-          flex-basis: clamp(150px, 22vw, 300px) !important;
-          max-width: clamp(150px, 22vw, 300px) !important;
+          flex-basis: clamp(140px, 18vw, 220px) !important;
+          max-width: clamp(140px, 18vw, 220px) !important;
         }
         .now-playing__art {
           width: 40px !important;
@@ -7578,9 +7720,6 @@ const getMaskedEmail = (email: string) => {
       }
       .app {
         background: var(--spice-app-background) !important;
-      }
-      .main__content {
-        padding: var(--spice-content-y) var(--spice-content-x) calc(var(--space-4xl) + 40px) !important;
       }
       .sidebar,
       .now-playing,
@@ -9038,27 +9177,48 @@ const getMaskedEmail = (email: string) => {
                     </button>
                   </div>
                 ) : (
-                  <div className="library-list">
-                    {selectedPlaylist.tracks.map((song, i) => {
+                  <VirtualTrackRows
+                    tracks={selectedPlaylist.tracks}
+                    height={`min(64vh, 720px, ${selectedPlaylist.tracks.length * PLAYLIST_ROW_HEIGHT_PX}px)`}
+                    resetKey={selectedPlaylist.id}
+                    className="playlist-track-window"
+                    ariaLabel={`${selectedPlaylist.title} tracks`}
+                    renderRow={(song, i) => {
                       const isLiked = likedTracks.has(song.id);
                       const isPlayingCurrent = playerTrack.id === song.id;
                       return (
-                        <div key={song.id} className="library-item animate-in">
+                        <div className="library-item">
                           <span className="library-item__index" style={{ width: '24px', color: 'var(--text-secondary)' }}>{i + 1}</span>
-                          <img className="library-item__art" src={song.artworkUrl || '/icon.svg'} alt={song.title} onClick={() => startTrackOnActiveReceiver(song, selectedPlaylist.tracks)} />
-                          <div className="library-item__info" onClick={() => startTrackOnActiveReceiver(song, selectedPlaylist.tracks)}>
-                            <span className="library-item__title" style={isPlayingCurrent ? { color: 'var(--accent-pink)' } : {}}>
-                              {song.title}
+                          <button
+                            type="button"
+                            className="library-item__play"
+                            onClick={() => startTrackOnActiveReceiver(song, selectedPlaylist.tracks)}
+                            aria-label={`Play ${song.title}`}
+                            aria-current={isPlayingCurrent ? 'true' : undefined}
+                          >
+                            <img
+                              className="library-item__art"
+                              src={song.artworkUrl || '/icon.svg'}
+                              alt=""
+                              loading="lazy"
+                              decoding="async"
+                              fetchPriority="low"
+                              draggable={false}
+                            />
+                            <span className="library-item__info">
+                              <span className="library-item__title" style={isPlayingCurrent ? { color: 'var(--accent-pink)' } : {}}>
+                                {song.title}
+                              </span>
+                              <span className="library-item__subtitle">
+                                {song.artists.map(a => a.name).join(', ')}
+                                {selectedPlaylist.shared && song.addedBy && (
+                                  <span style={{ marginLeft: '8px', fontSize: '0.72rem', background: 'rgba(255,255,255,0.06)', padding: '2px 6px', borderRadius: '4px', color: 'var(--accent-pink)', border: '1px solid rgba(255,255,255,0.04)' }}>
+                                    Added by {song.addedBy.displayName}
+                                  </span>
+                                )}
+                              </span>
                             </span>
-                            <span className="library-item__subtitle">
-                              {song.artists.map(a => a.name).join(', ')}
-                              {selectedPlaylist.shared && song.addedBy && (
-                                <span style={{ marginLeft: '8px', fontSize: '0.72rem', background: 'rgba(255,255,255,0.06)', padding: '2px 6px', borderRadius: '4px', color: 'var(--accent-pink)', border: '1px solid rgba(255,255,255,0.04)' }}>
-                                  Added by {song.addedBy.displayName}
-                                </span>
-                              )}
-                            </span>
-                          </div>
+                          </button>
 
                           {(isPlaylistOwner || (selectedPlaylist.shared && song.addedBy?.userId === cloudUser?.id)) && (
                             <button
@@ -9075,13 +9235,15 @@ const getMaskedEmail = (email: string) => {
                             className="library-item__action"
                             style={{ opacity: 1, color: isLiked ? 'var(--accent-pink)' : 'var(--text-muted)' }}
                             onClick={() => toggleLike(song)}
+                            title={isLiked ? `Unlike ${song.title}` : `Like ${song.title}`}
+                            aria-label={isLiked ? `Unlike ${song.title}` : `Like ${song.title}`}
                           >
                             {isLiked ? Icons.heartFilled : Icons.heart}
                           </button>
                         </div>
                       );
-                    })}
-                  </div>
+                    }}
+                  />
                 )}
               </section>
             </div>
@@ -12239,21 +12401,37 @@ const getMaskedEmail = (email: string) => {
             <h4 style={{ margin: 0, fontSize: '1rem', fontWeight: 800, fontFamily: 'Outfit, sans-serif' }}>Play Queue</h4>
             <button onClick={() => setShowQueueDrawer(false)} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', display: 'inline-flex' }} title="Close queue">{Icons.close}</button>
           </div>
-          <div style={{ overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '280px', paddingRight: '4px' }} className="custom-scrollbar">
-            {playerQueue.length === 0 && (
-              <div style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', padding: '12px', textAlign: 'center' }}>
-                {isControllingRemoteReceiver ? `${receiverLabel} has no visible queue yet.` : 'Queue is empty.'}
-              </div>
-            )}
-            {playerQueue.map((song, idx) => {
+          {playerQueue.length === 0 ? (
+            <div style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', padding: '12px', textAlign: 'center' }}>
+              {isControllingRemoteReceiver ? `${receiverLabel} has no visible queue yet.` : 'Queue is empty.'}
+            </div>
+          ) : (
+            <VirtualTrackRows
+              tracks={playerQueue}
+              height={280}
+              rowHeight={62}
+              resetKey={`${isControllingRemoteReceiver ? selectedRemoteDeviceId : activeProfileId}:queue-drawer:${trackListFingerprint(playerQueue)}`}
+              focusIndex={playerQueueIndex}
+              ariaLabel="Play queue"
+              renderRow={(song, idx) => {
               const isActive = idx === playerQueueIndex;
               return (
                 <div
-                  key={`${song.id}-${idx}`}
-                  style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px', borderRadius: '8px', background: isActive ? 'rgba(255,255,255,0.06)' : 'transparent', border: isActive ? '1px solid var(--accent-pink)' : '1px solid transparent', cursor: 'pointer', transition: 'all 0.15s ease' }}
+                  role="button"
+                  tabIndex={0}
+                  aria-current={isActive ? 'true' : undefined}
+                  aria-label={`Play ${song.title}`}
+                  style={{ display: 'flex', alignItems: 'center', gap: '10px', height: '100%', boxSizing: 'border-box', padding: '8px', borderRadius: '8px', background: isActive ? 'rgba(255,255,255,0.06)' : 'transparent', border: isActive ? '1px solid var(--accent-pink)' : '1px solid transparent', cursor: 'pointer', transition: 'all 0.15s ease' }}
                   onClick={() => startTrackOnActiveReceiver(song, playerQueue)}
+                  onKeyDown={(event) => {
+                    if (event.target !== event.currentTarget) return;
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      startTrackOnActiveReceiver(song, playerQueue);
+                    }
+                  }}
                 >
-                  <img src={song.artworkUrl || '/icon.svg'} alt="" style={{ width: '36px', height: '36px', borderRadius: '4px', objectFit: 'cover' }} />
+                  <img src={song.artworkUrl || '/icon.svg'} alt="" loading="lazy" decoding="async" fetchPriority="low" draggable={false} style={{ width: '36px', height: '36px', borderRadius: '4px', objectFit: 'cover' }} />
                   <div style={{ minWidth: 0, flex: 1 }}>
                     <div style={{ fontSize: '0.85rem', fontWeight: 600, color: isActive ? 'var(--accent-pink)' : '#fff' }} className="truncate">{song.title}</div>
                     <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }} className="truncate">{song.artists.map(a => a.name).join(', ')}</div>
@@ -12264,9 +12442,14 @@ const getMaskedEmail = (email: string) => {
                         e.stopPropagation();
                         const newQ = [...queue];
                         newQ.splice(idx, 1);
-                        setQueue(newQ);
-                        if (queueIndex >= newQ.length) {
-                          setQueueIndex(Math.max(0, newQ.length - 1));
+                        if (idx === queueIndex) {
+                          const nextIndex = Math.min(idx, newQ.length - 1);
+                          startTrackOnActiveReceiver(newQ[nextIndex], newQ);
+                        } else {
+                          setQueue(newQ);
+                          if (idx < queueIndex) {
+                            setQueueIndex(queueIndex - 1);
+                          }
                         }
                       }}
                       style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', opacity: 0.6, fontSize: '0.8rem' }}
@@ -12277,8 +12460,9 @@ const getMaskedEmail = (email: string) => {
                   )}
                 </div>
               );
-            })}
-          </div>
+              }}
+            />
+          )}
           <div style={{ marginTop: '12px', display: 'flex', gap: '8px', justifyContent: 'flex-end', borderTop: '1px solid var(--border-color)', paddingTop: '10px' }}>
             <button className="btn btn--ghost" style={{ padding: '4px 8px', fontSize: '0.75rem' }} disabled={isControllingRemoteReceiver} onClick={() => {
               setQueue([currentTrack]);
@@ -12942,29 +13126,45 @@ const getMaskedEmail = (email: string) => {
 
                 {expandedTab === 'queue' && (
                   <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                    <div style={{ overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '310px', paddingRight: '4px' }} className="custom-scrollbar">
-                      {playerQueue.length === 0 && (
+                    {playerQueue.length === 0 ? (
                         <div style={{ color: 'var(--text-secondary)', fontSize: '0.86rem', padding: '12px', textAlign: 'center' }}>
                           {isControllingRemoteReceiver ? `${receiverLabel} has no visible queue yet.` : 'Queue is empty.'}
                         </div>
-                      )}
-                      {playerQueue.map((song, idx) => {
+                    ) : (
+                      <VirtualTrackRows
+                        tracks={playerQueue}
+                        height={310}
+                        rowHeight={66}
+                        resetKey={`${isControllingRemoteReceiver ? selectedRemoteDeviceId : activeProfileId}:expanded-queue:${trackListFingerprint(playerQueue)}`}
+                        focusIndex={playerQueueIndex}
+                        ariaLabel="Expanded play queue"
+                        renderRow={(song, idx) => {
                         const isActive = idx === playerQueueIndex;
                         return (
                           <div
-                            key={`${song.id}-${idx}`}
+                            role="button"
+                            tabIndex={0}
+                            aria-current={isActive ? 'true' : undefined}
+                            aria-label={`Play ${song.title}`}
                             onClick={() => startTrackOnActiveReceiver(song, playerQueue)}
-                            style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px', borderRadius: '12px', background: isActive ? 'rgba(255,255,255,0.06)' : 'transparent', border: isActive ? '1px solid var(--accent-pink)' : '1px solid transparent', cursor: 'pointer', transition: 'all 0.15s ease' }}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter' || event.key === ' ') {
+                                event.preventDefault();
+                                startTrackOnActiveReceiver(song, playerQueue);
+                              }
+                            }}
+                            style={{ display: 'flex', alignItems: 'center', gap: '12px', height: '100%', boxSizing: 'border-box', padding: '10px', borderRadius: '12px', background: isActive ? 'rgba(255,255,255,0.06)' : 'transparent', border: isActive ? '1px solid var(--accent-pink)' : '1px solid transparent', cursor: 'pointer', transition: 'all 0.15s ease' }}
                           >
-                            <img src={song.artworkUrl || '/icon.svg'} alt="" style={{ width: '40px', height: '40px', borderRadius: '6px', objectFit: 'cover' }} />
+                            <img src={song.artworkUrl || '/icon.svg'} alt="" loading="lazy" decoding="async" fetchPriority="low" draggable={false} style={{ width: '40px', height: '40px', borderRadius: '6px', objectFit: 'cover' }} />
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ fontSize: '0.85rem', fontWeight: 600, color: isActive ? 'var(--accent-pink)' : '#fff' }} className="truncate">{song.title}</div>
                               <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }} className="truncate">{song.artists.map(a => a.name).join(', ')}</div>
                             </div>
                           </div>
                         );
-                      })}
-                    </div>
+                        }}
+                      />
+                    )}
                   </div>
                 )}
 
