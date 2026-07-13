@@ -665,20 +665,9 @@ interface SpiceConfirmDialog {
   onConfirm: () => void;
 }
 
-interface SpiceDesktopWindowBridge {
-  getAlwaysOnTop: () => Promise<boolean>;
-  setAlwaysOnTop: (enabled: boolean) => Promise<boolean>;
-}
-
 interface SpiceDesktopNavigationDetail {
-  action: 'back';
+  action: 'back' | 'settings';
   handled: boolean;
-}
-
-declare global {
-  interface Window {
-    spiceDesktopWindow?: SpiceDesktopWindowBridge;
-  }
 }
 
 interface SongShareDialog {
@@ -1617,10 +1606,6 @@ export default function SpiceApp() {
   const [sidebarSearchEnabled, setSidebarSearchEnabled] = useState(true);
   const [sidebarProfileEnabled, setSidebarProfileEnabled] = useState(true);
   const [sidebarSettingsEnabled, setSidebarSettingsEnabled] = useState(true);
-  const [desktopWindowControlsAvailable, setDesktopWindowControlsAvailable] = useState(false);
-  const [alwaysOnTop, setAlwaysOnTop] = useState(false);
-  const [alwaysOnTopPending, setAlwaysOnTopPending] = useState(false);
-  const [alwaysOnTopError, setAlwaysOnTopError] = useState<string | null>(null);
   const [profileSyncEnabled, setProfileSyncEnabled] = useState(false);
   const [lastFmSessionKey, setLastFmSessionKey] = useState('');
   const [lastFmAccountLinked, setLastFmAccountLinked] = useState(false);
@@ -1973,7 +1958,17 @@ export default function SpiceApp() {
   useEffect(() => {
     const handleDesktopNavigation = (event: Event) => {
       const detail = (event as CustomEvent<SpiceDesktopNavigationDetail>).detail;
-      if (!detail || detail.action !== 'back' || detail.handled) return;
+      if (!detail || detail.handled) return;
+
+      if (detail.action === 'settings') {
+        setSelectedPlaylist(null);
+        setSelectedUser(null);
+        setCurrentPage('settings');
+        detail.handled = true;
+        return;
+      }
+
+      if (detail.action !== 'back') return;
 
       if (selectedPlaylist) {
         setSelectedPlaylist(null);
@@ -3014,39 +3009,6 @@ export default function SpiceApp() {
         setIsProfileHydrated(true);
       }
     }
-  }, []);
-
-  useEffect(() => {
-    const bridge = window.spiceDesktopWindow;
-    if (
-      !bridge
-      || typeof bridge.getAlwaysOnTop !== 'function'
-      || typeof bridge.setAlwaysOnTop !== 'function'
-    ) {
-      return;
-    }
-
-    let cancelled = false;
-    setDesktopWindowControlsAvailable(true);
-    setAlwaysOnTopPending(true);
-    setAlwaysOnTopError(null);
-
-    void bridge.getAlwaysOnTop()
-      .then((enabled) => {
-        if (!cancelled) setAlwaysOnTop(enabled);
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        const message = error instanceof Error ? error.message : 'Could not read the desktop window setting.';
-        setAlwaysOnTopError(message);
-      })
-      .finally(() => {
-        if (!cancelled) setAlwaysOnTopPending(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
   useEffect(() => {
@@ -6201,23 +6163,6 @@ export default function SpiceApp() {
     localStorage.setItem('spice_sidebar_settings_enabled', String(enabled));
   };
 
-  const updateAlwaysOnTopPreference = async (enabled: boolean) => {
-    const bridge = window.spiceDesktopWindow;
-    if (!bridge || alwaysOnTopPending) return;
-
-    setAlwaysOnTopPending(true);
-    setAlwaysOnTopError(null);
-    try {
-      const applied = await bridge.setAlwaysOnTop(enabled);
-      setAlwaysOnTop(applied);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Could not update the desktop window setting.';
-      setAlwaysOnTopError(message);
-    } finally {
-      setAlwaysOnTopPending(false);
-    }
-  };
-
   useEffect(() => {
     if (currentPage !== 'home') {
       setHomeRecommendationSeed(null);
@@ -6780,7 +6725,7 @@ export default function SpiceApp() {
       }
       return next;
     });
-  }, []);
+  }, [setNotificationTrayOpen]);
 
   const markAllReleaseNotificationsAsRead = useCallback(() => {
     const allIds = releaseNotifications.map(n => n.id);
@@ -11860,38 +11805,6 @@ const getMaskedEmail = (email: string) => {
                       </div>
                     </div>
                   </div>
-
-                  {desktopWindowControlsAvailable && (
-                    <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
-                      <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif' }}>Desktop Window</h3>
-                      <p id="always-on-top-description" style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0 0 20px 0', lineHeight: 1.4 }}>
-                        Keep SPICE visible above your other apps. This setting is available in the desktop app only.
-                      </p>
-
-                      <label style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '14px', background: '#070707', cursor: alwaysOnTopPending ? 'wait' : 'pointer', opacity: alwaysOnTopPending ? 0.72 : 1 }}>
-                        <input
-                          type="checkbox"
-                          checked={alwaysOnTop}
-                          disabled={alwaysOnTopPending}
-                          onChange={(event) => void updateAlwaysOnTopPreference(event.target.checked)}
-                          aria-describedby={`always-on-top-description${alwaysOnTopError ? ' always-on-top-error' : ''}`}
-                          style={{ accentColor: 'var(--accent-pink)', marginTop: '3px' }}
-                        />
-                        <span style={{ flex: 1 }}>
-                          <span style={{ display: 'block', color: '#fff', fontWeight: 800, fontSize: '0.9rem' }}>Always on top</span>
-                          <span style={{ display: 'block', color: 'var(--text-secondary)', fontSize: '0.74rem', lineHeight: 1.4, marginTop: '4px' }}>
-                            {alwaysOnTopPending ? 'Updating the window...' : alwaysOnTop ? 'SPICE will stay above other windows.' : 'SPICE can sit behind other windows.'}
-                          </span>
-                        </span>
-                      </label>
-
-                      {alwaysOnTopError && (
-                        <p id="always-on-top-error" role="alert" style={{ color: '#f87171', fontSize: '0.78rem', margin: '12px 0 0 0', lineHeight: 1.4 }}>
-                          {alwaysOnTopError}
-                        </p>
-                      )}
-                    </div>
-                  )}
 
                   {/* Profile Privacy Settings */}
                   <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>

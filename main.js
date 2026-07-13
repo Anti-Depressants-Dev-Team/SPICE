@@ -118,6 +118,8 @@ const SERVICES = {
 };
 const DEFAULT_STARTUP_SERVICE = "spice_crazy";
 const DEFAULT_NATIVE_STARTUP_SERVICE = "home";
+const DESKTOP_STARTUP_SERVICES = new Set(["home", "yt", "sc", "spice_crazy"]);
+const DESKTOP_AD_BLOCKERS = new Set(["spice", "ublock", "none"]);
 const DEFAULT_TOOLBAR_BUTTONS = {
   back: true,
   reload: true,
@@ -149,6 +151,14 @@ function broadcastShellTheme() {
   }
   if (toolbarSettingsWindow && !toolbarSettingsWindow.isDestroyed()) {
     sendShellTheme(toolbarSettingsWindow.webContents);
+  }
+}
+
+function broadcastUpdateStatus(payload) {
+  for (const target of [mainWindow, settingsWindow]) {
+    if (target && !target.isDestroyed()) {
+      target.webContents.send("update-status", payload);
+    }
   }
 }
 
@@ -3120,24 +3130,24 @@ app.whenReady().then(async () => {
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.on("checking-for-update", () => {
-    if (mainWindow) mainWindow.webContents.send("update-status", { status: "checking" });
+    broadcastUpdateStatus({ status: "checking" });
   });
   autoUpdater.on("update-available", (info) => {
-    if (mainWindow) mainWindow.webContents.send("update-status", { status: "available", info });
+    broadcastUpdateStatus({ status: "available", info });
   });
   autoUpdater.on("update-not-available", (info) => {
-    if (mainWindow) mainWindow.webContents.send("update-status", { status: "not-available", info });
+    broadcastUpdateStatus({ status: "not-available", info });
   });
   autoUpdater.on("error", (err) => {
-    if (mainWindow) mainWindow.webContents.send("update-status", { status: "error", error: err.message });
+    broadcastUpdateStatus({ status: "error", error: err.message });
   });
   autoUpdater.on("download-progress", (progressObj) => {
-    if (mainWindow) mainWindow.webContents.send("update-status", { status: "downloading", progress: progressObj });
+    broadcastUpdateStatus({ status: "downloading", progress: progressObj });
   });
   autoUpdater.on("update-downloaded", (info) => {
     downloadedUpdateInfo = info;
     skipDownloadedUpdateOnClose = false;
-    if (mainWindow) mainWindow.webContents.send("update-status", { status: "downloaded", info });
+    broadcastUpdateStatus({ status: "downloaded", info });
     setTimeout(() => {
       promptForDownloadedUpdate(info).catch((error) => {
         console.error("Failed to prompt for downloaded update:", error);
@@ -3666,6 +3676,34 @@ app.whenReady().then(async () => {
     createSettingsWindow();
   });
 
+  ipcMain.handle("open-spice-settings", async () => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return { success: false, error: "The main Spice window is not available." };
+    }
+
+    if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.close();
+    mainWindow.show();
+    mainWindow.focus();
+
+    if (currentService !== "spice_crazy" || !view || view.webContents.isDestroyed()) {
+      await loadService("spice_crazy");
+    }
+
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      if (
+        currentService === "spice_crazy" &&
+        view &&
+        !view.webContents.isDestroyed() &&
+        await dispatchSpiceDesktopNavigation("settings")
+      ) {
+        return { success: true };
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    return { success: false, error: "SPICE Music did not finish opening its settings page." };
+  });
+
   ipcMain.on("open-toolbar-settings", () => {
     createToolbarSettingsWindow();
   });
@@ -3857,9 +3895,10 @@ app.whenReady().then(async () => {
   });
 
   ipcMain.on("set-topbar-search", (event, enabled) => {
-    if (store) store.set("topBarSearchEnabled", enabled);
+    const next = enabled === true;
+    if (store) store.set("topBarSearchEnabled", next);
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send("topbar-search-visibility", enabled);
+      mainWindow.webContents.send("topbar-search-visibility", next);
     }
   });
 
@@ -3913,8 +3952,10 @@ app.whenReady().then(async () => {
   });
 
   ipcMain.on("set-vk-player", (event, enabled) => {
-    if (store) store.set("vkPlayerEnabled", enabled);
-    console.log(`VK Player on YT Music set to ${enabled}. Restarting...`);
+    const next = enabled === true;
+    if (store && store.get("vkPlayerEnabled", false) === next) return;
+    if (store) store.set("vkPlayerEnabled", next);
+    console.log(`VK Player on YT Music set to ${next}. Restarting...`);
     app.relaunch();
     app.exit();
   });
@@ -3924,12 +3965,14 @@ app.whenReady().then(async () => {
     let type = "spice"; // Default
     if (typeof value === "boolean") {
       type = value ? "spice" : "none";
-    } else if (typeof value === "string") {
+    } else if (typeof value === "string" && DESKTOP_AD_BLOCKERS.has(value)) {
       type = value;
     }
     if (type === "ublock_lite") {
       type = "spice";
     }
+    if (!DESKTOP_AD_BLOCKERS.has(type)) return;
+    if (store && store.get("adBlockerType", "spice") === type) return;
 
     console.log(`IPC: Setting AdBlocker to [${type}]`);
 
@@ -3951,6 +3994,8 @@ app.whenReady().then(async () => {
       console.log("Native mode ignores default service changes; SPICE Music is the only startup service.");
       return;
     }
+    if (!DESKTOP_STARTUP_SERVICES.has(service)) return;
+    if (store && store.get("defaultService", DEFAULT_STARTUP_SERVICE) === service) return;
     if (store) store.set("defaultService", service);
     console.log(`Default Service set to ${service}. Restarting...`);
     app.relaunch();
@@ -3958,8 +4003,10 @@ app.whenReady().then(async () => {
   });
 
   ipcMain.on("set-discord-rpc", (event, enabled) => {
-    if (store) store.set("discordRpcEnabled", enabled);
-    if (enabled) {
+    const next = enabled === true;
+    if (store) store.set("discordRpcEnabled", next);
+    if (!discordRpc) return;
+    if (next) {
       discordRpc.connect();
       console.log("Discord RPC: ENABLED");
     } else {

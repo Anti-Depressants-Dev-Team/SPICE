@@ -1,5 +1,13 @@
 # SPICE Walkthrough
 
+## v1.0.131
+
+- [Spice.Home main] Reorganize Desktop Settings around Electron-only controls, clarify the scope of embedded-service scrobbling, and link directly into SPICE Music Settings for cross-platform preferences.
+- [Spice.Home main] Repair desktop update progress delivery, harden restart-based setting validation, avoid no-op restarts, and confirm the YouTube Music VK layout restart before applying it.
+- [Spice.Music main] Remove the duplicate Always on Top control so the Electron-only preference has one authoritative home in Desktop Settings.
+- [Spice.Music main] Accept a desktop navigation intent that opens the cross-platform settings page directly.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.131`.
+
 ## v1.0.130
 
 - [Spice.Music main] Publish the completed palette-aware local player so the sidebar logo, wordmark, topbar glow, search action, menus, and desktop shell follow every built-in or custom theme.

@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld("api", {
   loadService: (service) => ipcRenderer.send("load-service", service),
   navigate: (action) => ipcRenderer.send("navigate", action),
   openSettings: () => ipcRenderer.send("open-settings"),
+  openSpiceSettings: () => ipcRenderer.invoke("open-spice-settings"),
   openToolbarSettings: () => ipcRenderer.send("open-toolbar-settings"),
   setVolume: (value) => ipcRenderer.send("set-volume", value),
   loadUrl: (url) => ipcRenderer.invoke("load-url", url),
