@@ -30,13 +30,13 @@ For new admin-only endpoints, prefer `requireAdminAccount(session)` from `lib/ac
 
 ## Admin Bootstrap
 
-New signups are created as `user` unless their normalized email appears in `SPICE_ADMIN_EMAILS`.
+New signups are created only after email ownership is verified. A verified signup becomes `user` unless its normalized email appears in `SPICE_ADMIN_EMAILS`.
 
 ```env
 SPICE_ADMIN_EMAILS=owner@example.com,ops@example.com
 ```
 
-That environment variable only affects account creation. Promote or demote existing accounts with SQL:
+That environment variable is checked after successful verification and only affects account creation. Promote or demote existing accounts with SQL:
 
 ```sql
 update users
@@ -50,7 +50,21 @@ where email = 'owner@example.com';
 
 ## Auth Response Contract
 
-`POST /api/cloud/auth/spice/signup`, `POST /api/cloud/auth/spice/signin`, and `GET /api/cloud/account/me` return an account snapshot as both `user` and `account` for backward compatibility. The auth endpoints also return a `token`; `GET /api/cloud/account/me` does not issue a new token.
+`POST /api/cloud/auth/spice/signup` starts a pending registration and never issues a session. `POST /api/cloud/auth/spice/verify-email` creates the account after the correct code is supplied and returns the same session shape as `POST /api/cloud/auth/spice/signin`. `GET /api/cloud/account/me` returns the account snapshot without issuing a new token.
+
+Signup response:
+
+```json
+{
+  "verificationRequired": true,
+  "registrationId": "uuid",
+  "email": "pe****@example.com",
+  "expiresAt": "2026-07-13T12:10:00.000Z",
+  "resendAfterSeconds": 60
+}
+```
+
+Submit `{ "registrationId": "uuid", "code": "123456" }` to `/api/auth/spice/verify-email`. To request a replacement code, submit `{ "registrationId": "uuid" }` to `/api/auth/spice/resend-verification`.
 
 ```json
 {
@@ -58,6 +72,7 @@ where email = 'owner@example.com';
   "user": {
     "id": "uuid",
     "email": "person@example.com",
+    "emailVerified": true,
     "accountRole": "user",
     "isAdmin": false,
     "subscription": {
@@ -72,6 +87,7 @@ where email = 'owner@example.com';
   "account": {
     "id": "uuid",
     "email": "person@example.com",
+    "emailVerified": true,
     "accountRole": "user",
     "isAdmin": false,
     "subscription": {
@@ -105,12 +121,24 @@ The `account_subscriptions` table is intentionally billing-provider neutral. It 
 
 If no subscription row exists, API helpers serialize the account as `free` and `inactive`. A subscription is considered active when its status is `active` or `trialing` and `current_period_end` is absent or in the future.
 
+## Spice Connect pairing
+
+Migration `0009_spice_connect_pairing.sql` adds short-lived, single-use pairing codes and revocable device authorizations. Pairing codes and device credentials are stored only as keyed hashes. Set `SPICE_PAIRING_SECRET` to an independent high-entropy value in production, or the service falls back to `JWT_SECRET`.
+
+Pairing codes expire after five minutes and can be consumed only once. A successful claim returns a device-scoped `spice_pair_...` bearer credential that expires after 30 days. The credential can access only Spice Connect remote-device and command routes, is bound to the claimed device ID, and does not create a cloud account session. Revoking its authorization immediately causes the next remote request to return `401`; native clients must erase the rejected credential and require a new pairing code.
+
 ## Migration
 
-After deploying this change, run:
+Migration `0010_email_verification.sql` adds pending verification challenges and `users.email_verified_at`. It marks every user that existed at migration time as verified; new users are inserted only by successful verification.
+
+Production email delivery requires `RESEND_API_KEY`, a verified sending domain, and `SPICE_EMAIL_FROM`. Configure SPF and DKIM with the email provider and add DMARC at the domain host. Local development without a Resend key writes the code to the backend console and never returns it to the client.
+
+Before deploying or promoting pairing or email-verification code, apply migrations `0009`, `0010`, and `0011` to the production database:
 
 ```bash
 npm run db:migrate --workspace @spice/backend
 ```
+
+The application reads the new user column and challenge/rate-limit tables immediately, so promoting code before these migrations would break account routes.
 
 For local database prototyping without migration files, `npm run db:push --workspace @spice/backend` can also apply the schema.

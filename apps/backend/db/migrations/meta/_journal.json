@@ -64,6 +64,27 @@
       "when": 1783634389408,
       "tag": "0008_spice_connect_playback_modes",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1783901145886,
+      "tag": "0009_spice_connect_pairing",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1783903268594,
+      "tag": "0010_email_verification",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1783904512413,
+      "tag": "0011_email_verification_rate_limits",
+      "breakpoints": true
     }
   ]
 }

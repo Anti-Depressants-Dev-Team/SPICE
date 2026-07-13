@@ -33,6 +33,7 @@ export interface AccountSnapshot {
   id: string;
   email: string;
   username: string | null;
+  emailVerified: boolean;
   accountRole: AccountRole;
   isAdmin: boolean;
   subscription: AccountSubscriptionSnapshot;
@@ -42,6 +43,7 @@ interface AccountRecord {
   id: string;
   email: string;
   username?: string | null;
+  emailVerifiedAt?: Date | string | null;
   accountRole?: string | null;
 }
 
@@ -120,6 +122,7 @@ export function serializeAccount(account: AccountRecord, subscription?: Subscrip
     id: account.id,
     email: account.email,
     username: username || null,
+    emailVerified: Boolean(account.emailVerifiedAt),
     accountRole,
     isAdmin: isAdminRole(accountRole),
     subscription: serializeSubscription(subscription),

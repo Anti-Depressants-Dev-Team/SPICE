@@ -1,4 +1,4 @@
-import { pbkdf2Sync, randomBytes } from 'crypto';
+import { pbkdf2, pbkdf2Sync, randomBytes, timingSafeEqual } from 'crypto';
 
 const ITERATIONS = 600000;
 const LEGACY_ITERATIONS = 10000;
@@ -36,4 +36,48 @@ export function verifyPassword(password: string, storedHash: string): boolean {
   }
 
   return false;
+}
+
+/**
+ * Asynchronously verify a password using libuv's worker pool so an auth
+ * request does not block the Node.js event loop during PBKDF2.
+ */
+export async function verifyPasswordAsync(password: string, storedHash: string): Promise<boolean> {
+  const parsed = parseStoredPasswordHash(storedHash);
+  if (!parsed) return false;
+
+  return new Promise((resolve) => {
+    pbkdf2(password, parsed.salt, parsed.iterations, 64, 'sha512', (error, derivedKey) => {
+      if (error) {
+        resolve(false);
+        return;
+      }
+      const expected = Buffer.from(parsed.hash, 'hex');
+      resolve(expected.length === derivedKey.length && timingSafeEqual(expected, derivedKey));
+    });
+  });
+}
+
+function parseStoredPasswordHash(storedHash: string) {
+  const parts = storedHash.split(':');
+  let salt: string;
+  let iterations: number;
+  let hash: string;
+  if (parts.length === 2) {
+    [salt, hash] = parts;
+    iterations = LEGACY_ITERATIONS;
+  } else if (parts.length === 3) {
+    const [parsedSalt, iterationsString, parsedHash] = parts;
+    salt = parsedSalt;
+    hash = parsedHash;
+    iterations = Number(iterationsString);
+  } else {
+    return null;
+  }
+
+  if (!salt || !hash || !Number.isSafeInteger(iterations) || iterations <= 0
+    || hash.length % 2 !== 0 || !/^[a-f0-9]+$/i.test(hash)) {
+    return null;
+  }
+  return { salt, iterations, hash };
 }

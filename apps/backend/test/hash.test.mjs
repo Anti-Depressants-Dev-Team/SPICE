@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { hashPassword, verifyPassword } from '../lib/hash.ts';
+import { hashPassword, verifyPassword, verifyPasswordAsync } from '../lib/hash.ts';
 import { pbkdf2Sync, randomBytes } from 'crypto';
 
 test('hashPassword generates valid hash structure', () => {
@@ -38,6 +38,33 @@ test('verifyPassword handles malformed hashes', () => {
   assert.equal(verifyPassword('password', 'salt:not-a-number:hash'), false);
   assert.equal(verifyPassword('password', 'salt:600000:'), false);
   assert.equal(verifyPassword('password', 'part1:part2:part3:part4'), false);
+});
+
+test('verifyPasswordAsync matches new and legacy hashes without changing the sync API', async () => {
+  const password = 'async-password';
+  const currentHash = hashPassword(password);
+  const legacySalt = randomBytes(16).toString('hex');
+  const legacyDigest = pbkdf2Sync(password, legacySalt, 10000, 64, 'sha512').toString('hex');
+
+  assert.equal(await verifyPasswordAsync(password, currentHash), true);
+  assert.equal(await verifyPasswordAsync('wrong-password', currentHash), false);
+  assert.equal(await verifyPasswordAsync(password, `${legacySalt}:${legacyDigest}`), true);
+  assert.equal(await verifyPasswordAsync(password, 'malformed'), false);
+  assert.equal(verifyPassword(password, currentHash), true);
+});
+
+test('verifyPasswordAsync yields while PBKDF2 runs in the worker pool', async () => {
+  const password = 'event-loop-password';
+  const currentHash = hashPassword(password);
+  let immediateRan = false;
+  const verification = verifyPasswordAsync(password, currentHash);
+  await new Promise((resolve) => setImmediate(() => {
+    immediateRan = true;
+    resolve();
+  }));
+
+  assert.equal(immediateRan, true);
+  assert.equal(await verification, true);
 });
 
 test('hashPassword creates a properly formatted hash string', () => {

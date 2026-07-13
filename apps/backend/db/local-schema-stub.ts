@@ -8,6 +8,8 @@ const tableStub = new Proxy(
 );
 
 export const users = tableStub;
+export const emailVerificationChallenges = tableStub;
+export const emailVerificationRateLimits = tableStub;
 export const accountSubscriptions = tableStub;
 export const oauthLinks = tableStub;
 export const playlists = tableStub;
@@ -16,6 +18,8 @@ export const playlistInvites = tableStub;
 export const playlistMembers = tableStub;
 export const remoteDevices = tableStub;
 export const remoteCommands = tableStub;
+export const remotePairingCodes = tableStub;
+export const remoteDeviceAuthorizations = tableStub;
 export const likes = tableStub;
 export const history = tableStub;
 export const profiles = tableStub;

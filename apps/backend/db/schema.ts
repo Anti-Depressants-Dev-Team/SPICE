@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, uuid, integer, bigint, boolean, primaryKey, index } from 'drizzle-orm/pg-core';
+import { pgTable, text, timestamp, uuid, integer, bigint, boolean, primaryKey, index, uniqueIndex } from 'drizzle-orm/pg-core';
 
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -6,8 +6,47 @@ export const users = pgTable('users', {
   username: text('username').unique(),
   passwordHash: text('password_hash'),
   accountRole: text('account_role').notNull().default('user'),
+  emailVerifiedAt: timestamp('email_verified_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+export const emailVerificationChallenges = pgTable(
+  'email_verification_challenges',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    email: text('email').notNull(),
+    username: text('username').notNull(),
+    passwordHash: text('password_hash').notNull(),
+    codeHash: text('code_hash').notNull(),
+    requestIpHash: text('request_ip_hash').notNull(),
+    attemptCount: integer('attempt_count').notNull().default(0),
+    sendCount: integer('send_count').notNull().default(1),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    lastSentAt: timestamp('last_sent_at', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    consumedAt: timestamp('consumed_at', { withTimezone: true }),
+  },
+  (t) => [
+    index('email_verification_email_created_idx').on(t.email, t.createdAt),
+    index('email_verification_ip_created_idx').on(t.requestIpHash, t.createdAt),
+    index('email_verification_expiry_idx').on(t.expiresAt),
+  ],
+);
+
+export const emailVerificationRateLimits = pgTable(
+  'email_verification_rate_limits',
+  {
+    scope: text('scope').notNull(),
+    keyHash: text('key_hash').notNull(),
+    windowStart: timestamp('window_start', { withTimezone: true }).notNull(),
+    attemptCount: integer('attempt_count').notNull().default(1),
+    lastAttemptAt: timestamp('last_attempt_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.scope, t.keyHash, t.windowStart] }),
+    index('email_verification_rate_window_idx').on(t.windowStart),
+  ],
+);
 
 export const accountSubscriptions = pgTable(
   'account_subscriptions',
@@ -147,6 +186,50 @@ export const remoteCommands = pgTable('remote_commands', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   consumedAt: timestamp('consumed_at', { withTimezone: true }),
 });
+
+export const remotePairingCodes = pgTable(
+  'remote_pairing_codes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    issuerDeviceId: text('issuer_device_id').notNull(),
+    codeHash: text('code_hash').notNull().unique(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    consumedAt: timestamp('consumed_at', { withTimezone: true }),
+    consumedByDeviceId: text('consumed_by_device_id'),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  },
+  (t) => [
+    index('remote_pairing_codes_issuer_idx').on(t.userId, t.issuerDeviceId),
+    index('remote_pairing_codes_expiry_idx').on(t.expiresAt),
+  ],
+);
+
+export const remoteDeviceAuthorizations = pgTable(
+  'remote_device_authorizations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    issuerDeviceId: text('issuer_device_id').notNull(),
+    deviceId: text('device_id').notNull(),
+    displayName: text('display_name').notNull().default('Paired Spice Device'),
+    tokenHash: text('token_hash').notNull().unique(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('remote_device_authorizations_user_device_idx').on(t.userId, t.deviceId),
+    index('remote_device_authorizations_user_idx').on(t.userId, t.createdAt),
+    index('remote_device_authorizations_expiry_idx').on(t.expiresAt),
+  ],
+);
 
 export const likes = pgTable(
   'likes',

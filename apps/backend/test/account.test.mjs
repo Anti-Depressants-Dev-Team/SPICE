@@ -32,6 +32,7 @@ test('account serialization includes role and default free subscription snapshot
       id: 'user-1',
       email: 'listener@example.com',
       username: 'listener',
+      emailVerified: false,
       accountRole: 'user',
       isAdmin: false,
       subscription: {
@@ -44,6 +45,11 @@ test('account serialization includes role and default free subscription snapshot
       },
     },
   );
+  assert.equal(serializeAccount({
+    id: 'user-2',
+    email: 'verified@example.com',
+    emailVerifiedAt: new Date('2026-07-13T00:00:00.000Z'),
+  }).emailVerified, true);
 });
 
 test('subscription serialization preserves future plan codes and active state', () => {
