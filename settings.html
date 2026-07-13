@@ -50,13 +50,14 @@
             .settings-content {
                 overflow-y: auto;
                 flex-grow: 1;
-                padding: 20px;
+                padding: 24px;
+                scrollbar-color: rgba(var(--accent-rgb), 0.55) transparent;
             }
 
             .settings-header {
-                border-bottom: 1px solid #333;
-                padding-bottom: 10px;
-                margin-bottom: 20px;
+                border-bottom: 1px solid rgba(var(--accent-rgb), 0.18);
+                padding-bottom: 12px;
+                margin: 8px 0 16px;
             }
 
             h2 {
@@ -65,7 +66,34 @@
             }
 
             .settings-section {
-                margin-bottom: 30px;
+                margin-bottom: 14px;
+                padding: 18px;
+                border: 1px solid rgba(var(--accent-rgb), 0.16);
+                border-radius: 14px;
+                background: rgba(255, 255, 255, 0.025);
+            }
+
+            .settings-intro {
+                margin: 0 0 20px;
+                color: #999;
+                font-size: 13px;
+                line-height: 1.55;
+            }
+
+            .settings-intro strong {
+                color: var(--accent-hover);
+            }
+
+            .settings-section p:last-child {
+                margin-bottom: 0;
+            }
+
+            .settings-section--accent {
+                background: linear-gradient(
+                    135deg,
+                    rgba(var(--accent-rgb), 0.11),
+                    rgba(255, 255, 255, 0.02)
+                );
             }
 
             label {
@@ -129,11 +157,11 @@
 
             /* Dropdown CSS */
             select {
-                background-color: #222;
+                background-color: rgba(255, 255, 255, 0.055);
                 color: #fff;
-                border: 1px solid #444;
-                padding: 8px 12px;
-                border-radius: 4px;
+                border: 1px solid rgba(var(--accent-rgb), 0.25);
+                padding: 10px 12px;
+                border-radius: 8px;
                 width: 100%;
                 font-size: 14px;
                 margin-top: 5px;
@@ -149,11 +177,11 @@
             input[type="text"],
             input[type="password"],
             textarea {
-                background-color: #222;
+                background-color: rgba(0, 0, 0, 0.3);
                 color: #fff;
-                border: 1px solid #444;
-                padding: 8px 12px;
-                border-radius: 4px;
+                border: 1px solid rgba(var(--accent-rgb), 0.25);
+                padding: 10px 12px;
+                border-radius: 8px;
                 width: 100%;
                 font-size: 14px;
                 margin-top: 5px;
@@ -181,7 +209,7 @@
                 color: #fff;
                 border: none;
                 padding: 8px 16px;
-                border-radius: 4px;
+                border-radius: 8px;
                 cursor: pointer;
                 font-size: 14px;
                 margin-top: 10px;
@@ -228,7 +256,13 @@
             .section-header {
                 display: flex;
                 align-items: center;
+                gap: 14px;
                 margin-bottom: 15px;
+            }
+
+            .section-header > div {
+                flex: 1;
+                min-width: 0;
             }
 
             .section-header h3 {
@@ -254,6 +288,16 @@
 
             .hidden {
                 display: none !important;
+            }
+
+            @media (max-width: 520px) {
+                .settings-content {
+                    padding: 16px;
+                }
+
+                .settings-section {
+                    padding: 15px;
+                }
             }
         </style>
     </head>
@@ -284,16 +328,38 @@
         <!-- Content -->
         <div class="settings-content">
             <div class="settings-header">
-                <h2>Preferences</h2>
+                <h2>Desktop Settings</h2>
+            </div>
+
+            <p class="settings-intro">
+                These controls belong to the Electron shell and desktop integrations.
+                Themes, player layout, playback profiles, and SPICE Music account
+                connections live in <strong>SPICE Music Settings</strong> so they also
+                work in a browser.
+            </p>
+
+            <div class="settings-section settings-section--accent">
+                <div class="section-header" style="margin: 0">
+                    <div>
+                        <label style="margin: 0; font-size: 16px">SPICE Music Settings</label>
+                        <p style="color: #888; font-size: 12px; margin: 5px 0 0">
+                            Open the cross-platform theme, player, profile, and
+                            scrobbling controls inside SPICE Music.
+                        </p>
+                    </div>
+                    <button id="open-spice-settings-btn" class="btn" style="margin: 0 0 0 auto">
+                        Open
+                    </button>
+                </div>
             </div>
 
             <div class="settings-section native-legacy-setting" id="adblock-section">
                 <label for="adblock-type" style="font-size: 16px"
-                    >AdBlocker Type</label
+                    >Desktop Ad Blocker</label
                 >
                 <p style="color: #666; font-size: 12px; margin-bottom: 10px">
-                    Select which adblocking solution to use. Changing this
-                    requires a restart.
+                    Applies to embedded YouTube Music and SoundCloud only.
+                    Changing this requires a restart.
                 </p>
                 <select id="adblock-type">
                     <option value="spice">Spice (Built-in)</option>
@@ -325,7 +391,7 @@
                     <label
                         for="discord-toggle"
                         style="margin: 0; font-size: 16px"
-                        >Discord Rich Presence</label
+                        >Discord Rich Presence (Desktop)</label
                     >
                     <label class="switch">
                         <input type="checkbox" id="discord-toggle" />
@@ -342,7 +408,7 @@
                     <label
                         for="vk-player-toggle"
                         style="margin: 0; font-size: 16px"
-                        >VK Player (YT Music)</label
+                        >VK Player for YouTube Music</label
                     >
                     <label class="switch">
                         <input type="checkbox" id="vk-player-toggle" />
@@ -360,7 +426,7 @@
                     <label
                         for="topbar-search-toggle"
                         style="margin: 0; font-size: 16px"
-                        >Top Bar Search</label
+                        >Desktop Toolbar Search</label
                     >
                     <label class="switch">
                         <input type="checkbox" id="topbar-search-toggle" />
@@ -368,7 +434,7 @@
                     </label>
                 </div>
                 <p style="color: #666; font-size: 12px; margin-top: 5px">
-                    Enable a quick search bar in the top navigation bar.
+                    Show the Electron toolbar search used by embedded YouTube Music.
                 </p>
             </div>
 
@@ -386,7 +452,7 @@
                 </div>
                 <p style="color: #666; font-size: 12px; margin-top: 5px">
                     Keep the main Spice window above other applications. This
-                    setting applies immediately and is remembered after restart.
+                    Electron-only setting applies immediately and is remembered.
                 </p>
             </div>
 
@@ -416,8 +482,8 @@
                     >Custom CSS</label
                 >
                 <p style="color: #666; font-size: 12px; margin-bottom: 10px">
-                    Add your own CSS for the Spice app shell and loaded music
-                    view.
+                    Add CSS to the Electron shell and embedded service view.
+                    SPICE Music themes remain in SPICE Music Settings.
                 </p>
                 <textarea
                     id="custom-css"
@@ -454,8 +520,14 @@
 
             <!-- Scrobbling Section -->
             <div class="settings-header" style="margin-top: 30px">
-                <h2>Scrobbling</h2>
+                <h2>Desktop Scrobbling</h2>
             </div>
+
+            <p class="settings-intro">
+                These connections scrobble tracks detected in desktop-only embedded
+                services such as YouTube Music and SoundCloud. Configure SPICE Music
+                playback scrobbling inside SPICE Music Settings.
+            </p>
 
             <!-- Last.fm -->
             <div class="settings-section">
@@ -623,6 +695,9 @@
             const openToolbarSettingsBtn = document.getElementById(
                 "open-toolbar-settings-btn",
             );
+            const openSpiceSettingsBtn = document.getElementById(
+                "open-spice-settings-btn",
+            );
             const customCssInput = document.getElementById("custom-css");
             const saveCustomCssBtn =
                 document.getElementById("save-custom-css-btn");
@@ -632,6 +707,7 @@
             const nativeLegacySections = document.querySelectorAll(
                 ".native-legacy-setting",
             );
+            let loadedSettings = null;
 
             function applyNativeModeSettings(settings) {
                 const isNativeMode = Boolean(settings && settings.nativeMode);
@@ -649,6 +725,7 @@
 
             // Load settings
             window.api.getSettings().then((settings) => {
+                loadedSettings = settings;
                 applyNativeModeSettings(settings);
                 // Normalize legacy choices and fall back to the old boolean setting.
                 if (settings.adBlockerType === "ublock_lite") {
@@ -668,6 +745,11 @@
                 alwaysOnTopToggle.checked = settings.alwaysOnTop === true;
                 customCssInput.value = settings.customCss || "";
                 applySettingsTheme(settings.shellTheme);
+            }).catch((error) => {
+                console.error("Could not load desktop settings:", error);
+                document.querySelectorAll("select, input, textarea, button").forEach((control) => {
+                    if (control.id !== "btn-close") control.disabled = true;
+                });
             });
 
             function applySettingsTheme(theme) {
@@ -686,12 +768,14 @@
             }
 
             adBlockTypeSelect.addEventListener("change", (e) => {
+                const requested = e.target.value;
+                if (requested === loadedSettings?.adBlockerType) return;
                 if (
                     confirm(
                         "Changing the adblocker requires a restart. Continue?",
                     )
                 ) {
-                    window.api.setAdBlocker(e.target.value);
+                    window.api.setAdBlocker(requested);
                 } else {
                     // Revert
                     window.api.getSettings().then((settings) => {
@@ -713,8 +797,16 @@
             });
 
             vkPlayerToggle.addEventListener("change", (e) => {
-                window.api.setVkPlayer(e.target.checked);
-                // Wait for user to reload manually instead of forcing it
+                const requested = e.target.checked;
+                if (
+                    confirm(
+                        "Changing the YouTube Music player layout requires a restart. Continue?",
+                    )
+                ) {
+                    window.api.setVkPlayer(requested);
+                } else {
+                    e.target.checked = !requested;
+                }
             });
 
             topbarSearchToggle.addEventListener("change", (e) => {
@@ -738,8 +830,28 @@
                 window.api.openToolbarSettings();
             });
 
+            openSpiceSettingsBtn.addEventListener("click", async () => {
+                openSpiceSettingsBtn.disabled = true;
+                openSpiceSettingsBtn.textContent = "Opening...";
+                try {
+                    const result = await window.api.openSpiceSettings();
+                    if (!result?.success) {
+                        throw new Error(result?.error || "Could not open SPICE Music settings.");
+                    }
+                } catch (error) {
+                    openSpiceSettingsBtn.disabled = false;
+                    openSpiceSettingsBtn.textContent = "Open";
+                    alert(error instanceof Error ? error.message : String(error));
+                }
+            });
+
             saveCustomCssBtn.addEventListener("click", () => {
                 window.api.setCustomCss(customCssInput.value);
+                const originalLabel = saveCustomCssBtn.textContent;
+                saveCustomCssBtn.textContent = "Saved";
+                setTimeout(() => {
+                    saveCustomCssBtn.textContent = originalLabel;
+                }, 1200);
             });
 
             clearCustomCssBtn.addEventListener("click", () => {
@@ -748,12 +860,14 @@
             });
 
             defaultServiceSelect.addEventListener("change", (e) => {
+                const requested = e.target.value;
+                if (requested === loadedSettings?.defaultService) return;
                 if (
                     confirm(
                         "Changing the default service will restart the application. Continue?",
                     )
                 ) {
-                    window.api.setDefaultService(e.target.value);
+                    window.api.setDefaultService(requested);
                 } else {
                     // Revert if cancelled (though hard to revert to original without storing it, but fetching settings again works)
                     window.api.getSettings().then((settings) => {
@@ -929,13 +1043,15 @@
             const checkUpdatesBtn = document.getElementById("check-updates-btn");
             const updateStatusText = document.getElementById("update-status-text");
             const installUpdateBtn = document.getElementById("install-update-btn");
+            let updateCheckTimeoutId = null;
 
             checkUpdatesBtn.addEventListener("click", async () => {
                 checkUpdatesBtn.disabled = true;
                 updateStatusText.textContent = "Checking...";
                 updateStatusText.style.color = "#aaa";
 
-                const timeoutId = setTimeout(() => {
+                clearTimeout(updateCheckTimeoutId);
+                updateCheckTimeoutId = setTimeout(() => {
                     if (updateStatusText.textContent === "Checking...") {
                         updateStatusText.textContent = "Check timed out.";
                         updateStatusText.style.color = "#ff7d7d";
@@ -945,8 +1061,8 @@
 
                 const result = await window.api.checkForUpdates();
                 if (result && !result.success) {
-                    clearTimeout(timeoutId);
-                    updateStatusText.textContent = "Error checking for updates";
+                    clearTimeout(updateCheckTimeoutId);
+                    updateStatusText.textContent = result.error || "Error checking for updates";
                     updateStatusText.style.color = "#ff7d7d";
                     checkUpdatesBtn.disabled = false;
                 }
@@ -957,6 +1073,7 @@
             });
 
             window.api.onUpdateStatus((data) => {
+                if (data.status !== "checking") clearTimeout(updateCheckTimeoutId);
                 switch(data.status) {
                     case "checking":
                         updateStatusText.textContent = "Checking...";

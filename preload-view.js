@@ -288,13 +288,6 @@ function installSpiceDesktopUiBridge() {
         border: 'rgba(168, 85, 247, 0.24)',
     };
 
-    window.spiceDesktopWindow = {
-        getAlwaysOnTop: async () => Boolean(await ipcRenderer.invoke('get-always-on-top')),
-        setAlwaysOnTop: async (enabled) => Boolean(
-            await ipcRenderer.invoke('set-always-on-top', enabled === true)
-        ),
-    };
-
     function emitTheme() {
         let accent = 'pink';
         let surface = 'midnight';
