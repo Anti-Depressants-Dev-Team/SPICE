@@ -9314,8 +9314,19 @@ const getMaskedEmail = (email: string) => {
         <div className="main__content">
           <header className="app-topbar" aria-label="SPICE topbar">
             <div className="app-topbar__context">
-              <span>{currentPage === 'search' ? 'Search mode' : 'SPICE Music'}</span>
-              <strong>{currentPage.charAt(0).toUpperCase() + currentPage.slice(1)}</strong>
+              <div className="app-topbar__context-copy">
+                <span>{currentPage === 'search' ? 'Search mode' : 'SPICE Music'}</span>
+                <strong>{currentPage.charAt(0).toUpperCase() + currentPage.slice(1)}</strong>
+              </div>
+              <button
+                type="button"
+                className="app-topbar__command-palette"
+                onClick={() => setCommandPaletteOpen(true)}
+                title="Command palette (Ctrl+K)"
+                aria-label="Open command palette"
+              >
+                <span aria-hidden="true">K</span>
+              </button>
             </div>
 
             <div className="app-topbar__search-shell">
@@ -11817,6 +11828,7 @@ const getMaskedEmail = (email: string) => {
                       })}
                     </div>
                     <ThemeEditor
+                      key={JSON.stringify(customThemePalette)}
                       palette={customThemePalette}
                       enabled={customThemeEnabled}
                       onApply={setCustomThemePalette}
@@ -13687,16 +13699,6 @@ const getMaskedEmail = (email: string) => {
               <div className="now-playing__waveform-bar"></div>
             </div>
           </div>
-
-          <button
-            type="button"
-            className="now-playing__btn now-playing__command-palette"
-            onClick={() => setCommandPaletteOpen(true)}
-            title="Command palette (Ctrl+K)"
-            aria-label="Open command palette"
-          >
-            <span aria-hidden="true">K</span>
-          </button>
 
           {renderSongShareButton(playerTrack, 'now-playing__btn now-playing__share')}
 

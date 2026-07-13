@@ -2,6 +2,8 @@
 
 import { useRef, useState } from 'react';
 
+import ThemeColorPicker from './theme-color-picker';
+
 import {
   DEFAULT_PURPLE_PALETTE,
   THEME_COLOR_KEYS,
@@ -9,7 +11,6 @@ import {
   clearStoredThemePalette,
   exportThemePaletteJson,
   importThemePaletteJson,
-  normalizeCssColor,
   saveStoredThemePalette,
   type ThemePalette,
   type ThemeColorKey,
@@ -47,6 +48,7 @@ export default function ThemeEditor({
 }: ThemeEditorProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [draft, setDraft] = useState<ThemePalette>(() => clonePalette(palette));
+  const [activeColor, setActiveColor] = useState<ThemeColorKey | null>(null);
   const [status, setStatus] = useState('Edit colors, then apply the palette.');
 
   const applyPalette = (candidate: ThemePalette) => {
@@ -131,23 +133,17 @@ export default function ThemeEditor({
 
       <div className="theme-editor__colors">
         {THEME_COLOR_KEYS.map((key) => (
-          <label key={key}>
-            <span>{COLOR_LABELS[key]}</span>
-            <span className="theme-editor__color-input">
-              <i
-                style={{ background: normalizeCssColor(draft.colors[key]) ?? 'transparent' }}
-                aria-hidden="true"
-              />
-              <input
-                value={draft.colors[key]}
-                spellCheck={false}
-                onChange={(event) => setDraft((current) => ({
-                  ...current,
-                  colors: { ...current.colors, [key]: event.target.value },
-                }))}
-              />
-            </span>
-          </label>
+          <ThemeColorPicker
+            key={key}
+            label={COLOR_LABELS[key]}
+            value={draft.colors[key]}
+            open={activeColor === key}
+            onOpenChange={(open) => setActiveColor(open ? key : null)}
+            onChange={(value) => setDraft((current) => ({
+              ...current,
+              colors: { ...current.colors, [key]: value },
+            }))}
+          />
         ))}
       </div>
 
@@ -162,6 +158,7 @@ export default function ThemeEditor({
             clearStoredThemePalette();
             const reset = clonePalette(DEFAULT_PURPLE_PALETTE as ThemePalette);
             setDraft(reset);
+            setActiveColor(null);
             onApply(reset);
             onEnabledChange(true);
             setStatus('Reset to the default Spice Purple palette.');

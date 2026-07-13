@@ -108,6 +108,246 @@
 .theme-home-bg {
     background: radial-gradient(circle at 48% 30%, rgba(var(--accent-rgb), 0.12), transparent 48%), var(--shell-background);
 }
+
+/* Native launcher --------------------------------------------------- */
+.native-launch {
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(0, 1.08fr) minmax(360px, 0.72fr);
+    gap: clamp(28px, 5vw, 76px);
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: clamp(32px, 5vw, 76px);
+    overflow: auto;
+    isolation: isolate;
+}
+
+.native-launch::before {
+    position: absolute;
+    inset: 0;
+    z-index: -2;
+    content: "";
+    background-image:
+        linear-gradient(rgba(var(--accent-rgb), 0.045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(var(--accent-rgb), 0.045) 1px, transparent 1px);
+    background-size: 64px 64px;
+    mask-image: linear-gradient(to right, #000, transparent 82%);
+}
+
+.native-launch__orb {
+    position: fixed;
+    z-index: -1;
+    width: 380px;
+    height: 380px;
+    border-radius: 50%;
+    background: rgba(var(--accent-rgb), 0.17);
+    filter: blur(110px);
+    pointer-events: none;
+}
+
+.native-launch__orb--one { top: 12%; left: 24%; }
+.native-launch__orb--two { right: -140px; bottom: -160px; opacity: 0.72; }
+
+.native-launch__hero {
+    display: flex;
+    min-width: 0;
+    min-height: 520px;
+    align-items: center;
+}
+
+.native-launch__hero-inner {
+    width: 100%;
+    max-width: 760px;
+    min-width: 0;
+}
+
+.native-launch__brand-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 24px;
+}
+
+.native-launch__mark,
+.native-launch__metric-icon,
+.native-launch__identity-icon {
+    display: inline-grid;
+    place-items: center;
+    flex: 0 0 auto;
+    color: #fff;
+    background: var(--accent-gradient);
+    box-shadow: 0 12px 36px rgba(var(--accent-rgb), 0.28);
+}
+
+.native-launch__mark {
+    width: 48px;
+    height: 48px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 15px;
+}
+
+.native-launch__badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    padding: 7px 12px;
+    border: 1px solid;
+    border-radius: 999px;
+    font-size: 11px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+}
+
+.native-launch__title {
+    max-width: 720px;
+    margin: 0 0 20px;
+    color: #fff;
+    font-size: clamp(3rem, 5.2vw, 5.4rem);
+    font-weight: 760;
+    letter-spacing: -0.055em;
+    line-height: 0.97;
+}
+
+.native-launch__lede {
+    max-width: 660px;
+    margin: 0;
+    color: #a8a8b3;
+    font-size: clamp(0.96rem, 1.25vw, 1.08rem);
+    line-height: 1.75;
+}
+
+.native-launch__metrics {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    min-width: 0;
+    margin-top: 34px;
+}
+
+.native-launch__metric {
+    display: flex;
+    min-width: 0;
+    min-height: 112px;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 16px;
+    overflow: hidden;
+    border: 1px solid rgba(var(--accent-rgb), 0.2);
+    border-radius: 18px;
+    background: linear-gradient(145deg, rgba(var(--accent-rgb), 0.1), rgba(255, 255, 255, 0.025));
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.native-launch__metric-icon {
+    width: 34px;
+    height: 34px;
+    border-radius: 11px;
+}
+
+.native-launch__metric-copy { min-width: 0; flex: 1 1 auto; }
+
+.native-launch__metric-label,
+.native-launch__panel-eyebrow {
+    margin-bottom: 7px;
+    color: var(--accent-hover);
+    font-size: 0.65rem;
+    font-weight: 760;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+}
+
+.native-launch__metric-value {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    color: #f6f3fb;
+    font-size: 0.83rem;
+    font-weight: 650;
+    line-height: 1.45;
+}
+
+.native-launch__metric-value--email { word-break: break-word; }
+
+.native-launch__trust-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px 22px;
+    margin-top: 22px;
+    color: #777784;
+    font-size: 0.72rem;
+    font-weight: 650;
+}
+
+.native-launch__trust-row span { display: inline-flex; align-items: center; gap: 8px; }
+.native-launch__trust-row i {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 12px rgba(var(--accent-rgb), 0.82);
+}
+
+.native-launch__panel {
+    align-self: center;
+    min-width: 0;
+    width: 100%;
+    max-width: 520px;
+    padding: clamp(24px, 3vw, 34px);
+    overflow: hidden;
+    border: 1px solid rgba(var(--accent-rgb), 0.25);
+    border-radius: 26px;
+    background:
+        linear-gradient(145deg, rgba(var(--accent-rgb), 0.12), transparent 48%),
+        rgba(5, 5, 8, 0.84);
+    box-shadow: 0 32px 90px rgba(0, 0, 0, 0.5), 0 0 54px rgba(var(--accent-rgb), 0.08);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+}
+
+.native-launch__identity {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 14px;
+    min-width: 0;
+    margin-bottom: 18px;
+}
+
+.native-launch__identity-icon { width: 46px; height: 46px; border-radius: 14px; }
+.native-launch__identity > div { min-width: 0; }
+.native-launch__identity span { color: #777784; font-size: 0.72rem; }
+.native-launch__identity h2,
+.native-launch__form h2 {
+    min-width: 0;
+    margin: 2px 0 0;
+    overflow-wrap: anywhere;
+    color: #fff;
+    font-size: clamp(1.35rem, 2.2vw, 1.75rem);
+    font-weight: 720;
+    line-height: 1.2;
+}
+
+.native-launch__form h2 span { overflow-wrap: anywhere; }
+.native-launch__panel-copy { margin: 0 0 22px; color: #9696a2; font-size: 0.85rem; line-height: 1.65; }
+.native-launch__actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.native-launch__actions button { min-height: 42px; }
+.native-launch__message { min-height: 18px; margin-top: 18px; color: #777784; font-size: 0.72rem; line-height: 1.45; }
+
+@media (max-width: 1050px) {
+    .native-launch { grid-template-columns: 1fr; padding: 34px; }
+    .native-launch__hero { min-height: 0; }
+    .native-launch__panel { max-width: none; }
+}
+
+@media (max-width: 680px) {
+    .native-launch { padding: 22px 16px 30px; gap: 24px; }
+    .native-launch__metrics { grid-template-columns: 1fr; }
+    .native-launch__metric { min-height: 86px; }
+    .native-launch__title { font-size: clamp(2.7rem, 13vw, 4rem); }
+    .native-launch__trust-row { display: grid; }
+    .native-launch__actions { display: grid; }
+    .native-launch__actions button { width: 100%; }
+}
 .theme-text { color: var(--accent) !important; }
 .theme-text-soft { color: var(--accent-hover) !important; }
 .theme-text-glow { text-shadow: 0 0 16px rgba(var(--accent-rgb), 0.72); }
