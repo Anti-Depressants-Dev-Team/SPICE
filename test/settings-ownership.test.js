@@ -134,16 +134,29 @@ test('desktop settings keep one bounded scroller and scope wheel handling to hov
   assert.doesNotMatch(settings, /document\.activeElement\.tagName === ['"]SELECT['"]/);
 });
 
-test('SPICE Music settings navigation and player command shortcut use live theme tokens', () => {
+test('SPICE Music settings navigation and topbar command shortcut use live theme tokens', () => {
   const spiceApp = read('apps/backend/app/spice-app.tsx');
   const styles = read('apps/backend/app/globals.css');
 
   assert.match(spiceApp, /className="settings-page-nav"/);
   assert.match(spiceApp, /rgba\(var\(--accent-pink-rgb/);
-  assert.match(spiceApp, /className="now-playing__btn now-playing__command-palette"/);
+  assert.match(spiceApp, /className="app-topbar__command-palette"/);
   assert.match(spiceApp, /aria-label="Open command palette"/);
-  assert.match(styles, /\.now-playing__command-palette/);
+  assert.match(styles, /\.app-topbar__command-palette/);
+  assert.doesNotMatch(spiceApp, /className="now-playing__btn now-playing__command-palette"/);
   assert.doesNotMatch(spiceApp, /document\.activeElement.*tagName === 'SELECT'/s);
+});
+
+test('Native launcher summary cards contain long account and runtime values', () => {
+  const launcher = read('index.html');
+  const styles = read('styles.css');
+
+  assert.match(launcher, /class="theme-home-bg native-launch"/);
+  assert.match(launcher, /native-launch__metric-value--email/);
+  assert.match(launcher, /title=\$\{account && account\.user/);
+  assert.match(styles, /\.native-launch__metric\s*\{[^}]*min-width:\s*0/s);
+  assert.match(styles, /\.native-launch__metric-value\s*\{[^}]*overflow-wrap:\s*anywhere/s);
+  assert.match(styles, /\.native-launch__metrics\s*\{[^}]*repeat\(3, minmax\(0, 1fr\)\)/s);
 });
 
 test('desktop updater cleanup cannot quit before electron-updater launches the installer', () => {

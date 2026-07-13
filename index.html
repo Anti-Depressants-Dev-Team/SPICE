@@ -232,6 +232,8 @@
         repeat:      'M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z',
         repeatOne:   'M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4zm-4-2V9h-1l-2 1v1h1.5v4H13z',
         cloud:       'M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z',
+        account:     'M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z',
+        sparkles:    'm12 2 1.45 4.05L17.5 7.5l-4.05 1.45L12 13l-1.45-4.05L6.5 7.5l4.05-1.45L12 2zm6 10 .95 2.55L21.5 15.5l-2.55.95L18 19l-.95-2.55-2.55-.95 2.55-.95L18 12zM5 13l1.2 3.3L9.5 17.5l-3.3 1.2L5 22l-1.2-3.3-3.3-1.2 3.3-1.2L5 13z',
         addList:     'M14 10H2v2h12v-2zm0-4H2v2h12V6zm4 8v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zM2 16h8v-2H2v2z',
         ytMusic:     'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z',
     };
@@ -483,43 +485,70 @@
                 : 'Checking runtime';
 
             return html`
-                <div class="theme-home-bg flex-1 relative grid grid-cols-1 lg:grid-cols-[minmax(0,0.92fr)_minmax(380px,520px)] gap-8 px-8 py-8 overflow-auto">
-                    <section class="flex flex-col justify-center min-h-[520px]">
-                        <div class="max-w-[680px]">
-                            <div class="theme-badge inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] uppercase tracking-[0.22em] mb-5">
-                                ${icon(IC.cloud, 15)} Native SPICE
+                <div class="theme-home-bg native-launch">
+                    <div class="native-launch__orb native-launch__orb--one" aria-hidden="true"></div>
+                    <div class="native-launch__orb native-launch__orb--two" aria-hidden="true"></div>
+                    <section class="native-launch__hero">
+                        <div class="native-launch__hero-inner">
+                            <div class="native-launch__brand-row">
+                                <span class="native-launch__mark">${icon(IC.ytMusic, 24)}</span>
+                                <div class="theme-badge native-launch__badge">
+                                    ${icon(IC.cloud, 15)} Native SPICE
+                                </div>
                             </div>
-                            <h1 class="text-5xl font-semibold tracking-normal leading-tight mb-4">
-                                SPICE Music, local from the first launch.
+                            <h1 class="native-launch__title">
+                                Your music.<br />
+                                <span class="theme-gradient-text">Local by design.</span>
                             </h1>
-                            <p class="text-gray-400 text-base leading-7 max-w-[620px]">
+                            <p class="native-launch__lede">
                                 The desktop app starts the bundled local runtime, keeps media extraction on this PC, and only uses the cloud account service for sign-in and sync.
                             </p>
 
-                            <div class="grid sm:grid-cols-3 gap-3 mt-8">
-                                <div class="rounded-xl border border-white/[0.07] bg-white/[0.035] p-4">
-                                    <div class="text-[10px] uppercase tracking-[0.2em] text-gray-500 mb-2">Runtime</div>
-                                    <div class="text-sm text-gray-100">${runtimeText}</div>
-                                </div>
-                                <div class="rounded-xl border border-white/[0.07] bg-white/[0.035] p-4">
-                                    <div class="text-[10px] uppercase tracking-[0.2em] text-gray-500 mb-2">Account</div>
-                                    <div class="text-sm text-gray-100">${account && account.user ? (account.user.email || 'Connected') : 'Optional'}</div>
-                                </div>
-                                <div class="rounded-xl border border-white/[0.07] bg-white/[0.035] p-4">
-                                    <div class="text-[10px] uppercase tracking-[0.2em] text-gray-500 mb-2">Launch</div>
-                                    <div class="text-sm text-gray-100">${autoOpen ? 'Auto-opens SPICE' : 'Launcher screen'}</div>
-                                </div>
+                            <div class="native-launch__metrics">
+                                <article class="native-launch__metric">
+                                    <span class="native-launch__metric-icon">${icon(IC.play, 17)}</span>
+                                    <div class="native-launch__metric-copy">
+                                        <div class="native-launch__metric-label">Runtime</div>
+                                        <div class="native-launch__metric-value" title=${runtimeText}>${runtimeText}</div>
+                                    </div>
+                                </article>
+                                <article class="native-launch__metric">
+                                    <span class="native-launch__metric-icon">${icon(IC.account, 17)}</span>
+                                    <div class="native-launch__metric-copy">
+                                        <div class="native-launch__metric-label">Account</div>
+                                        <div class="native-launch__metric-value native-launch__metric-value--email" title=${account && account.user ? (account.user.email || 'Connected') : 'Optional'}>${account && account.user ? (account.user.email || 'Connected') : 'Optional'}</div>
+                                    </div>
+                                </article>
+                                <article class="native-launch__metric">
+                                    <span class="native-launch__metric-icon">${icon(IC.sparkles, 17)}</span>
+                                    <div class="native-launch__metric-copy">
+                                        <div class="native-launch__metric-label">Launch</div>
+                                        <div class="native-launch__metric-value">${autoOpen ? 'Auto-opens SPICE' : 'Launcher screen'}</div>
+                                    </div>
+                                </article>
+                            </div>
+
+                            <div class="native-launch__trust-row" aria-label="Native runtime benefits">
+                                <span><i></i>Media stays on this PC</span>
+                                <span><i></i>Cloud sync is optional</span>
+                                <span><i></i>Ready on port 3939</span>
                             </div>
                         </div>
                     </section>
 
-                    <section class="self-center rounded-2xl border border-white/[0.08] bg-black/35 p-5 shadow-[0_24px_80px_rgba(0,0,0,0.35)]">
+                    <section class="native-launch__panel">
                         ${account ? html`
-                            <div>
-                                <div class="theme-text-soft text-[11px] uppercase tracking-[0.22em] mb-2">Signed in</div>
-                                <h2 class="text-2xl font-semibold mb-2">${account.user && account.user.email ? account.user.email : 'SPICE account connected'}</h2>
-                                <p class="text-sm text-gray-400 mb-5">Your session will be injected into the local SPICE runtime when the player opens.</p>
-                                <div class="flex flex-wrap gap-2">
+                            <div class="native-launch__account">
+                                <div class="native-launch__panel-eyebrow">Signed in</div>
+                                <div class="native-launch__identity">
+                                    <span class="native-launch__identity-icon">${icon(IC.account, 22)}</span>
+                                    <div>
+                                        <span>SPICE account</span>
+                                        <h2 title=${account.user && account.user.email ? account.user.email : 'SPICE account connected'}>${account.user && account.user.email ? account.user.email : 'SPICE account connected'}</h2>
+                                    </div>
+                                </div>
+                                <p class="native-launch__panel-copy">Your session will be injected into the local SPICE runtime when the player opens.</p>
+                                <div class="native-launch__actions">
                                     <button class="theme-primary-btn rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
                                             disabled=${nativeBusy}
                                             onClick=${launchNativeSpice}>
@@ -538,10 +567,10 @@
                                 </div>
                             </div>
                         ` : nativeVerification ? html`
-                            <form onSubmit=${handleNativeVerify}>
-                                <div class="theme-text-soft text-[11px] uppercase tracking-[0.22em] mb-2">Email verification</div>
-                                <h2 class="text-2xl font-semibold mb-2">Check ${nativeVerification.email}</h2>
-                                <p class="text-sm text-gray-400 mb-5">Enter the six-digit code we sent. It expires after 10 minutes.</p>
+                            <form class="native-launch__form" onSubmit=${handleNativeVerify}>
+                                <div class="native-launch__panel-eyebrow">Email verification</div>
+                                <h2>Check <span title=${nativeVerification.email}>${nativeVerification.email}</span></h2>
+                                <p class="native-launch__panel-copy">Enter the six-digit code we sent. It expires after 10 minutes.</p>
 
                                 <label class="block text-xs font-semibold text-gray-300 mb-1">Verification code</label>
                                 <input class="mb-4 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2.5 text-center text-xl tracking-[0.3em] text-white outline-none focus:border-purple-400"
@@ -564,10 +593,10 @@
                                 </button>
                             </form>
                         ` : html`
-                            <form onSubmit=${handleNativeAuth}>
-                                <div class="theme-text-soft text-[11px] uppercase tracking-[0.22em] mb-2">First launch</div>
-                                <h2 class="text-2xl font-semibold mb-2">Connect your SPICE account</h2>
-                                <p class="text-sm text-gray-400 mb-5">Sign in for sync and account features, or continue local-only.</p>
+                            <form class="native-launch__form" onSubmit=${handleNativeAuth}>
+                                <div class="native-launch__panel-eyebrow">First launch</div>
+                                <h2>Connect your SPICE account</h2>
+                                <p class="native-launch__panel-copy">Sign in for sync and account features, or continue local-only.</p>
 
                                 <div class="grid grid-cols-2 gap-2 mb-4 rounded-xl bg-white/[0.04] p-1">
                                     <button type="button" class=${'rounded-lg px-3 py-2 text-sm font-semibold ' + (authMode === 'signin' ? 'theme-primary-btn text-white' : 'text-gray-400 hover:text-white')}
@@ -612,7 +641,7 @@
                             </form>
                         `}
 
-                        <div class="mt-4 min-h-[18px] text-xs text-gray-500">${nativeMessage}</div>
+                        <div class="native-launch__message" role="status">${nativeMessage}</div>
                     </section>
                 </div>
             `;
