@@ -885,43 +885,23 @@ async function prepareForUpdateInstall() {
   updateInstallInProgress = true;
   updateInstallCleanupCompleted = false;
   updateInstallCleanupPromise = (async () => {
-    const closeChildWindow = async (childWindow) => {
-      if (!childWindow || childWindow.isDestroyed()) return;
+    const destroyWindow = (targetWindow) => {
+      if (!targetWindow || targetWindow.isDestroyed()) return;
       try {
-        childWindow.close();
+        targetWindow.destroy();
       } catch (_) {}
-      await new Promise((resolve) => setTimeout(resolve, 300));
-      if (!childWindow.isDestroyed()) {
-        try {
-          childWindow.destroy();
-        } catch (_) {}
-      }
     };
 
     stopTrackPolling();
     clearPlaybackSurfaces();
 
-    if (mainWindow && view) {
-      try {
-        mainWindow.setBrowserView(null);
-      } catch (_) {}
-    }
-
     if (view && view.webContents && !view.webContents.isDestroyed()) {
       try {
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setBrowserView(null);
         view.webContents.destroy();
       } catch (_) {}
     }
     view = null;
-
-    for (const childWindow of [lyricsWindow, miniPlayerWindow, queueWindow, settingsWindow, toolbarSettingsWindow]) {
-      await closeChildWindow(childWindow);
-    }
-    lyricsWindow = null;
-    miniPlayerWindow = null;
-    queueWindow = null;
-    settingsWindow = null;
-    toolbarSettingsWindow = null;
 
     if (spiceRuntimeManager) {
       try {
@@ -934,6 +914,19 @@ async function prepareForUpdateInstall() {
         discordRpc.disconnect();
       } catch (_) {}
     }
+
+    // Destroy every renderer only after asynchronous runtime cleanup. Closing
+    // the last window earlier emits `window-all-closed` and can terminate the
+    // process before electron-updater has a chance to launch the installer.
+    for (const targetWindow of BrowserWindow.getAllWindows()) {
+      destroyWindow(targetWindow);
+    }
+    mainWindow = null;
+    lyricsWindow = null;
+    miniPlayerWindow = null;
+    queueWindow = null;
+    settingsWindow = null;
+    toolbarSettingsWindow = null;
 
     try {
       app.releaseSingleInstanceLock();
@@ -3188,6 +3181,7 @@ app.whenReady().then(async () => {
   }
 
   app.on("window-all-closed", () => {
+    if (updateInstallInProgress) return;
     if (process.platform !== "darwin") app.quit();
   });
 
@@ -3613,8 +3607,10 @@ app.whenReady().then(async () => {
     }
 
     settingsWindow = new BrowserWindow({
-      width: 600,
-      height: 600,
+      width: 760,
+      height: 720,
+      minWidth: 620,
+      minHeight: 520,
       backgroundColor: "#121212",
       frame: false, // Frameless for custom title bar
       titleBarStyle: "hidden",
@@ -3661,7 +3657,7 @@ app.whenReady().then(async () => {
       },
     });
 
-    toolbarSettingsWindow.loadFile(path.join(__dirname, "toolbar-icons.html"));
+    toolbarSettingsWindow.loadURL("http://localhost:6969/toolbar-icons");
     toolbarSettingsWindow.webContents.on("did-finish-load", () => {
       applyCustomCssToWebContents(toolbarSettingsWindow.webContents);
       sendShellTheme(toolbarSettingsWindow.webContents);

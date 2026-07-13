@@ -71,7 +71,7 @@
   position: relative;
   z-index: 2;
   display: flex;
-  min-height: 86px;
+  min-height: 98px;
   align-items: center;
   justify-content: space-between;
   gap: 24px;
@@ -81,18 +81,18 @@
 .brand {
   display: inline-flex;
   align-items: center;
-  gap: 11px;
+  gap: 14px;
   color: var(--portal-text);
   text-decoration: none;
 }
 
 .logoMark {
   display: grid;
-  width: 41px;
-  height: 41px;
+  width: 54px;
+  height: 54px;
   place-items: center;
   border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 12px;
+  border-radius: 15px;
   background: linear-gradient(145deg, #bd70ff, #7c3aed 72%);
   box-shadow:
     0 12px 28px rgba(124, 58, 237, 0.32),
@@ -100,7 +100,8 @@
 }
 
 .logoMark svg {
-  width: 22px;
+  width: 31px;
+  height: 31px;
   fill: #fff;
 }
 
@@ -110,14 +111,14 @@
 }
 
 .brandName strong {
-  font-size: 0.94rem;
+  font-size: 1.05rem;
   font-weight: 850;
   letter-spacing: 0.14em;
 }
 
 .brandName small {
   color: var(--portal-muted);
-  font-size: 0.67rem;
+  font-size: 0.72rem;
   font-weight: 650;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -949,7 +950,18 @@
   }
 
   .topbar {
-    min-height: 74px;
+    min-height: 82px;
+  }
+
+  .logoMark {
+    width: 48px;
+    height: 48px;
+    border-radius: 14px;
+  }
+
+  .logoMark svg {
+    width: 27px;
+    height: 27px;
   }
 
   .navLinks > a:not(.navLaunch) {
