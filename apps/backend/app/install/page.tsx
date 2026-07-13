@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 
 import InstallGuide from '../install-guide';
 
-export const dynamic = 'force-dynamic';
+export const dynamic = 'force-static';
 
 export const metadata: Metadata = {
   title: 'Install SPICE Local',

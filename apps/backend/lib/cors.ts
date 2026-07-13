@@ -14,8 +14,15 @@ const DEFAULT_ALLOWED_ORIGINS = [
 export const corsHeaders = {
   'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Range, Authorization',
+  'Access-Control-Max-Age': '86400',
   'Access-Control-Expose-Headers':
     'Accept-Ranges, Content-Length, Content-Range, Content-Type',
+};
+
+export const publicCorsHeaders = {
+  ...corsHeaders,
+  'Access-Control-Allow-Methods': 'GET, OPTIONS',
+  'Access-Control-Allow-Origin': '*',
 };
 
 const DECODED_BODY_RESPONSE_HEADERS = [
@@ -66,11 +73,28 @@ export function optionsResponse(request?: Request | null) {
   return new Response(null, { status: 204, headers: corsHeadersForRequest(request) });
 }
 
+export function publicOptionsResponse() {
+  return new Response(null, {
+    status: 204,
+    headers: publicCorsHeaders,
+  });
+}
+
 export function jsonResponse(body: unknown, init: ResponseInit = {}, request?: Request | null) {
   return Response.json(body, {
     ...init,
     headers: {
       ...corsHeadersForRequest(request),
+      ...init.headers,
+    },
+  });
+}
+
+export function publicJsonResponse(body: unknown, init: ResponseInit = {}) {
+  return Response.json(body, {
+    ...init,
+    headers: {
+      ...publicCorsHeaders,
       ...init.headers,
     },
   });

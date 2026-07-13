@@ -24,10 +24,16 @@ export async function getUsersInfo(userIds: string[]): Promise<Record<string, { 
   const uniqueIds = Array.from(new Set(userIds));
 
   const [fetchedUsers, fetchedProfiles] = await Promise.all([
-    db.query.users.findMany({ where: inArray(users.id, uniqueIds) }),
-    db.query.profiles.findMany({
-      where: inArray(profiles.userId, uniqueIds),
-    }),
+    db.select({
+      id: users.id,
+      username: users.username,
+      email: users.email,
+    }).from(users).where(inArray(users.id, uniqueIds)),
+    db.select({
+      userId: profiles.userId,
+      displayName: profiles.displayName,
+      avatarUrl: profiles.avatarUrl,
+    }).from(profiles).where(inArray(profiles.userId, uniqueIds)),
   ]);
 
   const userMap = new Map(fetchedUsers.map(u => [u.id, u]));
@@ -48,47 +54,6 @@ export async function getUsersInfo(userIds: string[]): Promise<Record<string, { 
 
   return result;
 }
-
-type UserInfo = { username: string | null; displayName: string; avatarUrl: string | null };
-
-async function _getUserInfo(userId: string): Promise<UserInfo> {
-  const user = await db.query.users.findFirst({ where: eq(users.id, userId) });
-  const profile = await db.query.profiles.findFirst({
-    where: eq(profiles.userId, userId),
-  });
-  return {
-    username: user?.username || null,
-    displayName: profile?.displayName || user?.email || 'Unknown',
-    avatarUrl: profile?.avatarUrl || null,
-  };
-}
-
-async function _getBatchUserInfo(userIds: string[]): Promise<Record<string, UserInfo>> {
-  if (userIds.length === 0) return {};
-
-  const fetchedUsers = await db.query.users.findMany({ where: inArray(users.id, userIds) });
-  const fetchedProfiles = await db.query.profiles.findMany({
-    where: inArray(profiles.userId, userIds),
-  });
-
-  const profileMap = new Map(fetchedProfiles.map(p => [p.userId, p]));
-  const userMap = new Map(fetchedUsers.map(u => [u.id, u]));
-
-  const result: Record<string, UserInfo> = {};
-  for (const uid of userIds) {
-    const user = userMap.get(uid);
-    const profile = profileMap.get(uid);
-    if (user) {
-      result[uid] = {
-        username: user.username || null,
-        displayName: profile?.displayName || user.email || 'Unknown',
-        avatarUrl: profile?.avatarUrl || null,
-      };
-    }
-  }
-  return result;
-}
-
 
 export async function getPlaylistSnapshot(playlistId: string, options: SharedPlaylistOptions = {}) {
   const playlist = await db.query.playlists.findFirst({

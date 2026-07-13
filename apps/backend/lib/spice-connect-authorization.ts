@@ -80,19 +80,26 @@ export async function authorizeSpiceConnectRequest(request: Request): Promise<Sp
   }
 
   const now = new Date();
-  const authorization = await db.query.remoteDeviceAuthorizations.findFirst({
-    where: and(
+  const [authorization] = await db
+    .select({
+      id: remoteDeviceAuthorizations.id,
+      userId: remoteDeviceAuthorizations.userId,
+      deviceId: remoteDeviceAuthorizations.deviceId,
+      lastUsedAt: remoteDeviceAuthorizations.lastUsedAt,
+      accountRole: users.accountRole,
+    })
+    .from(remoteDeviceAuthorizations)
+    .innerJoin(users, eq(users.id, remoteDeviceAuthorizations.userId))
+    .where(and(
       eq(remoteDeviceAuthorizations.tokenHash, tokenHash),
       isNull(remoteDeviceAuthorizations.revokedAt),
       gt(remoteDeviceAuthorizations.expiresAt, now),
-    ),
-  });
+    ))
+    .limit(1);
 
-  if (!authorization) {
+  if (!authorization || !isSpiceConnectAccountRoleActive(authorization.accountRole)) {
     throw new SpiceConnectAuthorizationError('unauthorized', 'Invalid or expired credential.', 401);
   }
-
-  await requireActiveSpiceConnectAccount(authorization.userId);
 
   const lastUsedCutoff = new Date(now.getTime() - 15 * 60 * 1000);
   if (!authorization.lastUsedAt || authorization.lastUsedAt < lastUsedCutoff) {

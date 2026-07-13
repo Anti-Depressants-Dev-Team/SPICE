@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.SystemClock
 import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -976,7 +977,6 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
                     message = "Pairing complete. Spice Connect is ready.",
                 )
                 startSpiceConnect()
-                refreshSpiceConnect()
             }.onFailure { error ->
                 _uiState.value = _uiState.value.copy(
                     pairingLoading = false,
@@ -1774,21 +1774,40 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
     private fun startSpiceConnect() {
         connectJob?.cancel()
         connectJob = viewModelScope.launch {
+            var nextDeviceSyncAtMs = 0L
             while (true) {
                 if (!hasRemoteAccess()) return@launch
                 runCatching {
                     withRemoteAccess { token ->
-                        publishSpiceConnectDevice(token)
-                        applyRemoteCommands(api.fetchRemoteCommands(token, remoteDeviceId))
-                        val devices = api.fetchRemoteDevices(token)
-                        applyRemoteDeviceSnapshot(devices)
+                        val commands = api.fetchRemoteCommands(token, remoteDeviceId)
+                        applyRemoteCommands(commands)
+
+                        val nowElapsedRealtimeMs = SystemClock.elapsedRealtime()
+                        val shouldSyncDevices = shouldSyncSpiceConnectDevices(
+                            nowElapsedRealtimeMs = nowElapsedRealtimeMs,
+                            nextDeviceSyncAtMs = nextDeviceSyncAtMs,
+                            receivedCommands = commands.isNotEmpty(),
+                        )
+                        if (shouldSyncDevices) {
+                            if (commands.isNotEmpty()) {
+                                // MediaController callbacks settle asynchronously after a remote command.
+                                delay(SPICE_CONNECT_COMMAND_STATE_SETTLE_MS)
+                            }
+                            publishSpiceConnectDevice(token)
+                            val devices = api.fetchRemoteDevices(token)
+                            applyRemoteDeviceSnapshot(devices)
+                            nextDeviceSyncAtMs = nextSpiceConnectDeviceSyncAt(
+                                nowElapsedRealtimeMs = nowElapsedRealtimeMs,
+                                receivedCommands = commands.isNotEmpty(),
+                            )
+                        }
                     }
                 }.onFailure { error ->
                     _uiState.value = _uiState.value.copy(
                         connectStatus = error.message ?: _uiState.value.connectStatus,
                     )
                 }
-                delay(5_000)
+                delay(SPICE_CONNECT_COMMAND_POLL_INTERVAL_MS)
             }
         }
     }

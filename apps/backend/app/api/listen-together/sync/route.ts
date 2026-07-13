@@ -37,20 +37,8 @@ export async function POST(request: NextRequest) {
       return jsonResponse({ error: 'invalid_request', message: 'Session ID is required.' }, { status: 400 });
     }
 
-    // Verify session belongs to host
-    const userSession = await db.query.listenTogetherSessions.findFirst({
-      where: and(
-        eq(listenTogetherSessions.id, sessionId),
-        eq(listenTogetherSessions.hostUserId, session.userId)
-      ),
-    });
-
-    if (!userSession) {
-      return jsonResponse({ error: 'unauthorized_session', message: 'You are not the host of this session.' }, { status: 403 });
-    }
-
-    // Update session state
-    await db.update(listenTogetherSessions)
+    // Atomically verify host ownership and update without fetching the session row.
+    const updatedSessions = await db.update(listenTogetherSessions)
       .set({
         currentTrackJson: currentTrack ? JSON.stringify(currentTrack) : null,
         queueJson: queue ? JSON.stringify(queue) : '[]',
@@ -60,7 +48,15 @@ export async function POST(request: NextRequest) {
         durationMs,
         updatedAt: new Date(),
       })
-      .where(eq(listenTogetherSessions.id, sessionId));
+      .where(and(
+        eq(listenTogetherSessions.id, sessionId),
+        eq(listenTogetherSessions.hostUserId, session.userId)
+      ))
+      .returning({ id: listenTogetherSessions.id });
+
+    if (updatedSessions.length === 0) {
+      return jsonResponse({ error: 'unauthorized_session', message: 'You are not the host of this session.' }, { status: 403 });
+    }
 
     return jsonResponse({ success: true });
   } catch (error) {

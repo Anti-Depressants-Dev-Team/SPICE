@@ -2,7 +2,12 @@ import { jsonResponse, optionsResponse } from '@/lib/cors';
 import { verifySession } from '@/lib/auth';
 import { db } from '@/db';
 import { profiles } from '@/db/schema';
-import { eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
+import {
+  profileWriteMatches,
+  profileWriteValues,
+  type ProfileSyncInput,
+} from '@/lib/profile-sync';
 
 export const runtime = 'nodejs';
 
@@ -61,28 +66,70 @@ export async function POST(request: Request) {
       return jsonResponse({ error: 'database_not_configured', message: 'Backend DATABASE_URL environment variable is not configured.' }, { status: 500 });
     }
 
+    const inputs = profilesPayload as ProfileSyncInput[];
+    const storedProfiles = await db.select({
+      id: profiles.id,
+      displayName: profiles.displayName,
+      username: profiles.username,
+      bio: profiles.bio,
+      gradient: profiles.gradient,
+      songsPlayed: profiles.songsPlayed,
+      joinedAt: profiles.joinedAt,
+      passcode: profiles.passcode,
+      avatarUrl: profiles.avatarUrl,
+      isPrivate: profiles.isPrivate,
+    }).from(profiles).where(eq(profiles.userId, session.userId));
+    const storedById = new Map(storedProfiles.map((profile) => [profile.id, profile]));
+    const incomingIds = new Set(inputs.map((profile) => profile.id));
     const batch = [];
-    batch.push(db.delete(profiles).where(eq(profiles.userId, session.userId)));
 
-    if (profilesPayload.length > 0) {
-      const payload = profilesPayload.map(p => ({
-        id: p.id,
-        userId: session.userId,
-        displayName: p.displayName,
-        username: p.cloudUsername || null,
-        bio: p.bio || '',
-        gradient: p.gradient,
-        songsPlayed: p.songsPlayed ?? 0,
-        joinedAt: p.joinedAt,
-        passcode: p.passcode || null,
-        avatarUrl: p.avatarUrl || null,
-        isPrivate: p.isPrivate === true,
-      }));
-      batch.push(db.insert(profiles).values(payload));
+    // A full replacement preserves username swaps under the global unique constraint.
+    // Ordinary playback/profile updates take the differential path below.
+    const usernameLayoutChanged = inputs.some((input) => (
+      (storedById.get(input.id)?.username || null) !== profileWriteValues(input).username
+    ));
+    if (usernameLayoutChanged) {
+      batch.push(db.delete(profiles).where(eq(profiles.userId, session.userId)));
+      if (inputs.length > 0) {
+        batch.push(db.insert(profiles).values(inputs.map((input) => ({
+          id: input.id,
+          userId: session.userId,
+          ...profileWriteValues(input),
+        }))));
+      }
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await db.batch(batch as any);
+    if (!usernameLayoutChanged && storedProfiles.some((profile) => !incomingIds.has(profile.id))) {
+      const removedIds = storedProfiles
+        .filter((profile) => !incomingIds.has(profile.id))
+        .map((profile) => profile.id);
+      batch.push(db.delete(profiles).where(and(
+        eq(profiles.userId, session.userId),
+        inArray(profiles.id, removedIds),
+      )));
+    }
+
+    for (const input of usernameLayoutChanged ? [] : inputs) {
+      const stored = storedById.get(input.id);
+      const values = profileWriteValues(input);
+      if (!stored) {
+        batch.push(db.insert(profiles).values({
+          id: input.id,
+          userId: session.userId,
+          ...values,
+        }));
+      } else if (!profileWriteMatches(stored, input)) {
+        batch.push(db.update(profiles).set(values).where(and(
+          eq(profiles.userId, session.userId),
+          eq(profiles.id, input.id),
+        )));
+      }
+    }
+
+    if (batch.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await db.batch(batch as any);
+    }
 
     return jsonResponse({ success: true, count: profilesPayload.length });
   } catch (error) {
