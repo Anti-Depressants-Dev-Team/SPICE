@@ -1851,6 +1851,7 @@ export default function SpiceApp() {
   const [profiles, setProfiles] = useState<UserProfile[]>([initialDefaultProfile]);
   const [activeProfileId, setActiveProfileId] = useState<string>('default');
   const [isProfileHydrated, setIsProfileHydrated] = useState(false);
+  const [activeSettingsSection, setActiveSettingsSection] = useState('theme-accent');
 
   const activeProfile = profiles.find(p => p.id === activeProfileId) || profiles[0] || initialDefaultProfile;
 
@@ -3055,6 +3056,53 @@ export default function SpiceApp() {
       void loadPlaylistInvite(inviteToken);
     }
   }, [isMounted, loadPlaylistInvite]);
+
+  useEffect(() => {
+    if (currentPage !== 'settings') return;
+    const mainEl = document.getElementById('main');
+    if (!mainEl) return;
+
+    const sections = [
+      'theme-accent',
+      'visual-customization',
+      'profile-privacy',
+      'sidebar-controls',
+      'audio-streaming',
+      'profile-sync',
+      'player-layout',
+      'playback-profiles'
+    ];
+
+    const handleScroll = () => {
+      const scrollPos = mainEl.scrollTop + 100;
+      for (const sectionId of sections) {
+        const el = document.getElementById(sectionId);
+        if (el) {
+          const top = el.offsetTop;
+          const height = el.offsetHeight;
+          if (scrollPos >= top && scrollPos < top + height) {
+            setActiveSettingsSection(sectionId);
+            break;
+          }
+        }
+      }
+    };
+
+    mainEl.addEventListener('scroll', handleScroll);
+    return () => mainEl.removeEventListener('scroll', handleScroll);
+  }, [currentPage]);
+
+  const scrollToSettingsSection = (id: string) => {
+    const mainEl = document.getElementById('main');
+    const targetEl = document.getElementById(id);
+    if (mainEl && targetEl) {
+      mainEl.scrollTo({
+        top: targetEl.offsetTop - 20,
+        behavior: 'smooth'
+      });
+      setActiveSettingsSection(id);
+    }
+  };
 
   useEffect(() => {
     if (!isMounted || typeof window === 'undefined') return;
@@ -9241,11 +9289,55 @@ const getMaskedEmail = (email: string) => {
       {/* ═══ Main Content Area ═══ */}
       <main className="main" id="main">
         <div className="main__content">
-          <header className="app-topbar" aria-label="SPICE topbar">
+          <header className="app-topbar" aria-label="SPICE topbar" style={{ gridTemplateColumns: 'minmax(140px, 0.35fr) auto minmax(260px, 1fr) auto', gap: '16px' }}>
             <div className="app-topbar__context">
               <span>{currentPage === 'search' ? 'Search mode' : 'SPICE Music'}</span>
               <strong>{currentPage.charAt(0).toUpperCase() + currentPage.slice(1)}</strong>
             </div>
+
+            <button
+              onClick={() => setCommandPaletteOpen(true)}
+              title="Command Palette (Ctrl+K)"
+              type="button"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '6px 12px',
+                background: 'rgba(255, 255, 255, 0.04)',
+                border: '1px solid rgba(255, 255, 255, 0.08)',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                color: 'var(--text-secondary)',
+                fontSize: '0.78rem',
+                fontWeight: 600,
+                transition: 'all 0.15s ease',
+                fontFamily: 'Outfit, sans-serif',
+                alignSelf: 'center',
+                height: 'fit-content'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
+                e.currentTarget.style.color = '#fff';
+                e.currentTarget.style.borderColor = 'var(--accent)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)';
+                e.currentTarget.style.color = 'var(--text-secondary)';
+                e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.08)';
+              }}
+            >
+              {Icons.search}
+              <span>Commands</span>
+              <kbd style={{
+                background: 'rgba(255, 255, 255, 0.08)',
+                border: '1px solid rgba(255, 255, 255, 0.15)',
+                borderRadius: '4px',
+                padding: '1px 5px',
+                fontSize: '0.62rem',
+                color: 'var(--text-secondary)'
+              }}>⌘K</kbd>
+            </button>
 
             <div className="app-topbar__search-shell">
               <form className="app-topbar__search" onSubmit={handleTopbarSearchSubmit} role="search">
@@ -11649,11 +11741,80 @@ const getMaskedEmail = (email: string) => {
 
               {/* ── Settings Tab Page ── */}
               {currentPage === 'settings' && (
-                <div className="animate-in" style={{ maxWidth: '720px', margin: '0 auto' }}>
-                  <h1 style={{ fontFamily: 'Outfit, sans-serif', fontSize: '2rem', fontWeight: 800, marginBottom: '24px' }}>Application Settings</h1>
+                <div className="animate-in" style={{ display: 'flex', gap: '32px', maxWidth: '1020px', margin: '0 auto', alignItems: 'flex-start' }}>
+                  
+                  {/* Left Navigation Sidebar */}
+                  <nav style={{
+                    width: '210px',
+                    flexShrink: 0,
+                    position: 'sticky',
+                    top: '90px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '6px',
+                    background: 'var(--card-bg)',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: '16px',
+                    padding: '16px',
+                    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.2)'
+                  }}>
+                    <div style={{ fontSize: '0.68rem', fontWeight: 800, textTransform: 'uppercase', color: 'var(--text-secondary)', padding: '0 8px 10px 8px', borderBottom: '1px solid var(--border-color)', marginBottom: '6px', letterSpacing: '0.05em' }}>
+                      Sections
+                    </div>
+                    {[
+                      { id: 'theme-accent', label: 'Theme Accent', icon: Icons.palette },
+                      { id: 'visual-customization', label: 'Visual Layout', icon: Icons.monitor },
+                      { id: 'profile-privacy', label: 'Profile Settings', icon: Icons.shield },
+                      { id: 'sidebar-controls', label: 'Sidebar Panels', icon: Icons.grid },
+                      { id: 'audio-streaming', label: 'Audio & Quality', icon: Icons.volume },
+                      { id: 'profile-sync', label: 'Cloud Sync', icon: Icons.account },
+                      { id: 'player-layout', label: 'Player Settings', icon: Icons.play },
+                      { id: 'playback-profiles', label: 'Smart Behavior', icon: Icons.settings }
+                    ].map((sec) => {
+                      const isCurrent = activeSettingsSection === sec.id;
+                      return (
+                        <button
+                          key={sec.id}
+                          onClick={() => scrollToSettingsSection(sec.id)}
+                          type="button"
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px',
+                            padding: '10px 12px',
+                            borderRadius: '8px',
+                            color: isCurrent ? 'var(--accent)' : 'var(--text-secondary)',
+                            background: isCurrent ? 'rgba(var(--accent-rgb, 236, 72, 153), 0.08)' : 'transparent',
+                            border: 'none',
+                            fontSize: '0.82rem',
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                            textAlign: 'left',
+                            width: '100%',
+                            transition: 'all 0.15s ease'
+                          }}
+                          onMouseEnter={(e) => {
+                            if (!isCurrent) e.currentTarget.style.color = '#fff';
+                          }}
+                          onMouseLeave={(e) => {
+                            if (!isCurrent) e.currentTarget.style.color = 'var(--text-secondary)';
+                          }}
+                        >
+                          <span style={{ display: 'flex', alignItems: 'center', opacity: isCurrent ? 1 : 0.7 }}>
+                            {sec.icon}
+                          </span>
+                          <span>{sec.label}</span>
+                        </button>
+                      );
+                    })}
+                  </nav>
 
-                  {/* Theme Accent Settings */}
-                  <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
+                  {/* Right Content Column */}
+                  <div style={{ flexGrow: 1, minWidth: 0 }}>
+                    <h1 style={{ fontFamily: 'Outfit, sans-serif', fontSize: '2rem', fontWeight: 800, marginBottom: '24px' }}>Application Settings</h1>
+
+                    {/* Theme Accent Settings */}
+                    <div id="theme-accent" style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
                     <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.palette} Global Accent Colors</h3>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0 0 20px 0', lineHeight: 1.4 }}>
                       Select a dynamic accent theme color to instantly paint application highlights, glow animations, button hovers, and dividers.
@@ -11700,7 +11861,7 @@ const getMaskedEmail = (email: string) => {
                   </div>
 
                   {/* Visual Customization */}
-                  <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
+                  <div id="visual-customization" style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
                     <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.palette} Visual Customization</h3>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0 0 20px 0', lineHeight: 1.4 }}>
                       Tune the app surface, cover shape, motion level, and layout density. These preferences save locally and apply instantly.
@@ -11798,7 +11959,7 @@ const getMaskedEmail = (email: string) => {
                   </div>
 
                   {/* Profile Privacy Settings */}
-                  <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
+                  <div id="profile-privacy" style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
                     <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>👤 Profile Privacy</h3>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0 0 20px 0', lineHeight: 1.4 }}>
                       Control how other listeners see your SPICE profile. Private profiles hide your bio, streaming counts, liked tracks, and custom playlists from search results and profiles.
@@ -11823,7 +11984,7 @@ const getMaskedEmail = (email: string) => {
                   </div>
 
                   {/* Sidebar Controls */}
-                  <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
+                  <div id="sidebar-controls" style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
                     <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.library} Sidebar Controls</h3>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0 0 20px 0', lineHeight: 1.4 }}>
                       Collapse the SPICE Music sidebar or trim optional sidebar tabs. Topbar search and the profile button stay available.
@@ -11893,7 +12054,7 @@ const getMaskedEmail = (email: string) => {
                   </div>
 
                   {/* Audio Settings */}
-                  <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
+                  <div id="audio-streaming" style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
                     <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.headphones} Audio & Streaming Preferences</h3>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0 0 20px 0', lineHeight: 1.4 }}>
                       Fine-tune streaming codecs and bitrates to match your current network speed or data constraints.
@@ -11940,7 +12101,7 @@ const getMaskedEmail = (email: string) => {
                   </div>
 
                   {/* Listening Profile Sync */}
-                  <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
+                  <div id="profile-sync" style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
                     <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '16px', marginBottom: '18px' }}>
                       <div>
                         <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.database} Listening Profile Sync</h3>
@@ -12070,7 +12231,7 @@ const getMaskedEmail = (email: string) => {
                   </div>
 
                   {/* Player View & Position Settings */}
-                  <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
+                  <div id="player-layout" style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
                     <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.monitor} Player Layout & Viewing Options</h3>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0 0 20px 0', lineHeight: 1.4 }}>
                       Customize the now-playing bar placement, open the immersive full-screen player, or collapse it into a floating picture-in-picture widget.
@@ -12144,7 +12305,7 @@ const getMaskedEmail = (email: string) => {
                     </div>
                   </div>
 
-                  <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
+                  <div id="playback-profiles" style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
                     <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif' }}>Playback Profiles & Smart Queue</h3>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0 0 20px 0', lineHeight: 1.4 }}>
                       Save multiple listening behaviors, smooth direct-audio transitions, and rebuild the queue with repeat-avoidance and artist/source diversity.
@@ -12749,6 +12910,8 @@ const getMaskedEmail = (email: string) => {
                         }}></div>
                       </div>
                     </div>
+                  </div>
+                  
                   </div>
                 </div>
               )}
@@ -13661,14 +13824,7 @@ const getMaskedEmail = (email: string) => {
             </button>
 
 
-            <button 
-              className="now-playing__volume-btn" 
-              onClick={() => setCommandPaletteOpen(true)}
-              title="Search & Commands (Ctrl+K)"
-              style={{ fontSize: '0.8rem' }}
-            >
-              {Icons.search}
-            </button>
+
 
             <button className="now-playing__volume-btn" onClick={() => setReceiverVolume(playerVolume === 0 ? 70 : 0)}>
               {playerVolume === 0 ? Icons.volumeMuted : Icons.volume}
