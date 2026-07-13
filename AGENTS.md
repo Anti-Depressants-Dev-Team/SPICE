@@ -83,6 +83,15 @@ Do not add pnpm workspace files or a separate backend lockfile.
 - Native packaging/runtime: run `npm run start:native` or the relevant `npm run dist:native:*` path.
 - Mobile changes: run `npm run mobile:android:check`.
 
+## Automatic release policy
+
+- Any agent that completes a user-requested product or code implementation must carry it through release; do not stop after editing, committing, pushing a branch, or opening a pull request.
+- After the relevant verification passes, bump the root desktop patch version in `package.json` and `package-lock.json`. Bump `SPICE_MEDIA_CORE_VERSION` and its changelog/tests as well when the backend or local media runtime changes.
+- Commit only necessary tracked source and metadata, push the branch, merge it into `main`, and create/push the matching `v<desktop-version>` tag from the verified merge commit.
+- Monitor the `main` CI, Vercel production deployment, `Release Spice`, and `Release Spice Native` workflows to completion. Fix, rerun, or report any failed job; never describe a release as complete while required jobs or assets are missing.
+- Confirm that the GitHub release contains the expected desktop, Native, and Android assets and that the `spice-local-runtime` release was refreshed when runtime code changed.
+- Documentation-only, test-only, and workflow-only maintenance does not require a new product version unless the user explicitly requests one, but it must still be verified and merged when it is part of the requested work.
+
 ## Migration note
 
 The former separate SPICE backend repository now lives at `apps/backend`. Do not restore the legacy sibling-checkout assumption or copy backend sources between repositories. The root npm workspace, CI, native runtime preparation, and release workflows must continue to operate from this single repository.
