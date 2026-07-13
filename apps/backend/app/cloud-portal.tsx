@@ -30,7 +30,7 @@ function DownloadIcon() {
 function SpiceMark() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M15.5 4.5v10.3a3.7 3.7 0 1 1-2-3.3V6.4l6-1.4v7.6a3.7 3.7 0 1 1-2-3.3V4.1l-2 .4Z" />
+      <path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6Z" />
     </svg>
   );
 }

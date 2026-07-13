@@ -123,3 +123,44 @@ test('settings windows apply and clear live custom theme variables', () => {
     assert.equal(reset.properties.size, 0);
   }
 });
+
+test('desktop settings keep one bounded scroller and scope wheel handling to hovered selects', () => {
+  const settings = read('settings.html');
+
+  assert.match(settings, /\.settings-layout\s*\{[^}]*min-height:\s*0/s);
+  assert.match(settings, /\.settings-content\s*\{[^}]*min-height:\s*0/s);
+  assert.match(settings, /document\.querySelectorAll\(['"]select['"]\)/);
+  assert.match(settings, /event\.preventDefault\(\)/);
+  assert.doesNotMatch(settings, /document\.activeElement\.tagName === ['"]SELECT['"]/);
+});
+
+test('SPICE Music settings navigation and player command shortcut use live theme tokens', () => {
+  const spiceApp = read('apps/backend/app/spice-app.tsx');
+  const styles = read('apps/backend/app/globals.css');
+
+  assert.match(spiceApp, /className="settings-page-nav"/);
+  assert.match(spiceApp, /rgba\(var\(--accent-pink-rgb/);
+  assert.match(spiceApp, /className="now-playing__btn now-playing__command-palette"/);
+  assert.match(spiceApp, /aria-label="Open command palette"/);
+  assert.match(styles, /\.now-playing__command-palette/);
+  assert.doesNotMatch(spiceApp, /document\.activeElement.*tagName === 'SELECT'/s);
+});
+
+test('desktop updater cleanup cannot quit before electron-updater launches the installer', () => {
+  const main = read('main.js');
+
+  assert.match(main, /for \(const targetWindow of BrowserWindow\.getAllWindows\(\)\)/);
+  assert.match(main, /if \(updateInstallInProgress\) return;\s*if \(process\.platform !== "darwin"\) app\.quit\(\);/);
+  assert.match(main, /await spiceRuntimeManager\.stop\(\)/);
+  assert.match(main, /autoUpdater\.quitAndInstall\(false, true\)/);
+});
+
+test('single-note branding is used by the player favicon and hosted portal', () => {
+  const spiceApp = read('apps/backend/app/spice-app.tsx');
+  const portal = read('apps/backend/app/cloud-portal.tsx');
+  const portalStyles = read('apps/backend/app/cloud-portal.module.css');
+
+  assert.match(spiceApp, /<path d="M64 25v55\.2/);
+  assert.match(portal, /<path d="M12 3v10\.55/);
+  assert.match(portalStyles, /\.logoMark\s*\{[^}]*width:\s*54px/s);
+});

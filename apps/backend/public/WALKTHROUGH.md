@@ -1,5 +1,14 @@
 # SPICE Walkthrough
 
+## v1.0.132
+
+- [Spice.Home main] Keep Desktop Settings inside one bounded responsive scroller, prevent selector-wheel value changes without stealing focus elsewhere, and paint every settings surface from the active built-in or custom theme.
+- [Spice.Home main] Let electron-updater finish runtime cleanup and launch its installer before the final window-close event can quit SPICE Native.
+- [Spice.Music main] Make the web settings section navigation follow the active theme and stay usable in narrower layouts.
+- [Spice.Music main] Restore the compact `K` command-palette shortcut to the now-playing bar.
+- [Spice.Home main] Restore the single-note SPICE mark across the Music sidebar, dynamic favicon, and hosted portal, with a larger portal brand treatment.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.132`.
+
 ## v1.0.131
 
 - [Spice.Home main] Reorganize Desktop Settings around Electron-only controls, clarify the scope of embedded-service scrobbling, and link directly into SPICE Music Settings for cross-platform preferences.

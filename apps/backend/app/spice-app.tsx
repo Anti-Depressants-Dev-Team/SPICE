@@ -1640,6 +1640,23 @@ export default function SpiceApp() {
     return () => window.removeEventListener('keydown', handleCommandPaletteShortcut);
   }, []);
 
+  useEffect(() => {
+    const keepSelectWheelScrolling = (event: WheelEvent) => {
+      const target = event.target instanceof Element ? event.target.closest('select') : null;
+      if (!(target instanceof HTMLSelectElement)) return;
+
+      event.preventDefault();
+      target.blur();
+      const scrollContainer = target.closest<HTMLElement>('.main');
+      if (scrollContainer) {
+        scrollContainer.scrollBy({ top: event.deltaY, behavior: 'auto' });
+      }
+    };
+
+    document.addEventListener('wheel', keepSelectWheelScrolling, { passive: false, capture: true });
+    return () => document.removeEventListener('wheel', keepSelectWheelScrolling, { capture: true });
+  }, []);
+
   const dismissSpiceNotice = useCallback((id: number) => {
     const timer = activeNoticeTimersRef.current.get(id);
     if (timer) {
@@ -3073,31 +3090,37 @@ export default function SpiceApp() {
       'playback-profiles'
     ];
 
+    let animationFrame = 0;
     const handleScroll = () => {
-      const scrollPos = mainEl.scrollTop + 100;
-      for (const sectionId of sections) {
-        const el = document.getElementById(sectionId);
-        if (el) {
-          const top = el.offsetTop;
-          const height = el.offsetHeight;
-          if (scrollPos >= top && scrollPos < top + height) {
-            setActiveSettingsSection(sectionId);
-            break;
-          }
+      if (animationFrame) return;
+      animationFrame = window.requestAnimationFrame(() => {
+        animationFrame = 0;
+        const topbar = mainEl.querySelector<HTMLElement>('.app-topbar');
+        const marker = mainEl.scrollTop + (topbar?.offsetHeight ?? 0) + 32;
+        let current = sections[0];
+        for (const sectionId of sections) {
+          const section = document.getElementById(sectionId);
+          if (section && marker >= section.offsetTop) current = sectionId;
         }
-      }
+        setActiveSettingsSection(current);
+      });
     };
 
-    mainEl.addEventListener('scroll', handleScroll);
-    return () => mainEl.removeEventListener('scroll', handleScroll);
+    handleScroll();
+    mainEl.addEventListener('scroll', handleScroll, { passive: true });
+    return () => {
+      mainEl.removeEventListener('scroll', handleScroll);
+      if (animationFrame) window.cancelAnimationFrame(animationFrame);
+    };
   }, [currentPage]);
 
   const scrollToSettingsSection = (id: string) => {
     const mainEl = document.getElementById('main');
     const targetEl = document.getElementById(id);
     if (mainEl && targetEl) {
+      const topbar = mainEl.querySelector<HTMLElement>('.app-topbar');
       mainEl.scrollTo({
-        top: targetEl.offsetTop - 20,
+        top: Math.max(0, targetEl.offsetTop - (topbar?.offsetHeight ?? 0) - 24),
         behavior: 'smooth'
       });
       setActiveSettingsSection(id);
@@ -3118,7 +3141,7 @@ export default function SpiceApp() {
     const color = customThemeEnabled ? customThemePalette.colors.primary : (themeColors[accentTheme] || '#7c3aed');
     const svgString = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
       <rect width="128" height="128" rx="32" fill="${color}" />
-      <text x="64" y="96" font-family="system-ui, -apple-system, sans-serif" font-weight="900" font-size="86" fill="#ffffff" text-anchor="middle">S</text>
+      <path d="M64 25v55.2a20 20 0 1 0 10 17.3V45h20V25H64Z" fill="#ffffff" />
     </svg>`;
     const dataUrl = `data:image/svg+xml;utf8,${encodeURIComponent(svgString)}`;
 
@@ -9191,7 +9214,7 @@ const getMaskedEmail = (email: string) => {
               className="sidebar__logo-icon"
             >
               <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M9 18V6.7l10-2.2v10.7a3.5 3.5 0 1 1-2-3.16V7l-6 1.32V18a3.5 3.5 0 1 1-2-3.16V18Z" />
+                <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
               </svg>
             </div>
             <span className="sidebar__logo-text">
@@ -9289,55 +9312,11 @@ const getMaskedEmail = (email: string) => {
       {/* ═══ Main Content Area ═══ */}
       <main className="main" id="main">
         <div className="main__content">
-          <header className="app-topbar" aria-label="SPICE topbar" style={{ gridTemplateColumns: 'minmax(140px, 0.35fr) auto minmax(260px, 1fr) auto', gap: '16px' }}>
+          <header className="app-topbar" aria-label="SPICE topbar">
             <div className="app-topbar__context">
               <span>{currentPage === 'search' ? 'Search mode' : 'SPICE Music'}</span>
               <strong>{currentPage.charAt(0).toUpperCase() + currentPage.slice(1)}</strong>
             </div>
-
-            <button
-              onClick={() => setCommandPaletteOpen(true)}
-              title="Command Palette (Ctrl+K)"
-              type="button"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '6px 12px',
-                background: 'rgba(255, 255, 255, 0.04)',
-                border: '1px solid rgba(255, 255, 255, 0.08)',
-                borderRadius: '8px',
-                cursor: 'pointer',
-                color: 'var(--text-secondary)',
-                fontSize: '0.78rem',
-                fontWeight: 600,
-                transition: 'all 0.15s ease',
-                fontFamily: 'Outfit, sans-serif',
-                alignSelf: 'center',
-                height: 'fit-content'
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
-                e.currentTarget.style.color = '#fff';
-                e.currentTarget.style.borderColor = 'var(--accent)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)';
-                e.currentTarget.style.color = 'var(--text-secondary)';
-                e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.08)';
-              }}
-            >
-              {Icons.search}
-              <span>Commands</span>
-              <kbd style={{
-                background: 'rgba(255, 255, 255, 0.08)',
-                border: '1px solid rgba(255, 255, 255, 0.15)',
-                borderRadius: '4px',
-                padding: '1px 5px',
-                fontSize: '0.62rem',
-                color: 'var(--text-secondary)'
-              }}>⌘K</kbd>
-            </button>
 
             <div className="app-topbar__search-shell">
               <form className="app-topbar__search" onSubmit={handleTopbarSearchSubmit} role="search">
@@ -11741,23 +11720,10 @@ const getMaskedEmail = (email: string) => {
 
               {/* ── Settings Tab Page ── */}
               {currentPage === 'settings' && (
-                <div className="animate-in" style={{ display: 'flex', gap: '32px', maxWidth: '1020px', margin: '0 auto', alignItems: 'flex-start' }}>
+                <div className="animate-in settings-page-layout">
                   
                   {/* Left Navigation Sidebar */}
-                  <nav style={{
-                    width: '210px',
-                    flexShrink: 0,
-                    position: 'sticky',
-                    top: '90px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '6px',
-                    background: 'var(--card-bg)',
-                    border: '1px solid var(--border-color)',
-                    borderRadius: '16px',
-                    padding: '16px',
-                    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.2)'
-                  }}>
+                  <nav className="settings-page-nav" aria-label="Application settings sections">
                     <div style={{ fontSize: '0.68rem', fontWeight: 800, textTransform: 'uppercase', color: 'var(--text-secondary)', padding: '0 8px 10px 8px', borderBottom: '1px solid var(--border-color)', marginBottom: '6px', letterSpacing: '0.05em' }}>
                       Sections
                     </div>
@@ -11777,14 +11743,15 @@ const getMaskedEmail = (email: string) => {
                           key={sec.id}
                           onClick={() => scrollToSettingsSection(sec.id)}
                           type="button"
+                          aria-current={isCurrent ? 'location' : undefined}
                           style={{
                             display: 'flex',
                             alignItems: 'center',
                             gap: '10px',
                             padding: '10px 12px',
                             borderRadius: '8px',
-                            color: isCurrent ? 'var(--accent)' : 'var(--text-secondary)',
-                            background: isCurrent ? 'rgba(var(--accent-rgb, 236, 72, 153), 0.08)' : 'transparent',
+                            color: isCurrent ? 'var(--accent-pink)' : 'var(--text-secondary)',
+                            background: isCurrent ? 'rgba(var(--accent-pink-rgb, 124, 58, 237), 0.12)' : 'transparent',
                             border: 'none',
                             fontSize: '0.82rem',
                             fontWeight: 600,
@@ -11810,7 +11777,7 @@ const getMaskedEmail = (email: string) => {
                   </nav>
 
                   {/* Right Content Column */}
-                  <div style={{ flexGrow: 1, minWidth: 0 }}>
+                  <div className="settings-page-content">
                     <h1 style={{ fontFamily: 'Outfit, sans-serif', fontSize: '2rem', fontWeight: 800, marginBottom: '24px' }}>Application Settings</h1>
 
                     {/* Theme Accent Settings */}
@@ -13720,6 +13687,16 @@ const getMaskedEmail = (email: string) => {
               <div className="now-playing__waveform-bar"></div>
             </div>
           </div>
+
+          <button
+            type="button"
+            className="now-playing__btn now-playing__command-palette"
+            onClick={() => setCommandPaletteOpen(true)}
+            title="Command palette (Ctrl+K)"
+            aria-label="Open command palette"
+          >
+            <span aria-hidden="true">K</span>
+          </button>
 
           {renderSongShareButton(playerTrack, 'now-playing__btn now-playing__share')}
 
