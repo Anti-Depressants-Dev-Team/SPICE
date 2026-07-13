@@ -1,5 +1,12 @@
 # SPICE Walkthrough
 
+## v1.0.133
+
+- [Spice.Home main] Rebuild the Native first-launch screen with a richer palette-aware visual system and contain long runtime, account, and launch values inside responsive summary cards.
+- [Spice.Music main] Move the compact `K` command-palette key from the now-playing controls into the topbar search-mode context.
+- [Spice.Music main] Replace raw custom-theme color strings with graphical saturation/brightness pickers, hue gradients, opacity sliders, keyboard controls, and live swatches.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.133`.
+
 ## v1.0.132
 
 - [Spice.Home main] Keep Desktop Settings inside one bounded responsive scroller, prevent selector-wheel value changes without stealing focus elsewhere, and paint every settings surface from the active built-in or custom theme.
