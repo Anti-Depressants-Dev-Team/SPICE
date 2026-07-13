@@ -1,7 +1,8 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { SpeedInsights } from "@vercel/speed-insights/next";
 import { Analytics } from "@vercel/analytics/next";
+import OfflineShellRegistration from "./offline-shell-registration";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -25,6 +26,10 @@ export const metadata: Metadata = {
   },
 };
 
+export const viewport: Viewport = {
+  themeColor: "#7c3aed",
+};
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -34,6 +39,7 @@ export default function RootLayout({
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`}>
       <body>
         {children}
+        <OfflineShellRegistration />
         <SpeedInsights />
         <Analytics />
       </body>

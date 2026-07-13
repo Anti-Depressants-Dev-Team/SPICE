@@ -1,13 +1,17 @@
 import { jsonResponse, optionsResponse } from '@/lib/cors';
-import { verifySession } from '@/lib/auth';
 import { db } from '@/db';
-import { remoteCommands } from '@/db/schema';
+import { remoteCommands, remoteDevices } from '@/db/schema';
 import { and, asc, eq, gte, inArray, isNull, lt, or } from 'drizzle-orm';
 import {
   normalizeSpiceConnectCommandInput,
   parseRemotePayload,
   SPICE_CONNECT_COMMAND_TTL_MS,
 } from '@/lib/spice-connect';
+import {
+  authorizeSpiceConnectRequest,
+  requirePrincipalDevice,
+  SpiceConnectAuthorizationError,
+} from '@/lib/spice-connect-authorization';
 
 export const runtime = 'nodejs';
 
@@ -17,12 +21,7 @@ export function OPTIONS() {
 
 export async function GET(request: Request) {
   try {
-    const auth = request.headers.get('Authorization');
-    if (!auth?.startsWith('Bearer ')) {
-      return jsonResponse({ error: 'unauthorized', message: 'Missing auth header.' }, { status: 401 });
-    }
-
-    const session = await verifySession(auth.substring(7));
+    const principal = await authorizeSpiceConnectRequest(request);
     if (!process.env.DATABASE_URL) {
       return jsonResponse(
         { error: 'database_not_configured', message: 'Backend DATABASE_URL environment variable is not configured.' },
@@ -35,6 +34,7 @@ export async function GET(request: Request) {
     if (!deviceId) {
       return jsonResponse({ error: 'invalid_device', message: 'A deviceId query parameter is required.' }, { status: 400 });
     }
+    requirePrincipalDevice(principal, deviceId);
 
     const now = new Date();
     const staleCutoff = new Date(now.getTime() - SPICE_CONNECT_COMMAND_TTL_MS);
@@ -49,7 +49,7 @@ export async function GET(request: Request) {
             .select({ id: remoteCommands.id })
             .from(remoteCommands)
             .where(and(
-              eq(remoteCommands.userId, session.userId),
+              eq(remoteCommands.userId, principal.userId),
               eq(remoteCommands.targetDeviceId, deviceId),
               isNull(remoteCommands.consumedAt),
               gte(remoteCommands.createdAt, staleCutoff),
@@ -58,7 +58,7 @@ export async function GET(request: Request) {
             .limit(20)
         ),
         and(
-          eq(remoteCommands.userId, session.userId),
+          eq(remoteCommands.userId, principal.userId),
           eq(remoteCommands.targetDeviceId, deviceId),
           isNull(remoteCommands.consumedAt),
           lt(remoteCommands.createdAt, staleCutoff),
@@ -81,6 +81,9 @@ export async function GET(request: Request) {
       })),
     });
   } catch (error) {
+    if (error instanceof SpiceConnectAuthorizationError) {
+      return jsonResponse({ error: error.code, message: error.message }, { status: error.status }, request);
+    }
     return jsonResponse(
       {
         error: 'remote_commands_failed',
@@ -93,12 +96,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const auth = request.headers.get('Authorization');
-    if (!auth?.startsWith('Bearer ')) {
-      return jsonResponse({ error: 'unauthorized', message: 'Missing auth header.' }, { status: 401 });
-    }
-
-    const session = await verifySession(auth.substring(7));
+    const principal = await authorizeSpiceConnectRequest(request);
     if (!process.env.DATABASE_URL) {
       return jsonResponse(
         { error: 'database_not_configured', message: 'Backend DATABASE_URL environment variable is not configured.' },
@@ -112,11 +110,28 @@ export async function POST(request: Request) {
     if ('error' in input) {
       return jsonResponse({ error: input.error, message: input.message }, { status: 400 });
     }
+    requirePrincipalDevice(principal, input.sourceDeviceId);
+
+    if (principal.kind === 'paired_device') {
+      const target = await db.query.remoteDevices.findFirst({
+        where: and(
+          eq(remoteDevices.userId, principal.userId),
+          eq(remoteDevices.deviceId, input.targetDeviceId),
+        ),
+      });
+      if (!target) {
+        return jsonResponse(
+          { error: 'target_not_found', message: 'The target Spice Connect device is not registered.' },
+          { status: 404 },
+          request,
+        );
+      }
+    }
 
     const [created] = await db
       .insert(remoteCommands)
       .values({
-        userId: session.userId,
+        userId: principal.userId,
         targetDeviceId: input.targetDeviceId,
         sourceDeviceId: input.sourceDeviceId,
         command: input.command,
@@ -134,6 +149,9 @@ export async function POST(request: Request) {
       },
     });
   } catch (error) {
+    if (error instanceof SpiceConnectAuthorizationError) {
+      return jsonResponse({ error: error.code, message: error.message }, { status: error.status }, request);
+    }
     return jsonResponse(
       {
         error: 'remote_command_send_failed',

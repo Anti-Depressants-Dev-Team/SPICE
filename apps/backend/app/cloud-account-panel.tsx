@@ -19,9 +19,15 @@ interface AccountSubscription {
 interface AccountSnapshot {
   id: string;
   email: string;
+  emailVerified?: boolean;
   accountRole: string;
   isAdmin: boolean;
   subscription: AccountSubscription;
+}
+
+interface VerificationChallenge {
+  registrationId: string;
+  email: string;
 }
 
 interface CloudAccountPanelProps {
@@ -41,6 +47,8 @@ export default function CloudAccountPanel({ localRuntimeUrl }: CloudAccountPanel
   const [password, setPassword] = useState('');
   const [username, setUsername] = useState('');
   const [usernameDraft, setUsernameDraft] = useState('');
+  const [verification, setVerification] = useState<VerificationChallenge | null>(null);
+  const [verificationCode, setVerificationCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [savingUsername, setSavingUsername] = useState(false);
@@ -142,6 +150,18 @@ export default function CloudAccountPanel({ localRuntimeUrl }: CloudAccountPanel
       });
       const payload = await readJson(response);
 
+      const registrationId = readString(payload.registrationId);
+      if (response.ok && payload.verificationRequired === true && registrationId) {
+        setVerification({
+          registrationId,
+          email: readString(payload.email) || email,
+        });
+        setPassword('');
+        setVerificationCode('');
+        setMessage(`We sent a six-digit verification code to ${readString(payload.email) || email}.`);
+        return;
+      }
+
       const nextToken = readString(payload.token) || readString(payload.sessionToken) || readString(payload.accessToken);
 
       if (!response.ok || !nextToken) {
@@ -158,6 +178,63 @@ export default function CloudAccountPanel({ localRuntimeUrl }: CloudAccountPanel
         setAccount(nextAccount);
       }
       await loadAccount(nextToken, nextAccount);
+    } catch {
+      setMessage('Cloud account service is currently unavailable.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleVerificationSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!verification) return;
+    setSubmitting(true);
+    setMessage('Verifying your email...');
+    try {
+      const response = await fetch(cloudApiUrl('/auth/spice/verify-email'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ registrationId: verification.registrationId, code: verificationCode }),
+      });
+      const payload = await readJson(response);
+      const nextToken = readString(payload.token) || readString(payload.sessionToken) || readString(payload.accessToken);
+      if (!response.ok || !nextToken) {
+        setMessage(friendlyAccountError(payload));
+        return;
+      }
+
+      localStorage.setItem(TOKEN_KEY, nextToken);
+      localStorage.setItem(LEGACY_TOKEN_KEY, nextToken);
+      setVerification(null);
+      setVerificationCode('');
+      setToken(nextToken);
+      const nextAccount = normalizeAccountSnapshot(payload);
+      if (nextAccount) setAccount(nextAccount);
+      await loadAccount(nextToken, nextAccount);
+    } catch {
+      setMessage('Cloud account service is currently unavailable.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function resendVerification() {
+    if (!verification) return;
+    setSubmitting(true);
+    setMessage('Sending a new code...');
+    try {
+      const response = await fetch(cloudApiUrl('/auth/spice/resend-verification'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ registrationId: verification.registrationId }),
+      });
+      const payload = await readJson(response);
+      if (!response.ok) {
+        setMessage(friendlyAccountError(payload));
+        return;
+      }
+      setVerificationCode('');
+      setMessage(`A new code was sent to ${readString(payload.email) || verification.email}.`);
     } catch {
       setMessage('Cloud account service is currently unavailable.');
     } finally {
@@ -266,14 +343,47 @@ export default function CloudAccountPanel({ localRuntimeUrl }: CloudAccountPanel
             <p className={styles.statusNote}>{message}</p>
           </form>
         </div>
+      ) : verification ? (
+        <div className={styles.accountGrid}>
+          <form className={styles.accountForm} onSubmit={handleVerificationSubmit}>
+            <span>Email verification</span>
+            <h3>Check {verification.email}</h3>
+            <label>
+              Six-digit code
+              <input
+                value={verificationCode}
+                onChange={(event) => setVerificationCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                pattern="[0-9]{6}"
+                minLength={6}
+                maxLength={6}
+                required
+              />
+            </label>
+            <button type="submit" disabled={submitting || verificationCode.length !== 6}>
+              {submitting ? 'Working...' : 'Verify and sign in'}
+            </button>
+            <div className={styles.accountActions}>
+              <button type="button" disabled={submitting} onClick={() => void resendVerification()}>Resend code</button>
+              <button type="button" disabled={submitting} onClick={() => { setVerification(null); setVerificationCode(''); setMessage('Enter your account details to try again.'); }}>Start again</button>
+            </div>
+            <p className={styles.statusNote}>{message}</p>
+          </form>
+          <section className={styles.accountSummary} aria-label="Email verification help">
+            <span>Inbox ownership</span>
+            <h3>Your account is not active yet.</h3>
+            <p>The code expires after 10 minutes. Check spam or request another code after the cooldown.</p>
+          </section>
+        </div>
       ) : (
         <div className={styles.accountGrid}>
           <form className={styles.accountForm} onSubmit={handleAuthSubmit}>
             <div className={styles.modeSwitch} aria-label="Account form mode">
-              <button type="button" className={mode === 'signin' ? styles.modeActive : ''} onClick={() => setMode('signin')}>
+              <button type="button" className={mode === 'signin' ? styles.modeActive : ''} onClick={() => { setMode('signin'); setVerification(null); }}>
                 Sign in
               </button>
-              <button type="button" className={mode === 'register' ? styles.modeActive : ''} onClick={() => setMode('register')}>
+              <button type="button" className={mode === 'register' ? styles.modeActive : ''} onClick={() => { setMode('register'); setVerification(null); }}>
                 Register
               </button>
             </div>
@@ -394,11 +504,20 @@ function readString(value: unknown) {
 function friendlyAccountError(payload: Record<string, unknown>) {
   const code = typeof payload.error === 'string' ? payload.error : '';
   if (code === 'invalid_credentials') return 'Incorrect email or password.';
+  if (code === 'invalid_email') return 'Enter a valid email address.';
   if (code === 'email_exists') return 'An account already exists for that email.';
   if (code === 'username_taken') return 'That username is already taken.';
   if (code === 'weak_password') return 'Password needs at least 8 characters with uppercase, lowercase, number, and special character.';
   if (code === 'invalid_username') return 'Username must be 3-20 characters with letters, numbers, or underscores.';
   if (code === 'account_banned') return 'This account is not allowed to sign in.';
+  if (code === 'email_not_verified') return 'Verify this email before signing in.';
+  if (code === 'invalid_verification_code') return typeof payload.message === 'string' ? payload.message : 'That code is incorrect.';
+  if (code === 'verification_expired') return 'That code expired. Request a new one or start again.';
+  if (code === 'verification_locked') return 'Too many incorrect attempts. Request a new code.';
+  if (code === 'resend_too_soon' || code === 'verification_rate_limited' || code === 'verification_send_limit') {
+    return typeof payload.message === 'string' ? payload.message : 'Please wait before requesting another code.';
+  }
+  if (code === 'email_delivery_failed') return 'The verification email could not be sent. Try again shortly.';
   if (code === 'database_not_configured') return 'Cloud account service is not ready yet.';
   if (code === 'unauthorized' || code === 'invalid_session') return 'Sign in again to manage this account.';
   return 'Cloud account request failed.';

@@ -1,5 +1,10 @@
 import { db } from '@/db';
-import { users, accountSubscriptions } from '@/db/schema';
+import {
+  users,
+  accountSubscriptions,
+  remoteDeviceAuthorizations,
+  remotePairingCodes,
+} from '@/db/schema';
 import { jsonResponse, optionsResponse } from '@/lib/cors';
 import { verifySession } from '@/lib/auth';
 import { requireAdminAccount, getAccountSnapshotForUserId } from '@/lib/accounts';
@@ -95,6 +100,17 @@ export async function POST(request: Request) {
       await db.update(users)
         .set({ accountRole })
         .where(eq(users.id, userId));
+      if (accountRole === 'banned') {
+        const revokedAt = new Date();
+        await Promise.all([
+          db.update(remoteDeviceAuthorizations)
+            .set({ revokedAt })
+            .where(eq(remoteDeviceAuthorizations.userId, userId)),
+          db.update(remotePairingCodes)
+            .set({ revokedAt })
+            .where(eq(remotePairingCodes.userId, userId)),
+        ]);
+      }
     }
 
     // 3. Update or create accountSubscriptions if tier/status are provided

@@ -2,11 +2,21 @@ import { jsonResponse, optionsResponse } from '@/lib/cors';
 import { db } from '@/db';
 import { users } from '@/db/schema';
 import { eq } from 'drizzle-orm';
-import { verifyPassword } from '@/lib/hash';
+import { verifyPasswordAsync } from '@/lib/hash';
 import { signSession } from '@/lib/auth';
 import { getAccountSnapshotForUserId } from '@/lib/accounts';
+import { reserveDurableRateLimits } from '@/lib/durable-rate-limit';
+import {
+  hashRateLimitRequestIp,
+  hashScopedRateLimitKey,
+  SIGNIN_ACCOUNT_ATTEMPTS_PER_WINDOW,
+  SIGNIN_IP_ATTEMPTS_PER_WINDOW,
+  SIGNIN_RATE_LIMIT_WINDOW_MS,
+} from '@/lib/rate-limit-policy';
 
 export const runtime = 'nodejs';
+
+const noStore = { 'Cache-Control': 'no-store, max-age=0' };
 
 export function OPTIONS(request: Request) {
   return optionsResponse(request);
@@ -14,8 +24,8 @@ export function OPTIONS(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const { email, password } = await request.json();
-    if (!email || !password) {
+    const { email, password } = await request.json().catch(() => ({}));
+    if (typeof email !== 'string' || typeof password !== 'string' || !email.trim() || !password) {
       return jsonResponse(
         {
           error: 'invalid_inputs',
@@ -39,17 +49,57 @@ export async function POST(request: Request) {
       );
     }
 
+    const signInQuota = await reserveDurableRateLimits({
+      windowMs: SIGNIN_RATE_LIMIT_WINDOW_MS,
+      reservations: [
+        {
+          scope: 'auth_signin_account',
+          keyHash: hashScopedRateLimitKey('auth_signin_account', normEmail),
+          limit: SIGNIN_ACCOUNT_ATTEMPTS_PER_WINDOW,
+        },
+        {
+          scope: 'auth_signin_ip',
+          keyHash: hashRateLimitRequestIp(request, 'auth_signin_ip'),
+          limit: SIGNIN_IP_ATTEMPTS_PER_WINDOW,
+        },
+      ],
+    });
+    if (signInQuota.limited) {
+      return jsonResponse(
+        { error: 'signin_rate_limited', message: 'Too many sign-in attempts. Try again later.' },
+        {
+          status: 429,
+          headers: {
+            ...noStore,
+            'Retry-After': String(signInQuota.retryAfterSeconds),
+          },
+        },
+        request,
+      );
+    }
+
     const user = await db.query.users.findFirst({
       where: eq(users.email, normEmail),
     });
 
-    if (!user || !user.passwordHash || !verifyPassword(password, user.passwordHash)) {
+    if (!user || !user.passwordHash || !(await verifyPasswordAsync(password, user.passwordHash))) {
       return jsonResponse(
         {
           error: 'invalid_credentials',
           message: 'Incorrect email or password. Please try again.',
         },
         { status: 401 },
+        request,
+      );
+    }
+
+    if (!user.emailVerifiedAt) {
+      return jsonResponse(
+        {
+          error: 'email_not_verified',
+          message: 'Verify your email address before signing in. Start registration again to receive a new code.',
+        },
+        { status: 403 },
         request,
       );
     }

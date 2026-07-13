@@ -4,8 +4,8 @@
   "description": "The SPICE web and local music runtime for discovery, streaming, and playback.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#000000",
-  "theme_color": "#000000",
+  "background_color": "#050507",
+  "theme_color": "#7c3aed",
   "orientation": "portrait",
   "icons": [
     {

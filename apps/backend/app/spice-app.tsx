@@ -13,6 +13,7 @@ import {
   getLatestCachedSearch,
   getPlaybackState,
   getRecentCachedSearches,
+  mergeTrackLists,
   mergeTrackSnapshots,
   rememberSearchResults,
   rememberTrackSnapshots,
@@ -25,6 +26,29 @@ import {
   computePlaylistWindow,
   PLAYLIST_ROW_HEIGHT_PX,
 } from './playlist-performance';
+import CommandPalette, { type CommandPaletteCommand } from './command-palette';
+import { isCommandPaletteShortcut } from './command-palette-core';
+import ThemeEditor from './theme-editor';
+import RuntimeDiagnosticsPanel from './runtime-diagnostics-panel';
+import PlaybackProfilePanel from './playback-profile-panel';
+import SecurePairingPanel, {
+  type PairedDeviceAuthorization,
+  type PairingCodeResult,
+} from './secure-pairing-panel';
+import {
+  loadPlaybackProfileState,
+  normalizePlaybackProfileState,
+  savePlaybackProfileState,
+  type PlaybackProfileState,
+} from './playback-profiles';
+import { createCrossfadePlan, crossfadeGains, crossfadeStateAt } from './crossfade';
+import { buildSmartQueue, smartQueueArtistKeys, smartQueueTrackKey } from './smart-queue';
+import {
+  createThemeCssVariables,
+  DEFAULT_PURPLE_PALETTE,
+  loadStoredThemePalette,
+  type ThemePalette,
+} from '@/lib/theme-palette';
 import {
   buildPrivateTasteProfile,
   buildRecommendationSeeds,
@@ -73,6 +97,44 @@ const PLAYER_REPEAT_STORAGE_KEY = 'spice_repeat_mode';
 const MAX_LOCAL_PROFILES = 6;
 const SPICE_MEDIA_CORE_LABEL = `Spice Media Core v${SPICE_MEDIA_CORE_VERSION}`;
 const LASTFM_CALLBACK_ORIGIN_STORAGE_KEY = 'spice_lastfm_callback_origin';
+const REMOTE_PAIRING_CREDENTIAL_STORAGE_PREFIX = 'spice_remote_pairing_credential_v1:';
+
+interface StoredRemotePairingCredential {
+  token: string;
+  authorizationId: string;
+  deviceId: string;
+  ownerUserId: string;
+  expiresAt: string;
+}
+
+const remotePairingCredentialStorageKey = (profileId: string) =>
+  `${REMOTE_PAIRING_CREDENTIAL_STORAGE_PREFIX}${profileId || 'default'}`;
+
+function loadRemotePairingCredential(profileId: string): StoredRemotePairingCredential | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(remotePairingCredentialStorageKey(profileId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const expiresAt = new Date(parsed?.expiresAt).getTime();
+    if (
+      typeof parsed?.token !== 'string'
+      || typeof parsed?.authorizationId !== 'string'
+      || typeof parsed?.deviceId !== 'string'
+      || typeof parsed?.ownerUserId !== 'string'
+      || typeof parsed?.expiresAt !== 'string'
+      || !Number.isFinite(expiresAt)
+      || expiresAt <= Date.now()
+    ) {
+      localStorage.removeItem(remotePairingCredentialStorageKey(profileId));
+      return null;
+    }
+    return parsed as StoredRemotePairingCredential;
+  } catch {
+    localStorage.removeItem(remotePairingCredentialStorageKey(profileId));
+    return null;
+  }
+}
 
 type SpiceApiLane = 'local' | 'cloud';
 const SPICE_RUNTIME_TARGET = process.env.NEXT_PUBLIC_SPICE_RUNTIME_TARGET === 'vercel' ? 'vercel' : 'local';
@@ -853,6 +915,7 @@ interface CloudAccount {
   id: string;
   email: string;
   username?: string | null;
+  emailVerified?: boolean;
   accountRole?: AccountRole;
   isAdmin?: boolean;
   subscription?: {
@@ -947,6 +1010,19 @@ interface ScrobbleState {
   startedAt: number;
   nowPlayingSent: boolean;
   scrobbled: boolean;
+}
+
+interface PreparedCrossfade {
+  id: number;
+  outgoingTrackKey: string;
+  track: Track;
+  queueIndex: number;
+  streamUrl: string;
+  slot: 0 | 1;
+  queueSnapshot: Track[];
+  shuffled: boolean;
+  ready: boolean;
+  started: boolean;
 }
 
 const PRESET_GRADIENTS = [
@@ -1075,6 +1151,10 @@ const playbackTrackKey = (track: Track) =>
   `${track.sourceId ?? 'youtube_music'}:${track.id}`;
 
 const currentTimestampMs = () => Date.now();
+
+const resetAudioPlaybackPosition = (audio: HTMLAudioElement) => {
+  audio.currentTime = 0;
+};
 
 const profileArtistName = (track: Track) =>
   track.artists.map((entry) => entry.name).filter(Boolean).join(', ') || 'Unknown Artist';
@@ -1518,13 +1598,21 @@ export default function SpiceApp() {
   }, []);
 
   // Settings Configuration states
-  const [accentTheme, setAccentTheme] = useState<AccentTheme>('pink');
+  const [accentTheme, setAccentTheme] = useState<AccentTheme>('deeppurple');
+  const [customThemePalette, setCustomThemePalette] = useState<ThemePalette>(() => ({
+    ...DEFAULT_PURPLE_PALETTE,
+    colors: { ...DEFAULT_PURPLE_PALETTE.colors },
+  }));
+  const [customThemeEnabled, setCustomThemeEnabled] = useState(true);
   const [visualSurface, setVisualSurface] = useState<VisualSurface>('midnight');
   const [artworkShape, setArtworkShape] = useState<ArtworkShape>('rounded');
   const [motionLevel, setMotionLevel] = useState<MotionLevel>('full');
   const [interfaceScale, setInterfaceScale] = useState<InterfaceScale>('comfortable');
   const [audioQuality, setAudioQuality] = useState<'standard' | 'high' | 'low'>('standard');
   const [streamProtocol, setStreamProtocol] = useState<StreamProtocol>('proxy');
+  const [playbackProfileState, setPlaybackProfileState] = useState<PlaybackProfileState>(() => normalizePlaybackProfileState(null));
+  const activePlaybackProfile = playbackProfileState.profiles.find((profile) => profile.id === playbackProfileState.activeProfileId)
+    ?? playbackProfileState.profiles[0];
   const [sidebarHidden, setSidebarHidden] = useState(false);
   const [sidebarSearchEnabled, setSidebarSearchEnabled] = useState(true);
   const [sidebarProfileEnabled, setSidebarProfileEnabled] = useState(true);
@@ -1546,10 +1634,26 @@ export default function SpiceApp() {
   const migratedLegacyListenBrainzRef = useRef(false);
   const [profileSyncStatus, setProfileSyncStatus] = useState<ProfileSyncStatus>('idle');
   const [showQueueDrawer, setShowQueueDrawer] = useState(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [spiceNotices, setSpiceNotices] = useState<SpiceNotice[]>([]);
   const [spiceConfirm, setSpiceConfirm] = useState<SpiceConfirmDialog | null>(null);
   const [songShareDialog, setSongShareDialog] = useState<SongShareDialog | null>(null);
   const activeNoticeTimersRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+  const activePlaybackProfileRef = useRef(activePlaybackProfile);
+
+  useEffect(() => {
+    activePlaybackProfileRef.current = activePlaybackProfile;
+  }, [activePlaybackProfile]);
+
+  useEffect(() => {
+    const handleCommandPaletteShortcut = (event: KeyboardEvent) => {
+      if (!isCommandPaletteShortcut(event)) return;
+      event.preventDefault();
+      setCommandPaletteOpen((current) => !current);
+    };
+    window.addEventListener('keydown', handleCommandPaletteShortcut);
+    return () => window.removeEventListener('keydown', handleCommandPaletteShortcut);
+  }, []);
 
   const dismissSpiceNotice = useCallback((id: number) => {
     const timer = activeNoticeTimersRef.current.get(id);
@@ -1948,6 +2052,9 @@ export default function SpiceApp() {
 
   // Cloud Sync & Accounts state
   const [cloudToken, setCloudToken] = useState<string | null>(null);
+  const [pairedRemoteCredential, setPairedRemoteCredential] = useState<StoredRemotePairingCredential | null>(() => (
+    loadRemotePairingCredential(typeof window === 'undefined' ? 'default' : localStorage.getItem('spice_active_profile_id') || 'default')
+  ));
   const [cloudUser, setCloudUser] = useState<CloudAccount | null>(() => {
     if (typeof window !== 'undefined') {
       return readCloudSessionFromStorage<CloudAccount>(
@@ -1976,6 +2083,11 @@ export default function SpiceApp() {
     }
     return 'server-device';
   });
+  const activePairedRemoteCredential = !cloudUser
+    && pairedRemoteCredential?.deviceId === remoteDeviceId
+    ? pairedRemoteCredential
+    : null;
+  const remoteAuthToken = activePairedRemoteCredential?.token || cloudToken;
   const [remoteDeviceName, setRemoteDeviceName] = useState<string>(() => {
     if (typeof window !== 'undefined') {
       return localStorage.getItem('spice_remote_device_name') || defaultRemoteDeviceName();
@@ -2025,6 +2137,8 @@ export default function SpiceApp() {
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [authError, setAuthError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
+  const [emailVerification, setEmailVerification] = useState<{ registrationId: string; email: string } | null>(null);
+  const [emailVerificationCode, setEmailVerificationCode] = useState('');
 
   // Dynamic Home Page Queries
   const [homeTrending, setHomeTrending] = useState<Track[]>([]);
@@ -2210,6 +2324,13 @@ export default function SpiceApp() {
   };
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioSlotRefs = useRef<[HTMLAudioElement | null, HTMLAudioElement | null]>([null, null]);
+  const activeAudioSlotRef = useRef<0 | 1>(0);
+  const audioTransitionGainsRef = useRef(new WeakMap<HTMLAudioElement, number>());
+  const preparedCrossfadeRef = useRef<PreparedCrossfade | null>(null);
+  const crossfadePreparationIdRef = useRef(0);
+  const crossfadeAnimationFrameRef = useRef<number | null>(null);
+  const crossfadeAnimationStarterRef = useRef<() => void>(() => undefined);
   const audioContextRef = useRef<AudioContext | null>(null);
   const gainNodeRef = useRef<GainNode | null>(null);
   const sourceNodeRef = useRef<MediaElementAudioSourceNode | null>(null);
@@ -2254,6 +2375,7 @@ export default function SpiceApp() {
   const emptyRemoteCommandPollsRef = useRef(0);
   const appliedRemoteCommandIdsRef = useRef<Set<string>>(new Set());
   const remoteStateSyncTimeoutRef = useRef<number | null>(null);
+  const remoteRequestGenerationRef = useRef(0);
 
   const handleAudioEndedRef = useRef<() => void>(() => { });
   const handleAudioErrorRef = useRef<() => void>(() => { });
@@ -2268,9 +2390,10 @@ export default function SpiceApp() {
     if (!audio) return;
 
     const safeVolume = normalizePlayerVolume(nextVolume, volumeBoosterAccepted) ?? 100;
+    const transitionGain = Math.min(1, Math.max(0, audioTransitionGainsRef.current.get(audio) ?? 1));
     const shouldUseGainNode = shouldUsePlayerGainPath(safeVolume, volumeBoosterAccepted);
     if (!shouldUseGainNode) {
-      audio.volume = safeVolume / 100;
+      audio.volume = (safeVolume / 100) * transitionGain;
       if (gainNodeRef.current) {
         gainNodeRef.current.gain.value = 1;
       }
@@ -2309,26 +2432,23 @@ export default function SpiceApp() {
     }
 
     if (gainNodeRef.current) {
-      gainNodeRef.current.gain.value = playerVolumeGain(safeVolume);
+      gainNodeRef.current.gain.value = playerVolumeGain(safeVolume) * transitionGain;
     } else {
-      audio.volume = Math.min(1, safeVolume / 100);
+      audio.volume = Math.min(1, safeVolume / 100) * transitionGain;
     }
   }, [volumeBoosterAccepted]);
 
-  const bindAudioRef = useCallback((node: HTMLAudioElement | null) => {
-    if (audioRef.current && audioRef.current !== node) {
-      try { sourceNodeRef.current?.disconnect(); } catch { }
-      try { gainNodeRef.current?.disconnect(); } catch { }
-      sourceNodeRef.current = null;
-      gainNodeRef.current = null;
-    }
-
-    audioRef.current = node;
+  const bindAudioSlotRef = useCallback((slot: 0 | 1, node: HTMLAudioElement | null) => {
+    audioSlotRefs.current[slot] = node;
+    if (slot === activeAudioSlotRef.current) audioRef.current = node;
     if (!node) return;
 
     node.autoplay = false;
+    audioTransitionGainsRef.current.set(node, 1);
     applyAudioElementVolume(node, volumeRef.current);
   }, [applyAudioElementVolume]);
+  const bindAudioSlotZeroRef = useCallback((node: HTMLAudioElement | null) => bindAudioSlotRef(0, node), [bindAudioSlotRef]);
+  const bindAudioSlotOneRef = useCallback((node: HTMLAudioElement | null) => bindAudioSlotRef(1, node), [bindAudioSlotRef]);
 
   useEffect(() => {
     activeProfileIdRef.current = activeProfileId;
@@ -2539,9 +2659,18 @@ export default function SpiceApp() {
   };
 
   const restoreProfileConnections = useCallback(async (token: string | null = cloudToken) => {
+    const requestProfileId = activeProfileIdRef.current;
+    const requestGeneration = remoteRequestGenerationRef.current;
+    const requestIsCurrent = () => (
+      requestGeneration === remoteRequestGenerationRef.current
+      && requestProfileId === activeProfileIdRef.current
+      && token === cloudTokenRef.current
+    );
     if (!token) {
+      if (!requestIsCurrent()) return;
       setLastFmAccountLinked(false);
       setListenBrainzAccountLinked(false);
+      setListenBrainzToken('');
       localStorage.setItem('spice_lastfm_account_linked', 'false');
       return;
     }
@@ -2563,6 +2692,7 @@ export default function SpiceApp() {
         };
         message?: string;
       };
+      if (!requestIsCurrent()) return;
 
       if (!response.ok) {
         throw new Error(data.message || 'Failed to restore profile connections.');
@@ -2594,6 +2724,7 @@ export default function SpiceApp() {
         logDebug('profile', 'ListenBrainz token restored from SPICE account.');
       } else {
         setListenBrainzAccountLinked(false);
+        setListenBrainzToken('');
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to restore profile connections.';
@@ -2681,6 +2812,10 @@ export default function SpiceApp() {
     if (typeof window !== 'undefined') {
       const savedTheme = localStorage.getItem('spice_accent_theme');
       if (isAccentTheme(savedTheme)) setAccentTheme(savedTheme);
+      const storedCustomTheme = loadStoredThemePalette();
+      setCustomThemePalette(storedCustomTheme.palette);
+      setCustomThemeEnabled(localStorage.getItem('spice_custom_theme_enabled') !== 'false');
+      setPlaybackProfileState(loadPlaybackProfileState(localStorage));
 
       const savedSurface = localStorage.getItem('spice_visual_surface');
       if (isVisualSurface(savedSurface)) setVisualSurface(savedSurface);
@@ -2970,7 +3105,7 @@ export default function SpiceApp() {
       crimson: '#e11d48',
       deeppurple: '#7c3aed'
     };
-    const color = themeColors[accentTheme] || '#ec4899';
+    const color = customThemeEnabled ? customThemePalette.colors.primary : (themeColors[accentTheme] || '#7c3aed');
     const svgString = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
       <rect width="128" height="128" rx="32" fill="${color}" />
       <text x="64" y="96" font-family="system-ui, -apple-system, sans-serif" font-weight="900" font-size="86" fill="#ffffff" text-anchor="middle">S</text>
@@ -2990,7 +3125,7 @@ export default function SpiceApp() {
     if (appleLink) {
       appleLink.href = dataUrl;
     }
-  }, [isMounted, accentTheme]);
+  }, [isMounted, accentTheme, customThemeEnabled, customThemePalette.colors.primary]);
 
   // ── YouTube Embedded Player Fallback API Integration ──────────────
   useEffect(() => {
@@ -3285,36 +3420,254 @@ export default function SpiceApp() {
 
     loadHomeContent();
 
-    // Register Service Worker
-    if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js')
-        .then((reg) => console.log('Spice Service Worker registered:', reg.scope))
-        .catch((err) => console.error('Spice SW registration failed:', err));
-    }
   }, [currentPage]);
 
   // Sync volume
   useEffect(() => {
     applyAudioElementVolume(audioRef.current, volume, { resumeAudioContext: isPlayingRef.current });
-  }, [applyAudioElementVolume, volume]);
+    const prepared = preparedCrossfadeRef.current;
+    if (!prepared) return;
+    const incoming = audioSlotRefs.current[prepared.slot];
+    if (volume > 100 || volumeBoosterAccepted) {
+      crossfadePreparationIdRef.current += 1;
+      preparedCrossfadeRef.current = null;
+      if (crossfadeAnimationFrameRef.current !== null) {
+        cancelAnimationFrame(crossfadeAnimationFrameRef.current);
+        crossfadeAnimationFrameRef.current = null;
+      }
+      incoming?.pause();
+      incoming?.removeAttribute('src');
+      incoming?.load();
+      if (incoming) audioTransitionGainsRef.current.set(incoming, 1);
+      if (audioRef.current) audioTransitionGainsRef.current.set(audioRef.current, 1);
+      applyAudioElementVolume(audioRef.current, volume);
+      return;
+    }
+    applyAudioElementVolume(incoming, volume);
+  }, [applyAudioElementVolume, volume, volumeBoosterAccepted]);
 
   // Audio Handlers
-  const handleTimeUpdate = () => {
-    if (audioRef.current) {
-      setProgress(audioRef.current.currentTime);
+  const setAudioTransitionGain = (audio: HTMLAudioElement, gain: number) => {
+    audioTransitionGainsRef.current.set(audio, Math.min(1, Math.max(0, gain)));
+    applyAudioElementVolume(audio, volumeRef.current);
+  };
+
+  const cancelPreparedCrossfade = (restoreOutgoing = true) => {
+    crossfadePreparationIdRef.current += 1;
+    if (crossfadeAnimationFrameRef.current !== null) {
+      cancelAnimationFrame(crossfadeAnimationFrameRef.current);
+      crossfadeAnimationFrameRef.current = null;
+    }
+    crossfadeAnimationStarterRef.current = () => undefined;
+    const prepared = preparedCrossfadeRef.current;
+    preparedCrossfadeRef.current = null;
+    if (prepared) {
+      const incoming = audioSlotRefs.current[prepared.slot];
+      if (incoming) {
+        incoming.pause();
+        incoming.removeAttribute('src');
+        incoming.load();
+        setAudioTransitionGain(incoming, 1);
+      }
+    }
+    if (restoreOutgoing && audioRef.current) setAudioTransitionGain(audioRef.current, 1);
+  };
+
+  const resolveCrossfadeStreamUrl = async (track: Track) => {
+    const endpoint = isSoundCloudTrack(track)
+      ? spiceApiUrl('local', `/sc/track/${encodeURIComponent(soundCloudTrackId(track))}`, { quality: audioQuality })
+      : spiceApiUrl('local', `/yt/track/${encodeURIComponent(track.id)}`);
+    const response = await fetch(endpoint);
+    if (!response.ok) throw new Error('Crossfade preload could not resolve the next track.');
+    const payload = await response.json();
+    if (!Array.isArray(payload.streams) || payload.streams.length === 0) {
+      throw new Error('Crossfade preload found no compatible stream.');
+    }
+    return spiceApiResponseUrl('local', payload.streams[0].url);
+  };
+
+  const nextCrossfadeTarget = () => {
+    const currentQueue = queueRef.current;
+    const currentIndex = queueIndexRef.current;
+    if (currentQueue.length < 2 || repeatModeRef.current === 'one') return null;
+    if (repeatModeRef.current === 'none' && currentIndex >= currentQueue.length - 1) return null;
+    let nextIndex = (currentIndex + 1) % currentQueue.length;
+    if (isShuffleRef.current) {
+      do {
+        nextIndex = randomIndex(currentQueue.length);
+      } while (nextIndex === currentIndex && currentQueue.length > 1);
+    }
+    const track = currentQueue[nextIndex];
+    return track && track.id !== currentTrackRef.current.id ? { track, queueIndex: nextIndex } : null;
+  };
+
+  const prepareCrossfade = async () => {
+    const target = nextCrossfadeTarget();
+    if (!target || preparedCrossfadeRef.current) return;
+    const preparationId = ++crossfadePreparationIdRef.current;
+    const outgoingTrackKey = playbackTrackKey(currentTrackRef.current);
+    const slot = (activeAudioSlotRef.current === 0 ? 1 : 0) as 0 | 1;
+    const prepared: PreparedCrossfade = {
+      id: preparationId,
+      outgoingTrackKey,
+      track: target.track,
+      queueIndex: target.queueIndex,
+      streamUrl: '',
+      slot,
+      queueSnapshot: queueRef.current,
+      shuffled: isShuffleRef.current,
+      ready: false,
+      started: false,
+    };
+    preparedCrossfadeRef.current = prepared;
+
+    try {
+      const resolvedUrl = await resolveCrossfadeStreamUrl(target.track);
+      if (
+        preparationId !== crossfadePreparationIdRef.current
+        || outgoingTrackKey !== playbackTrackKey(currentTrackRef.current)
+        || preparedCrossfadeRef.current !== prepared
+        || prepared.queueSnapshot !== queueRef.current
+        || prepared.shuffled !== isShuffleRef.current
+      ) return;
+      const incoming = audioSlotRefs.current[slot];
+      if (!incoming) {
+        cancelPreparedCrossfade();
+        return;
+      }
+      prepared.streamUrl = resolvedUrl;
+      setAudioTransitionGain(incoming, 0);
+      incoming.src = resolvedUrl;
+      incoming.load();
+      prepared.ready = incoming.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA;
+    } catch (error) {
+      if (
+        preparationId !== crossfadePreparationIdRef.current
+        || outgoingTrackKey !== playbackTrackKey(currentTrackRef.current)
+      ) return;
+      logDebug('player', error instanceof Error ? error.message : 'Crossfade preload failed.');
+      cancelPreparedCrossfade();
     }
   };
 
-  const handleLoadedMetadata = () => {
-    if (audioRef.current) {
-      setDuration(audioRef.current.duration);
+  const startPreparedCrossfade = () => {
+    const prepared = preparedCrossfadeRef.current;
+    const outgoing = audioRef.current;
+    const incoming = prepared ? audioSlotRefs.current[prepared.slot] : null;
+    if (!prepared || !outgoing || !incoming || !prepared.ready || prepared.started) return;
+    if (!Number.isFinite(outgoing.duration)) return;
+    const profile = activePlaybackProfileRef.current;
+    if (!profile?.crossfade.enabled) return;
+    const plan = createCrossfadePlan({
+      trackDurationMs: outgoing.duration * 1000,
+      crossfadeDurationMs: profile.crossfade.durationMs,
+    });
+    const state = crossfadeStateAt(plan, outgoing.currentTime * 1000);
+    if (state.phase !== 'fading' && state.phase !== 'complete') return;
+    prepared.started = true;
+    resetAudioPlaybackPosition(incoming);
+    setAudioTransitionGain(incoming, 0);
+    void incoming.play().catch(() => {
+      logDebug('player', 'Crossfade preload could not start; continuing the current track normally.');
+      cancelPreparedCrossfade();
+    });
+    const animateGains = () => {
+      const activePrepared = preparedCrossfadeRef.current;
+      if (!activePrepared?.started || activePrepared.id !== prepared.id || audioRef.current !== outgoing) {
+        crossfadeAnimationFrameRef.current = null;
+        return;
+      }
+      if (outgoing.paused) {
+        crossfadeAnimationFrameRef.current = null;
+        return;
+      }
+      updateCrossfade(outgoing, outgoing.currentTime);
+      crossfadeAnimationFrameRef.current = requestAnimationFrame(animateGains);
+    };
+    crossfadeAnimationStarterRef.current = () => {
+      if (crossfadeAnimationFrameRef.current === null) {
+        crossfadeAnimationFrameRef.current = requestAnimationFrame(animateGains);
+      }
+    };
+    crossfadeAnimationStarterRef.current();
+  };
+
+  const updateCrossfade = (audio: HTMLAudioElement, currentTime: number) => {
+    const profile = activePlaybackProfileRef.current;
+    const currentQueue = queueRef.current;
+    const currentQueueIndex = queueIndexRef.current;
+    const hasEligibleNextTrack = currentQueue.length > 1
+      && repeatModeRef.current !== 'one'
+      && !(repeatModeRef.current === 'none' && currentQueueIndex >= currentQueue.length - 1);
+    if (
+      !profile?.crossfade.enabled
+      || profile.crossfade.durationMs <= 0
+      || !Number.isFinite(audio.duration)
+      || streamProtocolRef.current === 'embed'
+      || volumeRef.current > 100
+      || volumeBoosterAccepted
+      || isControllingRemoteReceiver
+      || !hasEligibleNextTrack
+    ) {
+      if (preparedCrossfadeRef.current) cancelPreparedCrossfade();
+      else setAudioTransitionGain(audio, 1);
+      return;
+    }
+
+    const preparedBeforeUpdate = preparedCrossfadeRef.current;
+    if (preparedBeforeUpdate && (
+      preparedBeforeUpdate.outgoingTrackKey !== playbackTrackKey(currentTrackRef.current)
+      || preparedBeforeUpdate.queueSnapshot !== currentQueue
+      || preparedBeforeUpdate.shuffled !== isShuffleRef.current
+      || !currentQueue[preparedBeforeUpdate.queueIndex]
+      || playbackTrackKey(currentQueue[preparedBeforeUpdate.queueIndex]) !== playbackTrackKey(preparedBeforeUpdate.track)
+    )) {
+      cancelPreparedCrossfade();
+      return;
+    }
+
+    const plan = createCrossfadePlan({
+      trackDurationMs: audio.duration * 1000,
+      crossfadeDurationMs: profile.crossfade.durationMs,
+    });
+    const state = crossfadeStateAt(plan, currentTime * 1000);
+    if (state.shouldPreload && !preparedCrossfadeRef.current) {
+      void prepareCrossfade();
+    }
+    const prepared = preparedCrossfadeRef.current;
+    if ((state.phase === 'fading' || state.phase === 'complete') && prepared) {
+      startPreparedCrossfade();
+      if (prepared.started) {
+        const incoming = audioSlotRefs.current[prepared.slot];
+        const gains = crossfadeGains(state.progress, profile.crossfade.curve);
+        setAudioTransitionGain(audio, gains.outgoing);
+        if (incoming) setAudioTransitionGain(incoming, gains.incoming);
+      }
+    } else if (!prepared?.started) {
+      setAudioTransitionGain(audio, 1);
     }
   };
 
-  const handleAudioCanPlay = () => {
-    const audio = audioRef.current;
-    if (!audio) return;
+  const handleTimeUpdate = (slot: 0 | 1, audio: HTMLAudioElement) => {
+    if (slot !== activeAudioSlotRef.current || audioRef.current !== audio) return;
+    setProgress(audio.currentTime);
+    updateCrossfade(audio, audio.currentTime);
+  };
 
+  const handleLoadedMetadata = (slot: 0 | 1, audio: HTMLAudioElement) => {
+    if (slot === activeAudioSlotRef.current) setDuration(audio.duration);
+  };
+
+  const handleAudioCanPlay = (slot: 0 | 1, audio: HTMLAudioElement) => {
+    const prepared = preparedCrossfadeRef.current;
+    if (prepared?.slot === slot) {
+      prepared.ready = true;
+      startPreparedCrossfade();
+      return;
+    }
+    if (slot !== activeAudioSlotRef.current || audioRef.current !== audio) return;
+
+    setAudioTransitionGain(audio, 1);
     applyAudioElementVolume(audio, volumeRef.current);
     if (!shouldAutoPlayRef.current && !isPlayingRef.current) return;
 
@@ -3334,6 +3687,69 @@ export default function SpiceApp() {
   };
 
   // ── Cloud Accounts Synchronization & Authentication ──────────────
+  const finalizePreparedCrossfade = () => {
+    const prepared = preparedCrossfadeRef.current;
+    if (!prepared?.started) return false;
+    const outgoing = audioRef.current;
+    const incoming = audioSlotRefs.current[prepared.slot];
+    if (!incoming) return false;
+
+    preparedCrossfadeRef.current = null;
+    crossfadePreparationIdRef.current += 1;
+    if (crossfadeAnimationFrameRef.current !== null) {
+      cancelAnimationFrame(crossfadeAnimationFrameRef.current);
+      crossfadeAnimationFrameRef.current = null;
+    }
+    crossfadeAnimationStarterRef.current = () => undefined;
+    if (outgoing && outgoing !== incoming) {
+      outgoing.pause();
+      outgoing.removeAttribute('src');
+      outgoing.load();
+      setAudioTransitionGain(outgoing, 1);
+    }
+    try { sourceNodeRef.current?.disconnect(); } catch { }
+    try { gainNodeRef.current?.disconnect(); } catch { }
+    sourceNodeRef.current = null;
+    gainNodeRef.current = null;
+
+    activeAudioSlotRef.current = prepared.slot;
+    audioRef.current = incoming;
+    setAudioTransitionGain(incoming, 1);
+    currentTrackRef.current = prepared.track;
+    queueIndexRef.current = prepared.queueIndex;
+    streamUrlRef.current = prepared.streamUrl;
+    setCurrentTrack(prepared.track);
+    setQueueIndex(prepared.queueIndex);
+    setStreamUrl(prepared.streamUrl);
+    setProgress(incoming.currentTime);
+    if (Number.isFinite(incoming.duration)) setDuration(incoming.duration);
+    setPlaybackPlaying(true);
+    setIsLoadingStream(false);
+    isLoadingStreamRef.current = false;
+    recordPlaybackTelemetry(prepared.track);
+    logDebug('player', `Crossfade completed into "${prepared.track.title}".`);
+    return true;
+  };
+
+  useEffect(() => () => {
+    crossfadePreparationIdRef.current += 1;
+    if (crossfadeAnimationFrameRef.current !== null) {
+      cancelAnimationFrame(crossfadeAnimationFrameRef.current);
+      crossfadeAnimationFrameRef.current = null;
+    }
+    for (const audio of audioSlotRefs.current) {
+      if (!audio) continue;
+      audio.pause();
+      audio.removeAttribute('src');
+      audio.load();
+    }
+    try { sourceNodeRef.current?.disconnect(); } catch { }
+    try { gainNodeRef.current?.disconnect(); } catch { }
+    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+      void audioContextRef.current.close().catch(() => undefined);
+    }
+  }, []);
+
   const syncWithCloud = async (
     token: string | null = cloudToken,
     profileId: string = activeProfileId,
@@ -3747,31 +4163,11 @@ export default function SpiceApp() {
     }
   };
 
-  const handleAuthSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const authProfileId = activeProfileIdRef.current;
-    setAuthError(null);
-    setAuthLoading(true);
-    setDbError(null);
-
-    const url = authMode === 'login' ? spiceApiUrl('cloud', '/auth/spice/signin') : spiceApiUrl('cloud', '/auth/spice/signup');
-    try {
-      const payload: any = { email: authEmail, password: authPassword };
-      if (authMode === 'register') {
-        payload.username = authUsername;
+  const finishCloudAuthentication = async (data: any, authProfileId: string, sourceMode: 'login' | 'register') => {
+      if (!data?.token || !data?.user) throw new Error('The account service returned an invalid session.');
+      if (activeProfileIdRef.current !== authProfileId) {
+        throw new Error('The active profile changed while signing in. Please try again on the intended profile.');
       }
-
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.message || 'Authentication failed.');
-      }
-
       if (data.localFallback) {
         setIsLocalDbFallback(true);
         localStorage.setItem('spice_local_db_fallback', 'true');
@@ -3784,10 +4180,11 @@ export default function SpiceApp() {
       localStorage.setItem('spice_cloud_user', JSON.stringify(data.user));
       setCloudToken(data.token);
       setCloudUser(data.user);
+      remoteRequestGenerationRef.current += 1;
       const accountUsername = typeof data.user?.username === 'string'
         ? data.user.username.trim().toLowerCase()
         : '';
-      const registeredUsername = accountUsername || (authMode === 'register' ? authUsername.trim().toLowerCase() : null);
+      const registeredUsername = accountUsername || (sourceMode === 'register' ? authUsername.trim().toLowerCase() : null);
       setCloudUsername(registeredUsername);
       cloudTokenRef.current = data.token;
       cloudUserRef.current = data.user;
@@ -3800,12 +4197,51 @@ export default function SpiceApp() {
       setAuthEmail('');
       setAuthPassword('');
       setAuthUsername('');
-      logDebug('auth', `User "${data.user.email}" authenticated successfully via ${authMode}. Token generated.`);
+      setEmailVerification(null);
+      setEmailVerificationCode('');
+      logDebug('auth', `User "${data.user.email}" authenticated successfully via ${sourceMode}. Token generated.`);
 
       // Auto sync after login
       await syncWithCloud(data.token, authProfileId, { cloudUser: data.user, cloudUsername: registeredUsername });
+      if (activeProfileIdRef.current !== authProfileId) return;
       await restoreProfileConnections(data.token);
       void fetchUsername(data.token, authProfileId);
+  };
+
+  const handleAuthSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const authProfileId = activeProfileIdRef.current;
+    setAuthError(null);
+    setAuthLoading(true);
+    setDbError(null);
+
+    const url = authMode === 'login' ? spiceApiUrl('cloud', '/auth/spice/signin') : spiceApiUrl('cloud', '/auth/spice/signup');
+    try {
+      const payload: any = { email: authEmail, password: authPassword };
+      if (authMode === 'register') payload.username = authUsername;
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Authentication failed.');
+      if (activeProfileIdRef.current !== authProfileId) {
+        throw new Error('The active profile changed while signing in. Please try again on the intended profile.');
+      }
+
+      if (data.verificationRequired === true && typeof data.registrationId === 'string') {
+        setEmailVerification({
+          registrationId: data.registrationId,
+          email: typeof data.email === 'string' ? data.email : authEmail,
+        });
+        setEmailVerificationCode('');
+        setAuthPassword('');
+        return;
+      }
+
+      await finishCloudAuthentication(data, authProfileId, authMode);
     } catch (err: any) {
       console.error(err);
       logDebug('error', `Authentication attempt failed: ${err.message || err}`);
@@ -3816,12 +4252,17 @@ export default function SpiceApp() {
   };
 
   const handleLogout = () => {
+    remoteRequestGenerationRef.current += 1;
     const logoutProfileId = activeProfileIdRef.current;
     localStorage.removeItem('spice_cloud_token');
     localStorage.removeItem('spice_cloud_user');
+    localStorage.removeItem(remotePairingCredentialStorageKey(logoutProfileId));
     setCloudToken(null);
     setCloudUser(null);
     setCloudUsername(null);
+    setPairedRemoteCredential(null);
+    setRemoteDevices([]);
+    setSelectedRemoteDeviceId('');
     cloudTokenRef.current = null;
     cloudUserRef.current = null;
     cloudUsernameRef.current = null;
@@ -3831,7 +4272,10 @@ export default function SpiceApp() {
       cloudUsername: null,
     });
     setLastFmAccountLinked(false);
+    setLastFmSessionKey('');
     setListenBrainzAccountLinked(false);
+    setListenBrainzToken('');
+    localStorage.removeItem('spice_lastfm_session_key');
     localStorage.setItem('spice_lastfm_account_linked', 'false');
     setDbError(null);
     setAuthError(null);
@@ -3940,7 +4384,14 @@ export default function SpiceApp() {
     autoSyncHistory(newHist);
   };
 
-  const handleAudioEnded = () => {
+  const handleAudioEnded = (slot: 0 | 1 = activeAudioSlotRef.current) => {
+    if (slot !== activeAudioSlotRef.current) {
+      if (preparedCrossfadeRef.current?.slot === slot) {
+        logDebug('player', 'Prepared crossfade track ended before promotion; falling back to normal queue advance.');
+        cancelPreparedCrossfade();
+      }
+      return;
+    }
     playbackRetryCountsRef.current.delete(playbackTrackKey(currentTrackRef.current));
 
     // Increment songs played on completion
@@ -3968,7 +4419,10 @@ export default function SpiceApp() {
       void submitProfileListen('scrobble', scrobbleState.startedAt);
     }
 
+    if (preparedCrossfadeRef.current?.started && finalizePreparedCrossfade()) return;
+
     if (currentRepeatMode === 'one') {
+      cancelPreparedCrossfade();
       if (currentStreamProtocol === 'embed' && isYouTubeTrack(currentTrack) && ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
         logDebug('player', 'Repeat mode is ONE. Seeking to 0 in YouTube embed...');
         ytPlayerRef.current.seekTo(0, true);
@@ -3984,6 +4438,7 @@ export default function SpiceApp() {
         setIsPlaying(true);
       }
     } else if (currentRepeatMode === 'none' && currentQueueIndex === currentQueue.length - 1) {
+      cancelPreparedCrossfade();
       logDebug('player', 'Queue ended and repeatMode is NONE. Stopping playback.');
       setIsPlaying(false);
       setProgress(0);
@@ -3995,11 +4450,13 @@ export default function SpiceApp() {
       }
     } else {
       logDebug('player', 'Advancing to next track in queue...');
+      cancelPreparedCrossfade(false);
       handleNextRef.current();
     }
   };
 
   const handleAudioError = () => {
+    cancelPreparedCrossfade();
     const activeTrack = currentTrackRef.current;
     const activeTrackKey = playbackTrackKey(activeTrack);
     const playbackWasRequested = shouldAutoPlayRef.current || isPlayingRef.current;
@@ -4236,7 +4693,7 @@ export default function SpiceApp() {
 
     scrobbleStateRef.current = {
       trackKey: currentTrackKey,
-      startedAt: Math.floor(Date.now() / 1000),
+      startedAt: Math.floor(currentTimestampMs() / 1000),
       nowPlayingSent: false,
       scrobbled: false,
     };
@@ -4262,7 +4719,7 @@ export default function SpiceApp() {
         ? currentTrack.durationMs / 1000
         : 0;
     const threshold = scrobbleThresholdSeconds(durationSeconds);
-    const wallClockElapsed = Math.floor(Date.now() / 1000) - scrobbleState.startedAt;
+    const wallClockElapsed = Math.floor(currentTimestampMs() / 1000) - scrobbleState.startedAt;
     if (!scrobbleState.scrobbled && progressSeconds >= threshold && wallClockElapsed >= threshold) {
       scrobbleState.scrobbled = true;
       void submitProfileListen('scrobble', scrobbleState.startedAt);
@@ -4389,6 +4846,7 @@ export default function SpiceApp() {
     if (!isRetryCall) {
       setPlayedTracksCount(prev => prev + 1);
     }
+    cancelPreparedCrossfade();
     clearPlaybackRetryTimer();
 
     if (!track || track.id === 'placeholder') {
@@ -4410,6 +4868,13 @@ export default function SpiceApp() {
     shouldAutoPlayRef.current = true;
     setError(undefined);
     setPlaybackPlaying(false);
+    const activeAudio = audioSlotRefs.current[activeAudioSlotRef.current];
+    if (activeAudio) {
+      activeAudio.pause();
+      activeAudio.removeAttribute('src');
+      activeAudio.load();
+      setAudioTransitionGain(activeAudio, 1);
+    }
     setStreamUrl(null);
     streamUrlRef.current = null;
     rememberTrackSnapshots([track, ...(newQueue || [])]);
@@ -4448,6 +4913,7 @@ export default function SpiceApp() {
       logDebug('player', `Initiating ${trackSourceLabel(track)} format resolution for track "${track.title}" (ID: ${track.id})`);
 
       if ((activeStreamProtocol === 'embed' || showVideoPlayer) && isYouTube) {
+        cancelPreparedCrossfade();
         logDebug('stream', `YouTube Embedded Player active. Loading iframe player for track ID: ${track.id}`);
         const shouldStartNow = requestId === playbackRequestRef.current && shouldAutoPlayRef.current;
         setStreamProtocol('embed');
@@ -4497,6 +4963,11 @@ export default function SpiceApp() {
       const resolvedStreamUrl = spiceApiResponseUrl('local', bestStream.url);
       setStreamUrl(resolvedStreamUrl);
       streamUrlRef.current = resolvedStreamUrl;
+      const directAudio = audioSlotRefs.current[activeAudioSlotRef.current];
+      if (directAudio) {
+        directAudio.src = resolvedStreamUrl;
+        directAudio.load();
+      }
       setPlaybackPlaying(shouldStartNow);
 
       recordPlaybackTelemetry(track);
@@ -4511,6 +4982,7 @@ export default function SpiceApp() {
         && streamProtocolRef.current !== 'embed'
         && volumeRef.current <= 100
       ) {
+        cancelPreparedCrossfade();
         logDebug('diagnostics', `Direct stream resolution failed. Retrying this track in the YouTube Embedded Player...`);
         const shouldStartNow = shouldAutoPlayRef.current;
         setStreamProtocol('embed');
@@ -4574,6 +5046,14 @@ export default function SpiceApp() {
         setProgress(Math.max(0, audioRef.current.currentTime));
       }
     }
+    const preparedIncoming = preparedCrossfadeRef.current?.started
+      ? audioSlotRefs.current[preparedCrossfadeRef.current.slot]
+      : null;
+    preparedIncoming?.pause();
+    if (crossfadeAnimationFrameRef.current !== null) {
+      cancelAnimationFrame(crossfadeAnimationFrameRef.current);
+      crossfadeAnimationFrameRef.current = null;
+    }
 
     setPlaybackPlaying(false);
   };
@@ -4611,6 +5091,13 @@ export default function SpiceApp() {
       applyAudioElementVolume(audioRef.current, volumeRef.current, { resumeAudioContext: true });
       audioRef.current.play().then(() => {
         setPlaybackPlaying(true);
+        const prepared = preparedCrossfadeRef.current;
+        const incoming = prepared?.started ? audioSlotRefs.current[prepared.slot] : null;
+        if (incoming) {
+          void incoming.play()
+            .then(() => crossfadeAnimationStarterRef.current())
+            .catch(() => cancelPreparedCrossfade());
+        }
       }).catch(handleAudioError);
       return;
     }
@@ -4785,19 +5272,39 @@ export default function SpiceApp() {
     localStorage.setItem(PLAYER_REPEAT_STORAGE_KEY, mode);
   };
 
+  const handleRemoteAuthorizationResponse = (response: Response, requestGeneration: number) => {
+    if (
+      requestGeneration !== remoteRequestGenerationRef.current
+      ||
+      response.status !== 401
+      || !activePairedRemoteCredential
+      || remoteAuthToken !== activePairedRemoteCredential.token
+    ) return;
+    localStorage.removeItem(remotePairingCredentialStorageKey(activeProfileId));
+    remoteRequestGenerationRef.current += 1;
+    setPairedRemoteCredential(null);
+    setRemoteDevices([]);
+    setSelectedRemoteDeviceId('');
+    setRemoteControlEnabled(false);
+    localStorage.setItem('spice_remote_control_enabled', 'false');
+    setRemoteStatus('The paired-device credential expired or was revoked. Pair this device again.');
+  };
+
   const reportRemoteDeviceState = async () => {
-    if (!cloudToken || !remoteControlEnabled || remoteDeviceReportInFlightRef.current) return;
+    if (!remoteAuthToken || !remoteControlEnabled || remoteDeviceReportInFlightRef.current) return;
     if (!isSpiceDocumentVisible() && !isPlayingRef.current) return;
 
     const targetTrack = currentTrackRef.current;
     const currentQueue = queueRef.current || [];
+    const requestGeneration = remoteRequestGenerationRef.current;
+    const requestToken = remoteAuthToken;
     remoteDeviceReportInFlightRef.current = true;
     try {
       const response = await spiceFetch('cloud', '/remote/devices', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${cloudToken}`,
+          Authorization: `Bearer ${requestToken}`,
         },
         body: JSON.stringify({
           deviceId: remoteDeviceId,
@@ -4813,11 +5320,15 @@ export default function SpiceApp() {
           volume: volumeRef.current,
         }),
       });
+      if (requestGeneration !== remoteRequestGenerationRef.current) return;
+      handleRemoteAuthorizationResponse(response, requestGeneration);
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
+        if (requestGeneration !== remoteRequestGenerationRef.current) return;
         throw new Error(data.message || `Spice Connect state update failed with status ${response.status}.`);
       }
     } catch (error) {
+      if (requestGeneration !== remoteRequestGenerationRef.current) return;
       const message = error instanceof Error ? error.message : 'Spice Connect state update failed.';
       setRemoteStatus(message);
       logDebug('error', `Spice Connect device state failed: ${message}`);
@@ -4827,15 +5338,20 @@ export default function SpiceApp() {
   };
 
   const loadRemoteDevices = async (showStatus = false) => {
-    if (!cloudToken || remoteDeviceLoadInFlightRef.current) return;
+    if (!remoteAuthToken || remoteDeviceLoadInFlightRef.current) return;
 
     remoteDeviceLoadInFlightRef.current = true;
+    const requestGeneration = remoteRequestGenerationRef.current;
+    const requestToken = remoteAuthToken;
     try {
       const response = await spiceFetch('cloud', '/remote/devices', {
-        headers: { Authorization: `Bearer ${cloudToken}` },
+        headers: { Authorization: `Bearer ${requestToken}` },
         cache: 'no-store',
       });
+      if (requestGeneration !== remoteRequestGenerationRef.current) return;
+      handleRemoteAuthorizationResponse(response, requestGeneration);
       const data = await response.json().catch(() => ({}));
+      if (requestGeneration !== remoteRequestGenerationRef.current) return;
       if (!response.ok) {
         throw new Error(data.message || `Spice Connect device load failed with status ${response.status}.`);
       }
@@ -4862,6 +5378,7 @@ export default function SpiceApp() {
         setRemoteStatus(`Found ${Math.max(devices.length - 1, 0)} Spice Connect device(s).`);
       }
     } catch (error) {
+      if (requestGeneration !== remoteRequestGenerationRef.current) return;
       const message = error instanceof Error ? error.message : 'Spice Connect device load failed.';
       setRemoteStatus(message);
       logDebug('error', `Spice Connect device load failed: ${message}`);
@@ -4979,15 +5496,20 @@ export default function SpiceApp() {
   };
 
   const pollRemoteCommands = async () => {
-    if (!cloudToken || !remoteControlEnabled || remoteCommandPollInFlightRef.current) return;
+    if (!remoteAuthToken || !remoteControlEnabled || remoteCommandPollInFlightRef.current) return;
 
     remoteCommandPollInFlightRef.current = true;
+    const requestGeneration = remoteRequestGenerationRef.current;
+    const requestToken = remoteAuthToken;
     try {
       const response = await spiceFetch('cloud', '/remote/commands', {
-        headers: { Authorization: `Bearer ${cloudToken}` },
+        headers: { Authorization: `Bearer ${requestToken}` },
         cache: 'no-store',
       }, { deviceId: remoteDeviceId });
+      if (requestGeneration !== remoteRequestGenerationRef.current) return;
+      handleRemoteAuthorizationResponse(response, requestGeneration);
       const data = await response.json().catch(() => ({}));
+      if (requestGeneration !== remoteRequestGenerationRef.current) return;
       if (!response.ok) {
         throw new Error(data.message || `Spice Connect command poll failed with status ${response.status}.`);
       }
@@ -5008,6 +5530,7 @@ export default function SpiceApp() {
         : Math.min(emptyRemoteCommandPollsRef.current + 1, SPICE_CONNECT_COMMAND_IDLE_BACKOFF_POLLS);
       freshCommands.forEach((command) => applyRemoteCommand(command, now));
     } catch (error) {
+      if (requestGeneration !== remoteRequestGenerationRef.current) return;
       emptyRemoteCommandPollsRef.current = Math.min(
         emptyRemoteCommandPollsRef.current + 1,
         SPICE_CONNECT_COMMAND_IDLE_BACKOFF_POLLS
@@ -5021,8 +5544,8 @@ export default function SpiceApp() {
   };
 
   const sendRemoteCommand = async (command: RemoteCommandType, payload: RemoteCommand['payload'] = {}) => {
-    if (!cloudToken) {
-      setRemoteStatus('Sign in to use Spice Connect.');
+    if (!remoteAuthToken) {
+      setRemoteStatus('Sign in or pair this device to use Spice Connect.');
       return;
     }
     if (!selectedRemoteDeviceId) {
@@ -5043,12 +5566,14 @@ export default function SpiceApp() {
       return;
     }
 
+    const requestGeneration = remoteRequestGenerationRef.current;
+    const requestToken = remoteAuthToken;
     try {
       const response = await spiceFetch('cloud', '/remote/commands', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${cloudToken}`,
+          Authorization: `Bearer ${requestToken}`,
         },
         body: JSON.stringify({
           sourceDeviceId: remoteDeviceId,
@@ -5057,7 +5582,10 @@ export default function SpiceApp() {
           payload,
         }),
       });
+      if (requestGeneration !== remoteRequestGenerationRef.current) return;
+      handleRemoteAuthorizationResponse(response, requestGeneration);
       const data = await response.json().catch(() => ({}));
+      if (requestGeneration !== remoteRequestGenerationRef.current) return;
       if (!response.ok) {
         throw new Error(data.message || `Spice Connect command failed with status ${response.status}.`);
       }
@@ -5065,10 +5593,226 @@ export default function SpiceApp() {
       setRemoteStatus(`Sent ${command} through Spice Connect.`);
       scheduleRemoteDeviceSync(command === 'play_track' ? 900 : SPICE_CONNECT_POST_COMMAND_SYNC_DELAY_MS);
     } catch (error) {
+      if (requestGeneration !== remoteRequestGenerationRef.current) return;
       const message = error instanceof Error ? error.message : 'Spice Connect command failed.';
       setRemoteStatus(message);
       logDebug('error', `Spice Connect command send failed: ${message}`);
     }
+  };
+
+  const handleEmailVerificationSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!emailVerification) return;
+    const authProfileId = activeProfileIdRef.current;
+    setAuthError(null);
+    setAuthLoading(true);
+    try {
+      const res = await fetch(spiceApiUrl('cloud', '/auth/spice/verify-email'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          registrationId: emailVerification.registrationId,
+          code: emailVerificationCode,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Email verification failed.');
+      await finishCloudAuthentication(data, authProfileId, 'register');
+    } catch (err: any) {
+      setAuthError(err.message || 'Email verification failed.');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const resendEmailVerification = async () => {
+    if (!emailVerification) return;
+    setAuthError(null);
+    setAuthLoading(true);
+    try {
+      const res = await fetch(spiceApiUrl('cloud', '/auth/spice/resend-verification'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ registrationId: emailVerification.registrationId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Could not resend the verification code.');
+      setEmailVerificationCode('');
+    } catch (err: any) {
+      setAuthError(err.message || 'Could not resend the verification code.');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const createSecurePairingCode = async (): Promise<PairingCodeResult> => {
+    if (!cloudToken) throw new Error('Sign in before creating a phone pairing code.');
+    if (!remoteControlEnabled) throw new Error('Enable Spice Connect on this device first.');
+    const requestToken = cloudToken;
+    const requestProfileId = activeProfileIdRef.current;
+    const requestGeneration = remoteRequestGenerationRef.current;
+    const requestIsCurrent = () => (
+      requestGeneration === remoteRequestGenerationRef.current
+      && requestProfileId === activeProfileIdRef.current
+      && requestToken === cloudTokenRef.current
+    );
+    const registrationResponse = await spiceFetch('cloud', '/remote/devices', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${requestToken}` },
+      body: JSON.stringify({
+        deviceId: remoteDeviceId,
+        displayName: remoteDeviceName,
+        currentTrack: currentTrackRef.current.id === 'placeholder' ? null : currentTrackRef.current,
+        queue: queueRef.current.slice(0, 80),
+        queueIndex: queueIndexRef.current,
+        isPlaying: isPlayingRef.current,
+        shuffleEnabled: isShuffleRef.current,
+        repeatMode: repeatModeRef.current,
+        progress: progressRef.current,
+        duration: durationRef.current,
+        volume: volumeRef.current,
+      }),
+    });
+    if (!requestIsCurrent()) throw new Error('The active account changed before pairing started.');
+    if (!registrationResponse.ok) {
+      const registrationError = await registrationResponse.json().catch(() => ({}));
+      if (!requestIsCurrent()) throw new Error('The active account changed before pairing started.');
+      throw new Error(registrationError.message || 'Could not register this device for pairing.');
+    }
+    const response = await spiceFetch('cloud', '/remote/pairing/codes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${requestToken}` },
+      body: JSON.stringify({ issuerDeviceId: remoteDeviceId }),
+    });
+    if (!requestIsCurrent()) throw new Error('The active account changed before pairing completed.');
+    const data = await response.json().catch(() => ({}));
+    if (!requestIsCurrent()) throw new Error('The active account changed before pairing completed.');
+    if (!response.ok) throw new Error(data.message || 'Could not create a pairing code.');
+    return data as PairingCodeResult;
+  };
+
+  const cancelSecurePairingCode = async (pairingId: string) => {
+    if (!cloudToken) throw new Error('Sign in before cancelling a pairing code.');
+    const requestToken = cloudToken;
+    const requestProfileId = activeProfileIdRef.current;
+    const requestGeneration = remoteRequestGenerationRef.current;
+    const response = await spiceFetch('cloud', `/remote/pairing/codes/${encodeURIComponent(pairingId)}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${requestToken}` },
+    });
+    if (
+      requestGeneration !== remoteRequestGenerationRef.current
+      || requestProfileId !== activeProfileIdRef.current
+      || requestToken !== cloudTokenRef.current
+    ) throw new Error('The active account changed before cancellation completed.');
+    const data = await response.json().catch(() => ({}));
+    if (
+      requestGeneration !== remoteRequestGenerationRef.current
+      || requestProfileId !== activeProfileIdRef.current
+      || requestToken !== cloudTokenRef.current
+    ) throw new Error('The active account changed before cancellation completed.');
+    if (!response.ok) throw new Error(data.message || 'Could not cancel the pairing code.');
+  };
+
+  const claimSecurePairingCode = async (code: string, displayName: string) => {
+    if (cloudUser) {
+      throw new Error('This profile is already signed in. Sign out before using a phone pairing code.');
+    }
+    const claimProfileId = activeProfileIdRef.current;
+    const requestGeneration = remoteRequestGenerationRef.current;
+    const response = await spiceFetch('cloud', '/remote/pairing/claim', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, deviceId: remoteDeviceId, displayName }),
+    });
+    if (
+      requestGeneration !== remoteRequestGenerationRef.current
+      || activeProfileIdRef.current !== claimProfileId
+    ) throw new Error('The active profile changed before pairing completed.');
+    const data = await response.json().catch(() => ({}));
+    if (
+      requestGeneration !== remoteRequestGenerationRef.current
+      || activeProfileIdRef.current !== claimProfileId
+    ) throw new Error('The active profile changed before pairing completed.');
+    if (
+      !response.ok
+      || typeof data.accessToken !== 'string'
+      || typeof data.authorizationId !== 'string'
+      || typeof data.userId !== 'string'
+      || typeof data.expiresAt !== 'string'
+    ) {
+      throw new Error(data.message || 'The pairing code is invalid or expired.');
+    }
+    const credential: StoredRemotePairingCredential = {
+      token: data.accessToken,
+      authorizationId: data.authorizationId,
+      deviceId: remoteDeviceId,
+      ownerUserId: data.userId,
+      expiresAt: data.expiresAt,
+    };
+    localStorage.setItem(remotePairingCredentialStorageKey(claimProfileId), JSON.stringify(credential));
+    localStorage.setItem('spice_remote_device_name', displayName);
+    localStorage.setItem('spice_remote_control_enabled', 'true');
+    remoteRequestGenerationRef.current += 1;
+    setPairedRemoteCredential(credential);
+    setRemoteDeviceName(displayName);
+    setRemoteControlEnabled(true);
+    setRemoteStatus('Secure pairing completed.');
+  };
+
+  const loadSecurePairingAuthorizations = async (): Promise<PairedDeviceAuthorization[]> => {
+    if (!cloudToken) return [];
+    const requestToken = cloudToken;
+    const requestProfileId = activeProfileIdRef.current;
+    const requestGeneration = remoteRequestGenerationRef.current;
+    const response = await spiceFetch('cloud', '/remote/pairing/authorizations', {
+      headers: { Authorization: `Bearer ${requestToken}` },
+      cache: 'no-store',
+    });
+    const data = await response.json().catch(() => ({}));
+    if (
+      requestGeneration !== remoteRequestGenerationRef.current
+      || requestProfileId !== activeProfileIdRef.current
+      || requestToken !== cloudTokenRef.current
+    ) throw new Error('The active account changed while loading paired devices.');
+    if (!response.ok) throw new Error(data.message || 'Could not load paired devices.');
+    return Array.isArray(data.authorizations) ? data.authorizations : [];
+  };
+
+  const revokeSecurePairingAuthorization = async (authorizationId: string) => {
+    if (!cloudToken) throw new Error('Sign in before revoking a paired device.');
+    const requestToken = cloudToken;
+    const requestProfileId = activeProfileIdRef.current;
+    const requestGeneration = remoteRequestGenerationRef.current;
+    const response = await spiceFetch('cloud', `/remote/pairing/authorizations/${encodeURIComponent(authorizationId)}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${requestToken}` },
+    });
+    const data = await response.json().catch(() => ({}));
+    if (
+      requestGeneration !== remoteRequestGenerationRef.current
+      || requestProfileId !== activeProfileIdRef.current
+      || requestToken !== cloudTokenRef.current
+    ) throw new Error('The active account changed before revocation completed.');
+    if (!response.ok) throw new Error(data.message || 'Could not revoke the paired device.');
+    if (activePairedRemoteCredential?.authorizationId === authorizationId) {
+      localStorage.removeItem(remotePairingCredentialStorageKey(activeProfileId));
+      remoteRequestGenerationRef.current += 1;
+      setPairedRemoteCredential(null);
+      setRemoteDevices([]);
+      setSelectedRemoteDeviceId('');
+    }
+  };
+
+  const forgetLocalPairingCredential = () => {
+    localStorage.removeItem(remotePairingCredentialStorageKey(activeProfileId));
+    remoteRequestGenerationRef.current += 1;
+    setPairedRemoteCredential(null);
+    if (!cloudToken) {
+      setRemoteControlEnabled(false);
+      localStorage.setItem('spice_remote_control_enabled', 'false');
+    }
+    setRemoteStatus('Local paired-device credential removed.');
   };
 
   const remoteCommandPollDelayMs = () => {
@@ -5079,7 +5823,7 @@ export default function SpiceApp() {
   };
 
   useEffect(() => {
-    if (!isMounted || !cloudToken) return;
+    if (!isMounted || !remoteAuthToken) return;
 
     void loadRemoteDevices();
     if (remoteControlEnabled) {
@@ -5107,10 +5851,10 @@ export default function SpiceApp() {
       }
       clearInterval(timerInterval);
     };
-  }, [isMounted, cloudToken, remoteControlEnabled, remoteDeviceId, remoteDeviceName]);
+  }, [isMounted, remoteAuthToken, remoteControlEnabled, remoteDeviceId, remoteDeviceName]);
 
   useEffect(() => {
-    if (!isMounted || !cloudToken || !remoteControlEnabled) return;
+    if (!isMounted || !remoteAuthToken || !remoteControlEnabled) return;
 
     let cancelled = false;
     let timeoutId: number | null = null;
@@ -5151,7 +5895,7 @@ export default function SpiceApp() {
       clearScheduledPoll();
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [isMounted, cloudToken, remoteControlEnabled, remoteDeviceId]);
+  }, [isMounted, remoteAuthToken, remoteControlEnabled, remoteDeviceId]);
 
   const fetchSearchProviderResults = async (query: string, provider: SearchProvider) => {
     const fetchProvider = async (targetProvider: Exclude<SearchProvider, 'hybrid'>, limit: number) => {
@@ -6653,7 +7397,7 @@ export default function SpiceApp() {
     : repeatMode;
   const playerIsPlaceholder = playerTrack.id === 'placeholder' || playerTrack.id === 'spice-connect-placeholder';
   const receiverLabel = selectedRemoteDevice?.displayName || 'This device';
-  const receiverSelectDisabled = !cloudToken;
+  const receiverSelectDisabled = !remoteAuthToken;
 
   const canControlSelectedRemoteReceiver = (command: RemoteCommandType) => {
     if (!selectedRemoteDevice) return false;
@@ -6853,7 +7597,7 @@ export default function SpiceApp() {
   };
 
   const refreshSpiceConnectReceiverList = () => {
-    if (!cloudToken) return;
+    if (!remoteAuthToken) return;
     if (remoteControlEnabled) {
       void reportRemoteDeviceState();
     }
@@ -7004,6 +7748,14 @@ const getMaskedEmail = (email: string) => {
 };
 
   const switchProfile = (profileId: string, profileOverride?: UserProfile) => {
+    remoteRequestGenerationRef.current += 1;
+    setEmailVerification(null);
+    setEmailVerificationCode('');
+    setLastFmAccountLinked(false);
+    setLastFmSessionKey('');
+    setListenBrainzAccountLinked(false);
+    setListenBrainzToken('');
+    localStorage.removeItem('spice_lastfm_session_key');
     pauseCurrentPlayback();
     let latestProfiles = profiles;
     if (typeof window !== 'undefined') {
@@ -7041,9 +7793,17 @@ const getMaskedEmail = (email: string) => {
 
     setActiveProfileId(profileId);
     localStorage.setItem('spice_active_profile_id', profileId);
+    const nextPairingCredential = loadRemotePairingCredential(profileId);
+    setPairedRemoteCredential(nextPairingCredential);
+    if (nextPairingCredential) {
+      setRemoteControlEnabled(true);
+      localStorage.setItem('spice_remote_control_enabled', 'true');
+    }
+    setRemoteDevices([]);
+    setSelectedRemoteDeviceId('');
 
-    const nextToken = target.cloudToken || (typeof window !== 'undefined' ? localStorage.getItem('spice_cloud_token') : null) || null;
-    const nextUser = target.cloudUser || (typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('spice_cloud_user') || 'null') : null) || null;
+    const nextToken = target.cloudToken || null;
+    const nextUser = target.cloudUser || null;
     const nextUsername = target.cloudUsername || null;
     setCloudToken(nextToken);
     setCloudUser(nextUser);
@@ -7183,6 +7943,7 @@ const getMaskedEmail = (email: string) => {
       confirmLabel: 'Delete Profile',
       kind: 'danger',
       onConfirm: () => {
+        localStorage.removeItem(remotePairingCredentialStorageKey(profileId));
         const updated = profiles.filter(p => p.id !== profileId);
         setProfiles(updated);
         saveProfilesToStorage(updated);
@@ -7821,9 +8582,104 @@ const getMaskedEmail = (email: string) => {
       )
     : false;
 
+  const openCommandPage = (page: AppPage) => {
+    setSelectedPlaylist(null);
+    setSelectedUser(null);
+    setCurrentPage(page);
+  };
+  const updatePlaybackProfiles = (nextState: PlaybackProfileState) => {
+    const persisted = savePlaybackProfileState(localStorage, nextState);
+    setPlaybackProfileState(persisted.state);
+    if (!persisted.saved) showSpiceNotice('Playback profile changed, but local storage could not save it.', 'warning');
+  };
+  const rebuildSmartQueue = () => {
+    if (isControllingRemoteReceiver) {
+      showSpiceNotice('Switch the receiver to this device before rebuilding its queue.', 'warning');
+      return;
+    }
+    const profile = activePlaybackProfile;
+    if (!profile?.smartQueue.enabled) {
+      showSpiceNotice('Enable Smart queue rules in the active playback profile first.', 'warning');
+      return;
+    }
+    if (currentTrack.id === 'placeholder') {
+      showSpiceNotice('Play a track before building a smart queue.', 'warning');
+      return;
+    }
+
+    const candidates = mergeTrackLists(
+      queue.slice(queueIndex + 1),
+      searchResults,
+      homeTrending,
+      homeChill,
+      homeEnergy,
+      Object.values(likedTrackDetails),
+      history,
+    ) as Track[];
+    const recentHistory = history.slice(0, profile.smartQueue.recentTrackWindow);
+    const recentTrackKeys = new Set(recentHistory.map(smartQueueTrackKey));
+    recentTrackKeys.add(smartQueueTrackKey(currentTrack));
+    const recentArtistKeys = new Set(
+      history
+        .slice(0, profile.smartQueue.recentArtistWindow)
+        .flatMap(smartQueueArtistKeys),
+    );
+    const smartTracks = buildSmartQueue(candidates, {
+      limit: Math.min(200, candidates.length),
+      recentTrackKeys,
+      recentArtistKeys,
+      likedTrackIds: likedTracks,
+      likedBoost: profile.smartQueue.likedBoost,
+      recentArtistPenalty: profile.smartQueue.recentArtistPenalty,
+      sourceDiversityPenalty: profile.smartQueue.sourceDiversityPenalty,
+      artistDiversityPenalty: profile.smartQueue.artistDiversityPenalty,
+    });
+    if (smartTracks.length === 0) {
+      showSpiceNotice('No eligible tracks were available for the smart queue.', 'info');
+      return;
+    }
+    setQueue([currentTrack, ...smartTracks]);
+    setQueueIndex(0);
+    showSpiceNotice(`Smart queue rebuilt with ${smartTracks.length} upcoming tracks.`, 'success');
+  };
+  const commandPaletteCommands: CommandPaletteCommand[] = [
+    { id: 'page-home', label: 'Go to Home', description: 'Recommendations and recent listening', keywords: ['browse'], run: () => openCommandPage('home') },
+    { id: 'page-search', label: 'Open Search', description: 'Find tracks, videos, and users', keywords: ['music find'], shortcut: '/', run: () => openCommandPage('search') },
+    { id: 'page-library', label: 'Open Library', description: 'Playlists, likes, and history', keywords: ['collection'], run: () => openCommandPage('library') },
+    { id: 'page-account', label: 'Open Profile', description: 'Account and profile settings', keywords: ['account'], run: () => openCommandPage('account') },
+    { id: 'page-settings', label: 'Open Settings', description: 'Theme, playback, remote, and diagnostics', keywords: ['preferences theme'], run: () => openCommandPage('settings') },
+    { id: 'player-toggle', label: playerIsPlaying ? 'Pause playback' : 'Resume playback', description: playerTrack.title, keywords: ['player play pause'], shortcut: 'Space', run: toggleReceiverPlayPause },
+    { id: 'player-queue', label: 'Show Up Next Queue', description: `${playerQueue.length} track${playerQueue.length === 1 ? '' : 's'}`, keywords: ['playlist next'], run: () => { setShowQueueDrawer(true); setShowBarLyrics(false); } },
+    ...(!isControllingRemoteReceiver ? [{ id: 'player-smart-queue', label: 'Rebuild Smart Queue', description: activePlaybackProfile?.name ?? 'Playback profile', keywords: ['mix diversity recommendations'], run: rebuildSmartQueue }] : []),
+    { id: 'player-expanded', label: 'Open Expanded Player', description: 'Immersive now-playing view', keywords: ['fullscreen'], run: () => { setPlayerViewMode('expanded'); localStorage.setItem('spice_player_view_mode', 'expanded'); } },
+    { id: 'playlist-create', label: 'Create a Playlist', description: 'Start a new local playlist', keywords: ['new library'], run: () => { openCommandPage('library'); setShowCreateDialog(true); } },
+    { id: 'remote-connect', label: 'Open Spice Connect', description: 'Pair and control another device', keywords: ['phone remote receiver'], run: () => openCommandPage('settings') },
+  ];
+
+  const runCommandQuickSearch = (query: string) => {
+    if (!query) return;
+    setSelectedPlaylist(null);
+    setSelectedUser(null);
+    setCurrentPage('search');
+    setQuickSearchTab('tracks');
+    setSearchProvider('hybrid');
+    setSearchQuery(query);
+    setTopbarSearchQuery(query);
+    queueSearch(query, 'hybrid');
+  };
+
   return (
-    <div className={`app ${sidebarHidden ? 'app--sidebar-hidden' : ''} player-style--${playerVisualStyle} player-placement--${playerPlacement}`}>
+    <div
+      className={`app ${sidebarHidden ? 'app--sidebar-hidden' : ''} player-style--${playerVisualStyle} player-placement--${playerPlacement}`}
+      style={customThemeEnabled ? createThemeCssVariables(customThemePalette) as React.CSSProperties : undefined}
+    >
       <style dangerouslySetInnerHTML={{ __html: getAccentStyles() }} />
+      <CommandPalette
+        open={commandPaletteOpen}
+        commands={commandPaletteCommands}
+        onClose={() => setCommandPaletteOpen(false)}
+        onQuickSearch={runCommandQuickSearch}
+      />
 
       {(listenTogetherSession || listenTogetherHostSessionId) && (
         <div style={{
@@ -8276,20 +9132,22 @@ const getMaskedEmail = (email: string) => {
       )}
 
       {/* Hidden Audio Player */}
-      {streamUrl && streamUrl !== 'youtube-embed-active' && (
+      {([0, 1] as const).map((slot) => (
         <audio
-          key={streamUrl}
-          ref={bindAudioRef}
+          key={slot}
+          ref={slot === 0 ? bindAudioSlotZeroRef : bindAudioSlotOneRef}
           crossOrigin="anonymous"
-          src={streamUrl}
           preload="auto"
-          onCanPlay={handleAudioCanPlay}
-          onTimeUpdate={handleTimeUpdate}
-          onLoadedMetadata={handleLoadedMetadata}
-          onEnded={handleAudioEnded}
-          onError={handleAudioError}
+          onCanPlay={(event) => handleAudioCanPlay(slot, event.currentTarget)}
+          onTimeUpdate={(event) => handleTimeUpdate(slot, event.currentTarget)}
+          onLoadedMetadata={(event) => handleLoadedMetadata(slot, event.currentTarget)}
+          onEnded={() => handleAudioEnded(slot)}
+          onError={() => {
+            if (slot === activeAudioSlotRef.current) handleAudioError();
+            else if (preparedCrossfadeRef.current?.slot === slot) cancelPreparedCrossfade();
+          }}
         />
-      )}
+      ))}
 
       {/* Stealth YouTube Embed Container — Invisible but functional for audio fallback */}
       <div
@@ -8895,6 +9753,15 @@ const getMaskedEmail = (email: string) => {
                   </div>
                 )}
               </div>
+              <button
+                className="app-topbar__settings"
+                type="button"
+                onClick={() => setCommandPaletteOpen(true)}
+                aria-label="Open command palette"
+                title="Command palette (Ctrl+K)"
+              >
+                <span aria-hidden="true" style={{ fontSize: '0.82rem', fontWeight: 900 }}>K</span>
+              </button>
               <button
                 className={`app-topbar__settings ${currentPage === 'settings' && !selectedPlaylist ? 'active' : ''}`}
                 type="button"
@@ -10437,7 +11304,7 @@ const getMaskedEmail = (email: string) => {
 
                         {!dbError && (
                           <div style={{ background: 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(59, 130, 246, 0.2)', padding: '12px', borderRadius: '8px', color: '#60a5fa', fontSize: '0.85rem', marginBottom: '16px', lineHeight: 1.4 }}>
-                            <span style={{ display: 'inline-flex', verticalAlign: 'middle', marginRight: '6px' }}>{Icons.database}</span><strong>Local Database Active:</strong> Signup and sign-in are enabled via local file storage (`local_db.json`). No external PostgreSQL setup required to start using accounts!
+                            <span style={{ display: 'inline-flex', verticalAlign: 'middle', marginRight: '6px' }}>{Icons.database}</span><strong>Cloud Account Service:</strong> New registrations require the six-digit code delivered to the account email before sync and account features are enabled.
                           </div>
                         )}
 
@@ -10452,6 +11319,56 @@ const getMaskedEmail = (email: string) => {
                           <div style={{ color: '#f87171', fontSize: '0.8rem', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.alertTriangle} {authError}</div>
                         )}
 
+                        {emailVerification ? (
+                          <form onSubmit={handleEmailVerificationSubmit} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', maxWidth: '500px', marginBottom: '16px' }}>
+                            <div style={{ gridColumn: 'span 2', color: 'var(--text-secondary)', fontSize: '0.85rem', lineHeight: 1.5 }}>
+                              We sent a six-digit code to <strong style={{ color: '#fff' }}>{emailVerification.email}</strong>. The code expires after 10 minutes.
+                            </div>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              autoComplete="one-time-code"
+                              pattern="[0-9]{6}"
+                              maxLength={6}
+                              aria-label="Six-digit email verification code"
+                              placeholder="Six-digit verification code"
+                              value={emailVerificationCode}
+                              onChange={(e) => setEmailVerificationCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                              style={{ gridColumn: 'span 2', padding: '10px 14px', background: '#0a0a0a', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', outline: 'none', fontSize: '1rem', letterSpacing: '0.18em', textAlign: 'center' }}
+                              required
+                            />
+                            <button
+                              type="submit"
+                              className="btn btn--primary"
+                              disabled={authLoading || emailVerificationCode.length !== 6}
+                              style={{ padding: '10px', fontSize: '0.85rem' }}
+                            >
+                              {authLoading ? 'Please wait...' : 'Verify and Sign In'}
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn--ghost"
+                              disabled={authLoading}
+                              onClick={() => void resendEmailVerification()}
+                              style={{ padding: '10px', fontSize: '0.85rem', background: 'rgba(255,255,255,0.02)' }}
+                            >
+                              Resend Code
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn--ghost"
+                              disabled={authLoading}
+                              onClick={() => {
+                                setEmailVerification(null);
+                                setEmailVerificationCode('');
+                                setAuthError(null);
+                              }}
+                              style={{ gridColumn: 'span 2', padding: '8px', fontSize: '0.8rem', background: 'transparent' }}
+                            >
+                              Start Registration Again
+                            </button>
+                          </form>
+                        ) : (
                         <form onSubmit={handleAuthSubmit} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', maxWidth: '500px', marginBottom: '16px' }}>
                           <input
                             type="email"
@@ -10495,12 +11412,14 @@ const getMaskedEmail = (email: string) => {
                             onClick={() => {
                               setAuthMode(authMode === 'login' ? 'register' : 'login');
                               setAuthError(null);
+                              setEmailVerification(null);
                             }}
                             style={{ padding: '10px', fontSize: '0.85rem', background: 'rgba(255,255,255,0.02)' }}
                           >
                             Switch to {authMode === 'login' ? 'Register' : 'Login'}
                           </button>
                         </form>
+                        )}
                       </div>
                     )}
                   </div>
@@ -10813,22 +11732,35 @@ const getMaskedEmail = (email: string) => {
                         { id: 'crimson', name: 'Crimson Moon (Red)', color: '#ff003c', gradient: 'linear-gradient(135deg, #ff003c, #990011)' },
                         { id: 'deeppurple', name: 'Midnight Velvet (Dark Purple)', color: '#7c3aed', gradient: 'linear-gradient(135deg, #4c1d95, #120024)' }
                       ].map((t) => {
-                        const isCurrent = accentTheme === t.id;
+                        const isCurrent = !customThemeEnabled && accentTheme === t.id;
                         return (
-                          <div
+                          <button
                             key={t.id}
+                            type="button"
+                            aria-pressed={isCurrent}
                             onClick={() => {
                               setAccentTheme(t.id as any);
                               localStorage.setItem('spice_accent_theme', t.id);
+                              setCustomThemeEnabled(false);
+                              localStorage.setItem('spice_custom_theme_enabled', 'false');
                             }}
-                            style={{ background: 'var(--body-bg)', border: isCurrent ? `2px solid ${t.color}` : '1px solid var(--border-color)', padding: '16px', borderRadius: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', minWidth: '180px', flex: '1 1 auto', transition: 'all 0.15s ease' }}
+                            style={{ background: 'var(--body-bg)', border: isCurrent ? `2px solid ${t.color}` : '1px solid var(--border-color)', padding: '16px', borderRadius: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', minWidth: '180px', flex: '1 1 auto', transition: 'all 0.15s ease', font: 'inherit', textAlign: 'left' }}
                           >
                             <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: t.gradient, flexShrink: 0, boxShadow: isCurrent ? `0 0 10px ${t.color}` : 'none' }}></div>
                             <span style={{ fontSize: '0.85rem', fontWeight: 600, color: isCurrent ? t.color : '#fff' }}>{t.name}</span>
-                          </div>
+                          </button>
                         );
                       })}
                     </div>
+                    <ThemeEditor
+                      palette={customThemePalette}
+                      enabled={customThemeEnabled}
+                      onApply={setCustomThemePalette}
+                      onEnabledChange={(enabled) => {
+                        setCustomThemeEnabled(enabled);
+                        localStorage.setItem('spice_custom_theme_enabled', String(enabled));
+                      }}
+                    />
                   </div>
 
                   {/* Visual Customization */}
@@ -11308,6 +12240,19 @@ const getMaskedEmail = (email: string) => {
                     </div>
                   </div>
 
+                  <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
+                    <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif' }}>Playback Profiles & Smart Queue</h3>
+                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0 0 20px 0', lineHeight: 1.4 }}>
+                      Save multiple listening behaviors, smooth direct-audio transitions, and rebuild the queue with repeat-avoidance and artist/source diversity.
+                    </p>
+                    <PlaybackProfilePanel
+                      state={playbackProfileState}
+                      onChange={updatePlaybackProfiles}
+                      onBuildSmartQueue={rebuildSmartQueue}
+                      smartQueueActionDisabled={isControllingRemoteReceiver}
+                    />
+                  </div>
+
                   {/* Spice Connect Settings */}
                   <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
                     <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.monitor} Spice Connect Setup</h3>
@@ -11353,7 +12298,7 @@ const getMaskedEmail = (email: string) => {
                           <div>
                             <div style={{ color: '#fff', fontWeight: 800, fontSize: '0.92rem' }}>Player Receiver</div>
                             <p style={{ color: 'var(--text-secondary)', fontSize: '0.74rem', lineHeight: 1.4, margin: '4px 0 0 0' }}>
-                              {cloudToken ? `${remoteTargetDevices.length} other Spice Connect device(s) visible. The player uses this same receiver.` : 'Sign in to SPICE to see Spice Connect devices.'}
+                              {remoteAuthToken ? `${remoteTargetDevices.length} other Spice Connect device(s) visible. The player uses this same receiver.` : 'Sign in or pair this device to see Spice Connect devices.'}
                             </p>
                           </div>
                           <button
@@ -11364,7 +12309,7 @@ const getMaskedEmail = (email: string) => {
                               }
                               void loadRemoteDevices(true);
                             }}
-                            disabled={!cloudToken}
+                            disabled={!remoteAuthToken}
                             style={{ padding: '8px 12px', fontSize: '0.78rem', whiteSpace: 'nowrap' }}
                           >
                             Refresh
@@ -11374,7 +12319,7 @@ const getMaskedEmail = (email: string) => {
                         <select
                           value={selectedRemoteDeviceId}
                           onChange={(e) => selectSpiceConnectReceiver(e.target.value)}
-                          disabled={!cloudToken}
+                          disabled={!remoteAuthToken}
                           style={{ width: '100%', padding: '10px 14px', background: '#0a0a0a', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', outline: 'none', cursor: 'pointer', marginBottom: '14px' }}
                         >
                           <option value="">This device (current browser)</option>
@@ -11449,6 +12394,26 @@ const getMaskedEmail = (email: string) => {
                         )}
                       </div>
                     </div>
+                    <SecurePairingPanel
+                      key={`${activeProfileId}:${cloudUser?.id ?? 'paired'}`}
+                      accountAvailable={Boolean(cloudToken)}
+                      pairedCredentialActive={Boolean(activePairedRemoteCredential)}
+                      deviceName={remoteDeviceName}
+                      onCreateCode={createSecurePairingCode}
+                      onCancelCode={cancelSecurePairingCode}
+                      onClaimCode={claimSecurePairingCode}
+                      onLoadAuthorizations={loadSecurePairingAuthorizations}
+                      onRevokeAuthorization={revokeSecurePairingAuthorization}
+                      onForgetCredential={forgetLocalPairingCredential}
+                    />
+                  </div>
+
+                  <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
+                    <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif' }}>Offline Shell & Runtime Diagnostics</h3>
+                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0 0 20px 0', lineHeight: 1.4 }}>
+                      Keep the application shell available without a connection, inspect the local runtime, and rebuild stale caches safely.
+                    </p>
+                    <RuntimeDiagnosticsPanel />
                   </div>
 
                   {/* User Feedback & Suggestions */}
@@ -12464,6 +13429,9 @@ const getMaskedEmail = (email: string) => {
             />
           )}
           <div style={{ marginTop: '12px', display: 'flex', gap: '8px', justifyContent: 'flex-end', borderTop: '1px solid var(--border-color)', paddingTop: '10px' }}>
+            <button className="btn btn--ghost" style={{ padding: '4px 8px', fontSize: '0.75rem' }} disabled={isControllingRemoteReceiver || !activePlaybackProfile?.smartQueue.enabled} onClick={rebuildSmartQueue}>
+              Smart mix
+            </button>
             <button className="btn btn--ghost" style={{ padding: '4px 8px', fontSize: '0.75rem' }} disabled={isControllingRemoteReceiver} onClick={() => {
               setQueue([currentTrack]);
               setQueueIndex(0);
