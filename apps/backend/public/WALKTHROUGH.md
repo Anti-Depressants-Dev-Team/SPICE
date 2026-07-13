@@ -1,5 +1,15 @@
 # SPICE Walkthrough
 
+## v1.0.134
+
+- [Spice.Home main] Cache public runtime, version, release, update, and download GET responses at Vercel's edge, cache their preflights in browsers, and keep them outside the Neon-backed emergency proxy path.
+- [Spice.Home main] Pin hosted functions beside the Frankfurt Neon database and split the cloud portal from the local player so Vercel serves a substantially smaller root bundle.
+- [Spice.Music main] Make profile, history, favorites, and private-playlist sync idempotent or differential so unchanged cloud snapshots no longer churn Neon rows.
+- [Spice.Connect main] Consolidate paired-device authorization, atomically claim indexed commands, prune expired commands, and update Listen Together host state without wide pre-reads.
+- [Spice.Mobile main] Keep five-second remote-command responsiveness while reducing Android device presence and discovery traffic to a two-minute heartbeat plus event-driven refreshes.
+- [Spice.Home main] Remove retired anime, movie, music-tester, and player component assets from hosted deployment output.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.134`.
+
 ## v1.0.133
 
 - [Spice.Home main] Rebuild the Native first-launch screen with a richer palette-aware visual system and contain long runtime, account, and launch values inside responsive summary cards.

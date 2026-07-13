@@ -9,7 +9,9 @@ export interface ProxySystemSettings {
 
 let cachedSettings: ProxySystemSettings | null = null;
 let lastFetchTime = 0;
-const CACHE_TTL_MS = 15000;
+// Emergency controls still converge quickly while halving repeated Neon reads
+// from a warm Proxy instance compared with the previous 15-second window.
+const CACHE_TTL_MS = 30000;
 
 export async function getProxySystemSettings(): Promise<ProxySystemSettings | null> {
   const databaseUrl = process.env.DATABASE_URL;

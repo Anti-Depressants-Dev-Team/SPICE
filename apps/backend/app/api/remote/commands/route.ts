@@ -1,7 +1,7 @@
 import { jsonResponse, optionsResponse } from '@/lib/cors';
 import { db } from '@/db';
 import { remoteCommands, remoteDevices } from '@/db/schema';
-import { and, asc, eq, gte, inArray, isNull, lt, or } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import {
   normalizeSpiceConnectCommandInput,
   parseRemotePayload,
@@ -14,6 +14,15 @@ import {
 } from '@/lib/spice-connect-authorization';
 
 export const runtime = 'nodejs';
+
+type ClaimedRemoteCommand = {
+  id: string;
+  sourceDeviceId: string;
+  targetDeviceId: string;
+  command: string;
+  payloadJson: string;
+  createdAt: Date | string;
+};
 
 export function OPTIONS() {
   return optionsResponse();
@@ -39,45 +48,46 @@ export async function GET(request: Request) {
     const now = new Date();
     const staleCutoff = new Date(now.getTime() - SPICE_CONNECT_COMMAND_TTL_MS);
 
-    const updatedCommands = await db
-      .update(remoteCommands)
-      .set({ consumedAt: now })
-      .where(or(
-        inArray(
-          remoteCommands.id,
-          db
-            .select({ id: remoteCommands.id })
-            .from(remoteCommands)
-            .where(and(
-              eq(remoteCommands.userId, principal.userId),
-              eq(remoteCommands.targetDeviceId, deviceId),
-              isNull(remoteCommands.consumedAt),
-              gte(remoteCommands.createdAt, staleCutoff),
-            ))
-            .orderBy(asc(remoteCommands.createdAt))
-            .limit(20)
-        ),
-        and(
-          eq(remoteCommands.userId, principal.userId),
-          eq(remoteCommands.targetDeviceId, deviceId),
-          isNull(remoteCommands.consumedAt),
-          lt(remoteCommands.createdAt, staleCutoff),
-        )
-      ))
-      .returning();
-
-    const freshCommands = updatedCommands
-      .filter((command) => command.createdAt >= staleCutoff)
-      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+    const claimedCommands = await db.execute<ClaimedRemoteCommand>(sql`
+      WITH stale_commands AS (
+        DELETE FROM ${remoteCommands}
+        WHERE ${remoteCommands.userId} = ${principal.userId}
+          AND ${remoteCommands.targetDeviceId} = ${deviceId}
+          AND ${remoteCommands.consumedAt} IS NULL
+          AND ${remoteCommands.createdAt} < ${staleCutoff}
+      ), pending_commands AS (
+        SELECT ${remoteCommands.id}
+        FROM ${remoteCommands}
+        WHERE ${remoteCommands.userId} = ${principal.userId}
+          AND ${remoteCommands.targetDeviceId} = ${deviceId}
+          AND ${remoteCommands.consumedAt} IS NULL
+          AND ${remoteCommands.createdAt} >= ${staleCutoff}
+        ORDER BY ${remoteCommands.createdAt}
+        LIMIT 20
+        FOR UPDATE SKIP LOCKED
+      ), claimed_commands AS (
+        DELETE FROM ${remoteCommands}
+        USING pending_commands
+        WHERE ${remoteCommands.id} = pending_commands.id
+        RETURNING
+          ${remoteCommands.id} AS "id",
+          ${remoteCommands.sourceDeviceId} AS "sourceDeviceId",
+          ${remoteCommands.targetDeviceId} AS "targetDeviceId",
+          ${remoteCommands.command} AS "command",
+          ${remoteCommands.payloadJson} AS "payloadJson",
+          ${remoteCommands.createdAt} AS "createdAt"
+      )
+      SELECT * FROM claimed_commands ORDER BY "createdAt"
+    `);
 
     return jsonResponse({
-      commands: freshCommands.map((command) => ({
+      commands: claimedCommands.rows.map((command) => ({
         id: command.id,
         sourceDeviceId: command.sourceDeviceId,
         targetDeviceId: command.targetDeviceId,
         command: command.command,
         payload: parseRemotePayload(command.payloadJson),
-        createdAt: command.createdAt.toISOString(),
+        createdAt: new Date(command.createdAt).toISOString(),
       })),
     });
   } catch (error) {

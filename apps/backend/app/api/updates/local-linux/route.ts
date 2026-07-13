@@ -1,22 +1,26 @@
-import { jsonResponse, optionsResponse } from '@/lib/cors';
+import { publicJsonResponse, publicOptionsResponse } from '@/lib/cors';
 import { buildLocalLinuxUpdateManifest } from '@/lib/local-updates';
-import { requireCloudRuntime } from '@/lib/runtime-target';
+import { isCloudRuntime } from '@/lib/runtime-target';
 
 export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const dynamic = 'force-static';
 
-export function OPTIONS(request: Request) {
-  return optionsResponse(request);
+export function OPTIONS() {
+  return publicOptionsResponse();
 }
 
-export function GET(request: Request) {
-  const blocked = requireCloudRuntime(request);
-  if (blocked) return blocked;
+export function GET() {
+  if (!isCloudRuntime()) {
+    return publicJsonResponse(
+      { error: 'cloud_runtime_required', message: 'This update manifest is served by the SPICE Vercel runtime.' },
+      { status: 404 },
+    );
+  }
 
-  return jsonResponse(buildLocalLinuxUpdateManifest(), {
+  return publicJsonResponse(buildLocalLinuxUpdateManifest(), {
     status: 200,
     headers: {
       'Cache-Control': 'public, max-age=0, s-maxage=900, stale-while-revalidate=3600',
     },
-  }, request);
+  });
 }

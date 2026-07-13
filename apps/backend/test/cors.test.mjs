@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { jsonResponse, optionsResponse, withCors, withoutDecodedBodyHeaders } from '../lib/cors.ts';
+import {
+  jsonResponse,
+  optionsResponse,
+  publicJsonResponse,
+  publicOptionsResponse,
+  withCors,
+  withoutDecodedBodyHeaders,
+} from '../lib/cors.ts';
 
 const allowedRequest = new Request('https://music.spice-app.xyz/api/test', {
   headers: { Origin: 'http://127.0.0.1:3939' },
@@ -14,7 +21,19 @@ test('optionsResponse returns a 204 response with allowlisted CORS headers', () 
   assert.equal(response.headers.get('vary'), 'Origin');
   assert.equal(response.headers.get('access-control-allow-methods'), 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
   assert.equal(response.headers.get('access-control-allow-headers'), 'Content-Type, Range, Authorization');
+  assert.equal(response.headers.get('access-control-max-age'), '86400');
   assert.equal(response.headers.get('access-control-expose-headers'), 'Accept-Ranges, Content-Length, Content-Range, Content-Type');
+});
+
+test('publicOptionsResponse is origin-independent and browser-preflight cacheable', () => {
+  const response = publicOptionsResponse();
+
+  assert.equal(response.status, 204);
+  assert.equal(response.headers.get('access-control-allow-origin'), '*');
+  assert.equal(response.headers.get('access-control-allow-methods'), 'GET, OPTIONS');
+  assert.equal(response.headers.get('access-control-max-age'), '86400');
+  assert.equal(response.headers.get('cache-control'), null);
+  assert.equal(response.headers.get('vary'), null);
 });
 
 test('optionsResponse omits wildcard CORS for untrusted origins', () => {
@@ -57,6 +76,25 @@ test('jsonResponse merges provided headers with CORS headers', () => {
   assert.equal(response.status, 201);
   assert.equal(response.headers.get('x-custom-header'), 'custom-value');
   assert.equal(response.headers.get('access-control-allow-origin'), 'https://example.com');
+});
+
+test('publicJsonResponse preserves explicit CDN caching with wildcard CORS', async () => {
+  const response = publicJsonResponse(
+    { runtimeTarget: 'vercel' },
+    {
+      headers: {
+        'Cache-Control': 'public, max-age=0, s-maxage=3600, stale-while-revalidate=86400',
+      },
+    },
+  );
+
+  assert.equal(response.headers.get('access-control-allow-origin'), '*');
+  assert.equal(response.headers.get('access-control-max-age'), '86400');
+  assert.equal(
+    response.headers.get('cache-control'),
+    'public, max-age=0, s-maxage=3600, stale-while-revalidate=86400',
+  );
+  assert.deepEqual(await response.json(), { runtimeTarget: 'vercel' });
 });
 
 test('withCors preserves payload headers for local media range responses', async () => {

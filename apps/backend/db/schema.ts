@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import { pgTable, text, timestamp, uuid, integer, bigint, boolean, primaryKey, index, uniqueIndex } from 'drizzle-orm/pg-core';
 
 export const users = pgTable('users', {
@@ -174,18 +175,26 @@ export const remoteDevices = pgTable(
   (t) => [primaryKey({ columns: [t.userId, t.deviceId] })],
 );
 
-export const remoteCommands = pgTable('remote_commands', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  userId: uuid('user_id')
-    .notNull()
-    .references(() => users.id, { onDelete: 'cascade' }),
-  targetDeviceId: text('target_device_id').notNull(),
-  sourceDeviceId: text('source_device_id').notNull(),
-  command: text('command').notNull(),
-  payloadJson: text('payload_json').notNull().default('{}'),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  consumedAt: timestamp('consumed_at', { withTimezone: true }),
-});
+export const remoteCommands = pgTable(
+  'remote_commands',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    targetDeviceId: text('target_device_id').notNull(),
+    sourceDeviceId: text('source_device_id').notNull(),
+    command: text('command').notNull(),
+    payloadJson: text('payload_json').notNull().default('{}'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    consumedAt: timestamp('consumed_at', { withTimezone: true }),
+  },
+  (t) => [
+    index('remote_commands_pending_idx')
+      .on(t.userId, t.targetDeviceId, t.createdAt)
+      .where(sql`${t.consumedAt} IS NULL`),
+  ],
+);
 
 export const remotePairingCodes = pgTable(
   'remote_pairing_codes',

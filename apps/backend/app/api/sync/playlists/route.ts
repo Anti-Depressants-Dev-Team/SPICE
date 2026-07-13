@@ -6,6 +6,12 @@ import { eq, and, isNull, inArray } from 'drizzle-orm';
 import { trackSnapshotColumns } from '@/lib/track-snapshot';
 import type { TrackSnapshotInput } from '@/lib/track-snapshot';
 import { getPlaylistSnapshotsBatch } from '@/lib/shared-playlists';
+import {
+  isUuid,
+  playlistItemsMatch,
+  playlistMetadataMatches,
+  playlistMetadataValues,
+} from '@/lib/playlist-sync';
 
 export const runtime = 'nodejs';
 
@@ -136,7 +142,16 @@ export async function POST(request: Request) {
       clientPl && !clientPl.shared
     ));
 
-    const existing = await db.select().from(playlists).where(
+    const existing = await db.select({
+      id: playlists.id,
+      title: playlists.title,
+      description: playlists.description,
+      gradient: playlists.gradient,
+      coverUrl: playlists.coverUrl,
+      sortIndex: playlists.sortIndex,
+      isPublic: playlists.isPublic,
+      deletedAt: playlists.deletedAt,
+    }).from(playlists).where(
       and(
         eq(playlists.userId, session.userId),
         eq(playlists.profileId, profileId)
@@ -162,34 +177,74 @@ export async function POST(request: Request) {
       }
     }
 
+    const privatePlaylistIds = privatePlaylists.map((playlist) => playlist.id);
+    const storedItems = privatePlaylistIds.length > 0
+      ? await db.select({
+          playlistId: playlistItems.playlistId,
+          position: playlistItems.position,
+          sourceId: playlistItems.sourceId,
+          trackId: playlistItems.trackId,
+          title: playlistItems.title,
+          artistsJson: playlistItems.artistsJson,
+          artworkUrl: playlistItems.artworkUrl,
+          durationMs: playlistItems.durationMs,
+        }).from(playlistItems).where(inArray(playlistItems.playlistId, privatePlaylistIds))
+      : [];
+    const itemsByPlaylist = new Map<string, typeof storedItems>();
+    for (const item of storedItems) {
+      const current = itemsByPlaylist.get(item.playlistId) || [];
+      current.push(item);
+      itemsByPlaylist.set(item.playlistId, current);
+    }
+
+    const existingPrivateById = new Map(privatePlaylists.map((playlist) => [playlist.id, playlist]));
+    const clientIds = new Set(
+      ownedClientPlaylists
+        .map((playlist) => playlist.id)
+        .filter(isUuid),
+    );
     const batch = [];
 
-    for (const pl of privatePlaylists) {
-      batch.push(db.delete(playlistItems).where(eq(playlistItems.playlistId, pl.id)));
-      batch.push(db.delete(playlists).where(eq(playlists.id, pl.id)));
+    for (const playlist of privatePlaylists) {
+      if (!clientIds.has(playlist.id)) {
+        batch.push(db.delete(playlists).where(eq(playlists.id, playlist.id)));
+      }
     }
 
     for (let i = 0; i < ownedClientPlaylists.length; i++) {
       const clientPl = ownedClientPlaylists[i];
+      const playlistId = isUuid(clientPl.id) ? clientPl.id : crypto.randomUUID();
+      const storedPlaylist = existingPrivateById.get(playlistId);
+      const metadataMatches = storedPlaylist
+        ? playlistMetadataMatches(storedPlaylist, clientPl, i)
+        : false;
+      const itemsMatch = storedPlaylist
+        ? playlistItemsMatch(itemsByPlaylist.get(playlistId) || [], clientPl.tracks)
+        : false;
 
-      const isUUID = typeof clientPl.id === 'string'
-        && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(clientPl.id);
+      if (!storedPlaylist) {
+        batch.push(db.insert(playlists).values({
+          id: playlistId,
+          userId: session.userId,
+          profileId,
+          ...playlistMetadataValues(clientPl, i),
+        }));
+      } else if (!metadataMatches || !itemsMatch) {
+        batch.push(db
+          .update(playlists)
+          .set({
+            ...playlistMetadataValues(clientPl, i),
+            deletedAt: null,
+            updatedAt: new Date(),
+          })
+          .where(eq(playlists.id, playlistId)));
+      }
 
-      const playlistId = isUUID ? clientPl.id : crypto.randomUUID();
+      if (storedPlaylist && !itemsMatch) {
+        batch.push(db.delete(playlistItems).where(eq(playlistItems.playlistId, playlistId)));
+      }
 
-      batch.push(db.insert(playlists).values({
-        id: playlistId,
-        userId: session.userId,
-        profileId,
-        title: clientPl.title || 'Untitled Playlist',
-        description: clientPl.description || '',
-        gradient: clientPl.gradient || 'linear-gradient(135deg, #a855f7, #ec4899)',
-        coverUrl: clientPl.coverUrl || null,
-        sortIndex: i,
-        isPublic: clientPl.isPublic !== false,
-      }));
-
-      if (Array.isArray(clientPl.tracks) && clientPl.tracks.length > 0) {
+      if ((!storedPlaylist || !itemsMatch) && Array.isArray(clientPl.tracks) && clientPl.tracks.length > 0) {
         const itemsPayload = clientPl.tracks.map((t, pos: number) => ({
           playlistId: playlistId as string,
           position: pos,

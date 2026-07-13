@@ -2,13 +2,52 @@ import { jsonResponse, optionsResponse } from '@/lib/cors';
 import { verifySession } from '@/lib/auth';
 import { db } from '@/db';
 import { likes } from '@/db/schema';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, or } from 'drizzle-orm';
 import { trackSnapshotColumns, trackSnapshotFromRow } from '@/lib/track-snapshot';
 
 export const runtime = 'nodejs';
 
 export function OPTIONS() {
   return optionsResponse();
+}
+
+type NormalizedLike = {
+  sourceId: string;
+  trackId: string;
+  title: string;
+  artistsJson: string;
+  artworkUrl: string | null;
+  durationMs: number | null;
+};
+
+function likeIdentityKey(row: NormalizedLike) {
+  return JSON.stringify([row.sourceId, row.trackId]);
+}
+
+function likeMetadataMatches(existing: NormalizedLike, incoming: NormalizedLike) {
+  return existing.title === incoming.title
+    && existing.artistsJson === incoming.artistsJson
+    && existing.artworkUrl === incoming.artworkUrl
+    && existing.durationMs === incoming.durationMs;
+}
+
+export function planLikeSnapshotChanges(existing: NormalizedLike[], incoming: NormalizedLike[]) {
+  const existingByKey = new Map(existing.map((row) => [likeIdentityKey(row), row]));
+  const incomingByKey = new Map(incoming.map((row) => [likeIdentityKey(row), row]));
+
+  return {
+    remove: existing.filter((row) => !incomingByKey.has(likeIdentityKey(row))),
+    insert: incoming.filter((row) => !existingByKey.has(likeIdentityKey(row))),
+    update: incoming.filter((row) => {
+      const stored = existingByKey.get(likeIdentityKey(row));
+      return stored ? !likeMetadataMatches(stored, row) : false;
+    }),
+  };
+}
+
+export function likeSnapshotsMatch(existing: NormalizedLike[], incoming: NormalizedLike[]) {
+  const plan = planLikeSnapshotChanges(existing, incoming);
+  return plan.remove.length === 0 && plan.insert.length === 0 && plan.update.length === 0;
 }
 
 export async function GET(request: Request) {
@@ -72,24 +111,67 @@ export async function POST(request: Request) {
       return jsonResponse({ error: 'database_not_configured', message: 'Backend DATABASE_URL environment variable is not configured.' }, { status: 500 });
     }
 
-    const batch = [];
-    batch.push(db.delete(likes).where(
-      and(
+    const uniqueTracks = Array.from(new Set(likedTracks));
+    const normalizedLikes = uniqueTracks.map(id => ({
+      sourceId: likedTrackDetails[id as string]?.sourceId || 'youtube_music',
+      trackId: id as string,
+      ...trackSnapshotColumns(likedTrackDetails[id as string], id as string),
+    }));
+    const existingLikes = await db
+      .select({
+        sourceId: likes.sourceId,
+        trackId: likes.trackId,
+        title: likes.title,
+        artistsJson: likes.artistsJson,
+        artworkUrl: likes.artworkUrl,
+        durationMs: likes.durationMs,
+      })
+      .from(likes)
+      .where(and(
         eq(likes.userId, session.userId),
         eq(likes.profileId, profileId)
-      )
-    ));
+      ));
 
-    if (likedTracks.length > 0) {
-      const uniqueTracks = Array.from(new Set(likedTracks));
-      const payload = uniqueTracks.map(id => ({
+    const plan = planLikeSnapshotChanges(existingLikes, normalizedLikes);
+    if (plan.remove.length === 0 && plan.insert.length === 0 && plan.update.length === 0) {
+      return jsonResponse({ success: true, count: likedTracks.length });
+    }
+
+    const batch = [];
+    if (plan.remove.length > 0) {
+      batch.push(db.delete(likes).where(and(
+        eq(likes.userId, session.userId),
+        eq(likes.profileId, profileId),
+        or(...plan.remove.map((item) => and(
+          eq(likes.sourceId, item.sourceId),
+          eq(likes.trackId, item.trackId),
+        ))),
+      )));
+    }
+
+    if (plan.insert.length > 0) {
+      const payload = plan.insert.map(item => ({
         userId: session.userId,
         profileId,
-        sourceId: likedTrackDetails[id as string]?.sourceId || 'youtube_music',
-        trackId: id as string,
-        ...trackSnapshotColumns(likedTrackDetails[id as string], id as string),
+        ...item,
       }));
       batch.push(db.insert(likes).values(payload));
+    }
+
+    for (const item of plan.update) {
+      batch.push(db.update(likes)
+        .set({
+          title: item.title,
+          artistsJson: item.artistsJson,
+          artworkUrl: item.artworkUrl,
+          durationMs: item.durationMs,
+        })
+        .where(and(
+          eq(likes.userId, session.userId),
+          eq(likes.profileId, profileId),
+          eq(likes.sourceId, item.sourceId),
+          eq(likes.trackId, item.trackId),
+        )));
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

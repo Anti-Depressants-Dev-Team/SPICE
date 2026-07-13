@@ -11,7 +11,7 @@ test('Listen Together Sessions, Invites, and Sync - Integration Tests', { skip: 
   const drizzleOrm = await import('drizzle-orm');
 
   const { users, listenTogetherSessions, listenTogetherInvites, profiles } = schema;
-  const { eq } = drizzleOrm;
+  const { and, eq } = drizzleOrm;
 
   await t.test('Create session, invite user, accept invite, and sync playback state', async () => {
     const timestamp = Date.now();
@@ -73,7 +73,17 @@ test('Listen Together Sessions, Invites, and Sync - Integration Tests', { skip: 
 
       // 5. Host updates sync playback state
       const mockTrack = { id: 'track_123', title: 'Together Song', artists: [{ name: 'Vibe Band' }] };
-      await db.update(listenTogetherSessions)
+      const rejectedUpdate = await db.update(listenTogetherSessions)
+        .set({ progressMs: 99999 })
+        .where(and(
+          eq(listenTogetherSessions.id, session.id),
+          eq(listenTogetherSessions.hostUserId, listenerUser.id)
+        ))
+        .returning({ id: listenTogetherSessions.id });
+
+      assert.equal(rejectedUpdate.length, 0);
+
+      const updatedSessions = await db.update(listenTogetherSessions)
         .set({
           currentTrackJson: JSON.stringify(mockTrack),
           isPlaying: true,
@@ -81,7 +91,13 @@ test('Listen Together Sessions, Invites, and Sync - Integration Tests', { skip: 
           durationMs: 180000,
           updatedAt: new Date(),
         })
-        .where(eq(listenTogetherSessions.id, session.id));
+        .where(and(
+          eq(listenTogetherSessions.id, session.id),
+          eq(listenTogetherSessions.hostUserId, hostUser.id)
+        ))
+        .returning({ id: listenTogetherSessions.id });
+
+      assert.deepEqual(updatedSessions, [{ id: session.id }]);
 
       // Fetch state as listener
       const sessionState = await db.query.listenTogetherSessions.findFirst({
