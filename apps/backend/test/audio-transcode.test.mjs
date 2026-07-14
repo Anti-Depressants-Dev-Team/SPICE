@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createReadStream } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { tmpdir } from 'node:os';
@@ -10,7 +10,12 @@ import test from 'node:test';
 
 import ffmpegPath from 'ffmpeg-static';
 
-import { createMp3DownloadResponse, mp3TranscodeArgs } from '../lib/audio-transcode.ts';
+import {
+  createMp3DownloadResponse,
+  ffmpegExecutableCandidates,
+  mp3TranscodeArgs,
+  resolveFfmpegPath,
+} from '../lib/audio-transcode.ts';
 
 test('MP3 transcoding uses an audio-only LAME stream without invoking a shell', () => {
   const args = mp3TranscodeArgs(
@@ -44,8 +49,35 @@ test('MP3 transcoding rejects non-HTTP source protocols', () => {
   );
 });
 
+test('packaged MP3 conversion resolves the externalized FFmpeg path at request time', async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'spice-ffmpeg-layout-'));
+  const binaryPath = path.join(directory, 'node_modules', 'ffmpeg-static', 'ffmpeg.exe');
+  await mkdir(path.dirname(binaryPath), { recursive: true });
+  await writeFile(binaryPath, 'test executable');
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  assert.equal(resolveFfmpegPath({
+    bundledPath: binaryPath,
+    explicitPath: '',
+  }), binaryPath);
+  assert.ok(ffmpegExecutableCandidates({
+    bundledPath: binaryPath,
+  }).includes(binaryPath));
+});
+
+test('an explicit FFmpeg override is used for runtime spawning', () => {
+  const override = path.join(tmpdir(), 'custom-spice-ffmpeg');
+  assert.equal(resolveFfmpegPath({ explicitPath: override }), override);
+});
+
 test('MP3 download response converts an M4A source with the bundled FFmpeg', async (t) => {
   assert.ok(ffmpegPath, 'The bundled FFmpeg binary must be available for local-runtime tests.');
+  const originalFfmpegPath = process.env.SPICE_FFMPEG_PATH;
+  process.env.SPICE_FFMPEG_PATH = ffmpegPath;
+  t.after(() => {
+    if (originalFfmpegPath === undefined) delete process.env.SPICE_FFMPEG_PATH;
+    else process.env.SPICE_FFMPEG_PATH = originalFfmpegPath;
+  });
   const directory = await mkdtemp(path.join(tmpdir(), 'spice-mp3-test-'));
   const sourcePath = path.join(directory, 'source.m4a');
 

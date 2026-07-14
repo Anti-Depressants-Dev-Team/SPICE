@@ -6,6 +6,7 @@ import path from 'node:path';
 const [, , command = 'dev', target = 'local', ...extraArgs] = process.argv;
 const normalizedTarget = target === 'vercel' ? 'vercel' : 'local';
 const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const repositoryRoot = path.resolve(appRoot, '..', '..');
 const require = createRequire(import.meta.url);
 const nextBin = require.resolve('next/dist/bin/next');
 
@@ -35,6 +36,12 @@ const env = {
 if (normalizedTarget === 'local') {
   env.HOSTNAME = process.env.HOSTNAME || '127.0.0.1';
   env.PORT = process.env.PORT || '3939';
+  env.SPICE_FFMPEG_PATH = process.env.SPICE_FFMPEG_PATH || path.join(
+    repositoryRoot,
+    'node_modules',
+    'ffmpeg-static',
+    process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg',
+  );
 }
 
 const child = spawn(process.execPath, args, {

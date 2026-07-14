@@ -146,6 +146,16 @@ test("native runtime preparation avoids spawning the Windows npm command shim", 
   assert.doesNotMatch(source, /["']npm\.cmd["']/);
 });
 
+test("native runtime launches MP3 conversion with its packaged FFmpeg binary", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "..", "spice-local-runtime-manager.js"),
+    "utf8",
+  );
+
+  assert.match(source, /SPICE_FFMPEG_PATH/);
+  assert.match(source, /path\.join\(\s*this\.runtimeDir,\s*"node_modules",\s*"ffmpeg-static"/);
+});
+
 test("runtime release publishing detects an existing tag before creating it", () => {
   const workflow = fs.readFileSync(
     path.join(__dirname, "..", ".github", "workflows", "ci.yml"),

@@ -10,6 +10,8 @@ const publicDir = path.join(appRoot, 'public');
 const distRoot = path.join(appRoot, 'dist');
 const packagePlatform = process.env.SPICE_LOCAL_PACKAGE_PLATFORM === 'linux' ? 'linux' : 'windows';
 const packageName = `spice-local-${packagePlatform}`;
+const ffmpegBinaryName = packagePlatform === 'linux' ? 'ffmpeg' : 'ffmpeg.exe';
+const ffmpegSourceDir = path.resolve(appRoot, '..', '..', 'node_modules', 'ffmpeg-static');
 const defaultUpdateManifestUrl = `https://music.spice-app.xyz/api/updates/local-${packagePlatform}`;
 const packageDir = path.join(distRoot, packageName);
 const packagedBackendDir = path.join(packageDir, 'apps', 'backend');
@@ -46,6 +48,7 @@ await assertExists(staticDir, 'The local Next build did not produce .next/static
 await rm(packageDir, { recursive: true, force: true });
 await mkdir(packageDir, { recursive: true });
 await cp(standaloneDir, packageDir, { recursive: true });
+await copyFfmpegRuntime(packageDir);
 
 if (existsSync(publicDir)) {
   await cp(publicDir, path.join(packagedBackendDir, 'public'), { recursive: true });
@@ -64,6 +67,33 @@ await assertPackagedAssets(packageDir);
 await scanForForbiddenLocalPayload(packageDir);
 
 console.log(`Packaged SPICE local runtime at ${packageDir}`);
+
+async function copyFfmpegRuntime(root) {
+  const destinationDir = path.join(root, 'node_modules', 'ffmpeg-static');
+  const runtimeFiles = [
+    ffmpegBinaryName,
+    `${ffmpegBinaryName}.LICENSE`,
+    `${ffmpegBinaryName}.README`,
+    'LICENSE',
+    'README.md',
+    'package.json',
+  ];
+
+  await rm(destinationDir, { recursive: true, force: true });
+  await mkdir(destinationDir, { recursive: true });
+  for (const file of runtimeFiles) {
+    const source = path.join(ffmpegSourceDir, file);
+    await assertExists(
+      source,
+      `The installed ffmpeg-static package is missing ${file} for ${packagePlatform} packaging.`,
+    );
+    await cp(source, path.join(destinationDir, file));
+  }
+
+  if (packagePlatform === 'linux') {
+    await chmod(path.join(destinationDir, ffmpegBinaryName), 0o755);
+  }
+}
 
 async function assertExists(target, message) {
   if (!existsSync(target)) {
@@ -92,7 +122,6 @@ async function assertPackagedAssets(root) {
     );
   }
 
-  const ffmpegBinaryName = packagePlatform === 'linux' ? 'ffmpeg' : 'ffmpeg.exe';
   const ffmpegBinary = [
     path.join(root, 'node_modules', 'ffmpeg-static', ffmpegBinaryName),
     path.join(backendRoot, 'node_modules', 'ffmpeg-static', ffmpegBinaryName),
@@ -447,6 +476,7 @@ async function writeLaunchers(root) {
       'set -eu',
       'SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)',
       'export SPICE_RUNTIME_TARGET=local',
+      `export SPICE_FFMPEG_PATH="\${SPICE_FFMPEG_PATH:-$SCRIPT_DIR/node_modules/ffmpeg-static/${ffmpegBinaryName}}"`,
       'export HOSTNAME="${SPICE_LOCAL_HOSTNAME:-127.0.0.1}"',
       'export PORT="${SPICE_LOCAL_PORT:-3939}"',
       'export SPICE_CLOUD_API_ORIGIN="${SPICE_CLOUD_API_ORIGIN:-https://music.spice-app.xyz}"',
@@ -464,6 +494,7 @@ async function writeLaunchers(root) {
   const cmd = [
     '@echo off',
     'set SPICE_RUNTIME_TARGET=local',
+    `if "%SPICE_FFMPEG_PATH%"=="" set "SPICE_FFMPEG_PATH=%~dp0node_modules\\ffmpeg-static\\${ffmpegBinaryName}"`,
     'if "%HOSTNAME%"=="" set HOSTNAME=127.0.0.1',
     'if "%PORT%"=="" set PORT=3939',
     'if "%SPICE_CLOUD_API_ORIGIN%"=="" set SPICE_CLOUD_API_ORIGIN=https://music.spice-app.xyz',
@@ -476,6 +507,7 @@ async function writeLaunchers(root) {
 
   const ps1 = [
     '$env:SPICE_RUNTIME_TARGET = "local"',
+    `if (-not $env:SPICE_FFMPEG_PATH) { $env:SPICE_FFMPEG_PATH = Join-Path $PSScriptRoot "node_modules\\ffmpeg-static\\${ffmpegBinaryName}" }`,
     'if (-not $env:HOSTNAME) { $env:HOSTNAME = "127.0.0.1" }',
     'if (-not $env:PORT) { $env:PORT = "3939" }',
     'if (-not $env:SPICE_CLOUD_API_ORIGIN) { $env:SPICE_CLOUD_API_ORIGIN = "https://music.spice-app.xyz" }',

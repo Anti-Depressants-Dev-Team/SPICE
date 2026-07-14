@@ -1,11 +1,16 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import {
+  isSpiceConnectCommandDeliverable,
   isSpiceConnectCommandFresh,
+  isSpiceConnectDeviceStale,
+  isSpiceConnectRemoteDeviceVisible,
   normalizeSpiceConnectCommandInput,
   normalizeSpiceConnectDeviceInput,
   parseRemotePayload,
+  projectSpiceConnectProgressMs,
   safeRemotePayload,
   spiceConnectCommandPollDelay,
   SPICE_CONNECT_COMMAND_ACTIVE_POLL_INTERVAL_MS,
@@ -14,6 +19,8 @@ import {
   SPICE_CONNECT_CONTROLLER_REFRESH_INTERVAL_MS,
   SPICE_CONNECT_DEVICE_SYNC_INTERVAL_MS,
   SPICE_CONNECT_COMMAND_TTL_MS,
+  SPICE_CONNECT_MAX_COMMAND_DELIVERY_ATTEMPTS,
+  SPICE_CONNECT_COMMAND_REDELIVERY_MS,
   SPICE_CONNECT_OPTIMISTIC_STATE_WINDOW_MS,
   SPICE_CONNECT_STALE_DEVICE_SECONDS,
 } from '../lib/spice-connect.ts';
@@ -146,6 +153,85 @@ test('Spice Connect command freshness rejects stale or invalid timestamps', () =
   assert.equal(isSpiceConnectCommandFresh('not-a-date', now), false);
 });
 
+test('Spice Connect retries command delivery briefly without retrying forever', () => {
+  const now = new Date('2026-07-14T12:00:00.000Z');
+  const createdAt = new Date(now.getTime() - 20_000);
+
+  assert.equal(isSpiceConnectCommandDeliverable({
+    createdAt,
+    deliveryAttempts: 0,
+  }, now), true);
+  assert.equal(isSpiceConnectCommandDeliverable({
+    createdAt,
+    consumedAt: new Date(now.getTime() - SPICE_CONNECT_COMMAND_REDELIVERY_MS + 1),
+    deliveryAttempts: 1,
+  }, now), false);
+  assert.equal(isSpiceConnectCommandDeliverable({
+    createdAt,
+    consumedAt: new Date(now.getTime() - SPICE_CONNECT_COMMAND_REDELIVERY_MS),
+    deliveryAttempts: 1,
+  }, now), true);
+  assert.equal(isSpiceConnectCommandDeliverable({
+    createdAt,
+    consumedAt: new Date(now.getTime() - SPICE_CONNECT_COMMAND_REDELIVERY_MS),
+    deliveryAttempts: SPICE_CONNECT_MAX_COMMAND_DELIVERY_ATTEMPTS,
+  }, now), false);
+});
+
+test('Spice Connect visibility follows the exact paired credential generation', () => {
+  const now = new Date('2026-07-14T12:00:00.000Z');
+  const revokedAt = new Date(now.getTime() - 30_000);
+  const expiresAt = new Date(now.getTime() + 60_000);
+
+  assert.equal(isSpiceConnectRemoteDeviceVisible(null, [], now), true);
+  assert.equal(isSpiceConnectRemoteDeviceVisible(
+    'active-generation',
+    [{ tokenHash: 'active-generation', expiresAt }],
+    now,
+  ), true);
+  assert.equal(isSpiceConnectRemoteDeviceVisible(
+    'old-generation',
+    [{ tokenHash: 'new-generation', expiresAt }],
+    now,
+  ), false);
+  assert.equal(isSpiceConnectRemoteDeviceVisible(
+    'revoked-generation',
+    [{ tokenHash: 'revoked-generation', expiresAt, revokedAt }],
+    now,
+  ), false);
+});
+
+test('Spice Connect projects recent playing progress and clamps it to duration', () => {
+  const now = new Date('2026-07-14T12:00:10.000Z');
+  const state = {
+    progressMs: 40_000,
+    durationMs: 45_000,
+    isPlaying: true,
+    updatedAt: new Date(now.getTime() - 2_000),
+  };
+
+  assert.equal(projectSpiceConnectProgressMs(state, now), 42_000);
+  assert.equal(projectSpiceConnectProgressMs({ ...state, progressMs: 44_000 }, now), 45_000);
+  assert.equal(projectSpiceConnectProgressMs({ ...state, isPlaying: false }, now), 40_000);
+});
+
+test('Spice Connect progress stays monotonic at the stale-device cutoff', () => {
+  const updatedAt = new Date('2026-07-14T12:00:00.000Z');
+  const state = {
+    progressMs: 10_000,
+    durationMs: 200_000,
+    isPlaying: true,
+    updatedAt,
+  };
+  const atCutoff = new Date(updatedAt.getTime() + SPICE_CONNECT_STALE_DEVICE_SECONDS * 1000);
+  const afterCutoff = new Date(atCutoff.getTime() + 30_000);
+
+  assert.equal(projectSpiceConnectProgressMs(state, atCutoff), 100_000);
+  assert.equal(projectSpiceConnectProgressMs(state, afterCutoff), 100_000);
+  assert.equal(isSpiceConnectDeviceStale(updatedAt, new Date(atCutoff.getTime() - 1)), false);
+  assert.equal(isSpiceConnectDeviceStale(updatedAt, atCutoff), true);
+});
+
 test('Spice Connect keeps active and background receivers responsive', () => {
   assert.ok(SPICE_CONNECT_COMMAND_ACTIVE_POLL_INTERVAL_MS <= 2_000);
   assert.ok(SPICE_CONNECT_COMMAND_IDLE_POLL_INTERVAL_MS <= 3_000);
@@ -157,4 +243,19 @@ test('Spice Connect keeps active and background receivers responsive', () => {
   assert.equal(spiceConnectCommandPollDelay({ visible: true, emptyPolls: 0 }), SPICE_CONNECT_COMMAND_ACTIVE_POLL_INTERVAL_MS);
   assert.equal(spiceConnectCommandPollDelay({ visible: true, emptyPolls: 3 }), SPICE_CONNECT_COMMAND_IDLE_POLL_INTERVAL_MS);
   assert.equal(spiceConnectCommandPollDelay({ visible: false, emptyPolls: 0 }), SPICE_CONNECT_COMMAND_HIDDEN_POLL_INTERVAL_MS);
+});
+
+test('Spice Connect command redelivery migration bounds the delivery index', async () => {
+  const [migration, journalJson] = await Promise.all([
+    readFile(new URL('../db/migrations/0013_blue_shooting_star.sql', import.meta.url), 'utf8'),
+    readFile(new URL('../db/migrations/meta/_journal.json', import.meta.url), 'utf8'),
+  ]);
+  const journal = JSON.parse(journalJson);
+  assert.match(migration, /ADD COLUMN "delivery_attempts" integer DEFAULT 0 NOT NULL/i);
+  assert.match(migration, /SET "delivery_attempts" = 3 WHERE "consumed_at" IS NOT NULL/i);
+  assert.match(migration, /FROM "remote_device_authorizations" AS paired_auth/i);
+  assert.match(migration, /WHERE "remote_commands"\."delivery_attempts" < 3/i);
+  assert.match(migration, /ADD COLUMN "paired_authorization_hash" text/i);
+  assert.match(migration, /SET "paired_authorization_hash" = paired_auth\."token_hash"/i);
+  assert.ok(journal.entries.some((entry) => entry.tag === '0013_blue_shooting_star'));
 });

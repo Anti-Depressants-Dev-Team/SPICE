@@ -1,4 +1,4 @@
-import { and, eq, gt, isNull, ne } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
 
 import { db } from '@/db';
 import {
@@ -32,6 +32,12 @@ const noStore = { 'Cache-Control': 'no-store, max-age=0' };
 export function OPTIONS(request: Request) {
   return optionsResponse(request);
 }
+
+type PairingClaimResult = {
+  authorizationId: string;
+  userId: string;
+  issuerDeviceId: string;
+};
 
 export async function POST(request: Request) {
   if (!process.env.DATABASE_URL) {
@@ -84,24 +90,88 @@ export async function POST(request: Request) {
     );
   }
 
-  const now = new Date();
-  const [consumed] = await db
-    .update(remotePairingCodes)
-    .set({ consumedAt: now, consumedByDeviceId: device.deviceId })
-    .where(and(
-      eq(remotePairingCodes.codeHash, codeHash),
-      isNull(remotePairingCodes.consumedAt),
-      isNull(remotePairingCodes.revokedAt),
-      gt(remotePairingCodes.expiresAt, now),
-      ne(remotePairingCodes.issuerDeviceId, device.deviceId),
-    ))
-    .returning({
-      id: remotePairingCodes.id,
-      userId: remotePairingCodes.userId,
-      issuerDeviceId: remotePairingCodes.issuerDeviceId,
-    });
+  const token = createRemoteDeviceToken();
+  const tokenHash = hashRemoteDeviceToken(token);
+  if (!tokenHash) {
+    return jsonResponse({ error: 'pairing_failed', message: 'Could not authorize this device.' }, { status: 500 }, request);
+  }
 
-  if (!consumed) {
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + SPICE_CONNECT_DEVICE_AUTH_TTL_MS);
+
+  // One SQL statement keeps one-time-code consumption, credential issuance,
+  // and device registration atomic. A database failure can no longer burn a
+  // valid code before the caller receives a usable credential.
+  const claimed = await db.execute<PairingClaimResult>(sql`
+    WITH consumed_code AS (
+      UPDATE ${remotePairingCodes}
+      SET
+        "consumed_at" = ${now},
+        "consumed_by_device_id" = ${device.deviceId}
+      WHERE "code_hash" = ${codeHash}
+        AND "consumed_at" IS NULL
+        AND "revoked_at" IS NULL
+        AND "expires_at" > ${now}
+        AND "issuer_device_id" <> ${device.deviceId}
+      RETURNING
+        "user_id" AS "userId",
+        "issuer_device_id" AS "issuerDeviceId"
+    ), authorized_device AS (
+      INSERT INTO ${remoteDeviceAuthorizations} (
+        "user_id",
+        "issuer_device_id",
+        "device_id",
+        "display_name",
+        "token_hash",
+        "created_at",
+        "expires_at",
+        "last_used_at",
+        "revoked_at"
+      )
+      SELECT
+        "userId",
+        "issuerDeviceId",
+        ${device.deviceId},
+        ${device.displayName},
+        ${tokenHash},
+        ${now},
+        ${expiresAt},
+        NULL,
+        NULL
+      FROM consumed_code
+      ON CONFLICT ("user_id", "device_id") DO UPDATE SET
+        "issuer_device_id" = EXCLUDED."issuer_device_id",
+        "display_name" = EXCLUDED."display_name",
+        "token_hash" = EXCLUDED."token_hash",
+        "created_at" = EXCLUDED."created_at",
+        "expires_at" = EXCLUDED."expires_at",
+        "last_used_at" = NULL,
+        "revoked_at" = NULL
+      RETURNING
+        "id" AS "authorizationId",
+        "user_id" AS "userId",
+        "issuer_device_id" AS "issuerDeviceId"
+    ), registered_device AS (
+      INSERT INTO ${remoteDevices} (
+        "user_id",
+        "device_id",
+        "paired_authorization_hash",
+        "display_name",
+        "updated_at"
+      )
+      SELECT "userId", ${device.deviceId}, ${tokenHash}, ${device.displayName}, ${now}
+      FROM authorized_device
+      ON CONFLICT ("user_id", "device_id") DO UPDATE SET
+        "paired_authorization_hash" = EXCLUDED."paired_authorization_hash",
+        "display_name" = EXCLUDED."display_name",
+        "updated_at" = EXCLUDED."updated_at"
+    )
+    SELECT "authorizationId", "userId", "issuerDeviceId"
+    FROM authorized_device
+  `);
+  const authorization = claimed.rows[0];
+
+  if (!authorization) {
     return jsonResponse(
       { error: 'invalid_pairing', message: 'The pairing code is invalid, expired, consumed, or revoked.' },
       { status: 400, headers: noStore },
@@ -109,54 +179,9 @@ export async function POST(request: Request) {
     );
   }
 
-  const token = createRemoteDeviceToken();
-  const tokenHash = hashRemoteDeviceToken(token);
-  if (!tokenHash) {
-    return jsonResponse({ error: 'pairing_failed', message: 'Could not authorize this device.' }, { status: 500 }, request);
-  }
-
-  const expiresAt = new Date(now.getTime() + SPICE_CONNECT_DEVICE_AUTH_TTL_MS);
-  const [authorization] = await db
-    .insert(remoteDeviceAuthorizations)
-    .values({
-      userId: consumed.userId,
-      issuerDeviceId: consumed.issuerDeviceId,
-      deviceId: device.deviceId,
-      displayName: device.displayName,
-      tokenHash,
-      createdAt: now,
-      expiresAt,
-    })
-    .onConflictDoUpdate({
-      target: [remoteDeviceAuthorizations.userId, remoteDeviceAuthorizations.deviceId],
-      set: {
-        issuerDeviceId: consumed.issuerDeviceId,
-        displayName: device.displayName,
-        tokenHash,
-        createdAt: now,
-        expiresAt,
-        lastUsedAt: null,
-        revokedAt: null,
-      },
-    })
-    .returning({ id: remoteDeviceAuthorizations.id });
-
-  await db
-    .insert(remoteDevices)
-    .values({
-      userId: consumed.userId,
-      deviceId: device.deviceId,
-      displayName: device.displayName,
-      updatedAt: now,
-    })
-    .onConflictDoUpdate({
-      target: [remoteDevices.userId, remoteDevices.deviceId],
-      set: { displayName: device.displayName, updatedAt: now },
-    });
-
   return jsonResponse({
-    authorizationId: authorization.id,
-    userId: consumed.userId,
+    authorizationId: authorization.authorizationId,
+    userId: authorization.userId,
     accessToken: token,
     tokenType: 'Bearer',
     scope: 'spice_connect',

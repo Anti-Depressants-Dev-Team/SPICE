@@ -6,6 +6,7 @@ import {
   parseChangelog,
   readWalkthrough,
 } from '../app/changelog/changelog-data.ts';
+import { SPICE_MEDIA_CORE_VERSION } from '../lib/release-notifications.ts';
 
 test('service changelog hides admin operations notes for normal accounts', () => {
   const payload = buildServiceChangelogPayload(
@@ -74,5 +75,6 @@ test('walkthrough parser keeps release entries in file order', () => {
 test('readWalkthrough reads the packaged public changelog', async () => {
   const walkthrough = await readWalkthrough();
 
-  assert.match(walkthrough, /^# SPICE Walkthrough\s+## v1\.0\.137/m);
+  assert.match(walkthrough, /^# SPICE Walkthrough\s+## v/m);
+  assert.equal(parseChangelog(walkthrough)[0]?.version, `v${SPICE_MEDIA_CORE_VERSION}`);
 });

@@ -85,6 +85,7 @@ test('Native shell removes the wrapper settings gear from its title bar', () => 
 
 test('desktop updater status reaches the settings window', () => {
   const main = read('main.js');
+  const viewPreload = read('preload-view.js');
 
   assert.match(main, /function broadcastUpdateStatus\(payload\)/);
   assert.match(main, /for \(const target of \[mainWindow, settingsWindow\]\)/);
@@ -92,6 +93,34 @@ test('desktop updater status reaches the settings window', () => {
   for (const status of ['checking', 'available', 'not-available', 'error', 'downloading', 'downloaded']) {
     assert.match(main, new RegExp(`broadcastUpdateStatus\\(\\{ status: ["']${status}["']`));
   }
+  assert.match(viewPreload, /if \(!IS_SPICE_MUSIC \|\| window\.spiceDesktopUpdater\) return/);
+  assert.match(viewPreload, /Object\.defineProperty\(window, 'spiceDesktopUpdater'/);
+  assert.match(viewPreload, /checkForUpdates: \(\) => ipcRenderer\.invoke\('check-for-updates'\)/);
+  assert.match(viewPreload, /return \(\) => ipcRenderer\.removeListener\('update-status', listener\)/);
+});
+
+test('fresh launch and profile changes both reset the player to the idle prompt', () => {
+  const spiceApp = read('apps/backend/app/spice-app.tsx');
+  const switchProfileStart = spiceApp.indexOf('const switchProfile =');
+  const switchProfileEnd = spiceApp.indexOf('const createProfile =', switchProfileStart);
+  assert.notEqual(switchProfileStart, -1);
+  assert.notEqual(switchProfileEnd, -1);
+  const switchProfile = spiceApp.slice(switchProfileStart, switchProfileEnd);
+
+  assert.match(switchProfile, /currentTrackRef\.current = IDLE_PLAYER_TRACK/);
+  assert.match(switchProfile, /durationRef\.current = 0/);
+  assert.match(switchProfile, /setCurrentTrack\(IDLE_PLAYER_TRACK\)/);
+  assert.match(switchProfile, /setDuration\(0\)/);
+  assert.doesNotMatch(switchProfile, /setCurrentTrack\(savedPlayback\.currentTrack\)/);
+  assert.match(spiceApp, /const \[selectedRemoteDeviceId, setSelectedRemoteDeviceId\] = useState\(''\)/);
+  assert.match(spiceApp, /localStorage\.removeItem\('spice_connect_receiver_id'\)/);
+});
+
+test('SPICE BrowserViews keep Connect polling active while minimized', () => {
+  const main = read('main.js');
+
+  assert.match(main, /backgroundThrottling: serviceKey !== "spice_crazy"/);
+  assert.match(main, /backgroundThrottling: target\.serviceKey !== "spice_crazy"/);
 });
 
 test('collapsed SPICE sidebar remains an interactive icon rail', () => {

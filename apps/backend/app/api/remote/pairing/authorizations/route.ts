@@ -1,9 +1,8 @@
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq, gt, isNull } from 'drizzle-orm';
 
 import { db } from '@/db';
 import { remoteDeviceAuthorizations } from '@/db/schema';
 import { jsonResponse, optionsResponse } from '@/lib/cors';
-import { isRemoteDeviceAuthorizationActive } from '@/lib/spice-connect-pairing';
 import {
   authorizeSpiceConnectAccountRequest,
   SpiceConnectAuthorizationError,
@@ -32,11 +31,15 @@ export async function GET(request: Request) {
     );
   }
 
+  const now = new Date();
   const authorizations = await db.query.remoteDeviceAuthorizations.findMany({
-    where: eq(remoteDeviceAuthorizations.userId, principal.userId),
+    where: and(
+      eq(remoteDeviceAuthorizations.userId, principal.userId),
+      isNull(remoteDeviceAuthorizations.revokedAt),
+      gt(remoteDeviceAuthorizations.expiresAt, now),
+    ),
     orderBy: desc(remoteDeviceAuthorizations.createdAt),
   });
-  const now = new Date();
 
   return jsonResponse({
     authorizations: authorizations.map((authorization) => ({
@@ -45,9 +48,7 @@ export async function GET(request: Request) {
       deviceId: authorization.deviceId,
       displayName: authorization.displayName,
       scope: 'spice_connect',
-      status: authorization.revokedAt
-        ? 'revoked'
-        : isRemoteDeviceAuthorizationActive(authorization, now) ? 'active' : 'expired',
+      status: 'active',
       createdAt: authorization.createdAt.toISOString(),
       expiresAt: authorization.expiresAt.toISOString(),
       lastUsedAt: authorization.lastUsedAt?.toISOString() ?? null,

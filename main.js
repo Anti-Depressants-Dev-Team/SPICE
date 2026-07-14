@@ -1394,6 +1394,7 @@ async function loadService(serviceKey) {
         contextIsolation: false, // Disabled so preload can receive window messages
         partition: "persist:main", // Use a named partition
         preload: path.join(__dirname, "preload-view.js"),
+        backgroundThrottling: serviceKey !== "spice_crazy",
       },
     });
     // view.setBackgroundColor('#121212'); // Prevent transparent black screen
@@ -1492,6 +1493,7 @@ async function loadSupportedUrl(rawUrl) {
         contextIsolation: false,
         partition: "persist:main",
         preload: path.join(__dirname, "preload-view.js"),
+        backgroundThrottling: target.serviceKey !== "spice_crazy",
       },
     });
   }

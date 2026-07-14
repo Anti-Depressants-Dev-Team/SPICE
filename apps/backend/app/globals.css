@@ -4393,8 +4393,29 @@ h4 { font-size: 1rem; }
   padding: 9px 11px;
   border: 1px solid var(--border-color);
   border-radius: 9px;
-  background: #09090b;
-  color: #fff;
+  background: var(--input-bg, #09090b);
+  color: var(--text-primary);
+}
+
+.secure-pairing__code-input {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.secure-pairing__code-input > span {
+  color: var(--text-secondary);
+  font-size: 1.1rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.secure-pairing__code-input input {
+  min-width: 0;
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
 }
 
 .secure-pairing__code {

@@ -13,6 +13,8 @@ export type SpiceConnectCommandType =
 export type SpiceConnectRepeatMode = 'none' | 'all' | 'one';
 
 export const SPICE_CONNECT_COMMAND_TTL_MS = 240000;
+export const SPICE_CONNECT_COMMAND_REDELIVERY_MS = 10_000;
+export const SPICE_CONNECT_MAX_COMMAND_DELIVERY_ATTEMPTS = 3;
 export const SPICE_CONNECT_COMMAND_ACTIVE_POLL_INTERVAL_MS = 1500;
 export const SPICE_CONNECT_COMMAND_IDLE_POLL_INTERVAL_MS = 3000;
 export const SPICE_CONNECT_COMMAND_HIDDEN_POLL_INTERVAL_MS = 5000;
@@ -23,6 +25,100 @@ export const SPICE_CONNECT_POST_COMMAND_SYNC_DELAY_MS = 300;
 export const SPICE_CONNECT_STATE_REPORT_DEBOUNCE_MS = 250;
 export const SPICE_CONNECT_OPTIMISTIC_STATE_WINDOW_MS = 6000;
 export const SPICE_CONNECT_STALE_DEVICE_SECONDS = 90;
+
+type RemoteAuthorizationState = {
+  tokenHash: string;
+  expiresAt: Date | string;
+  revokedAt?: Date | string | null;
+};
+
+type RemoteProgressState = {
+  progressMs: number;
+  durationMs: number;
+  isPlaying: boolean;
+  updatedAt: Date | string;
+};
+
+type RemoteCommandDeliveryState = {
+  createdAt: Date | string;
+  consumedAt?: Date | string | null;
+  deliveryAttempts: number;
+};
+
+function dateTime(value: Date | string | null | undefined) {
+  if (!value) return Number.NaN;
+  return value instanceof Date ? value.getTime() : new Date(value).getTime();
+}
+
+export function isSpiceConnectRemoteDeviceVisible(
+  pairedAuthorizationHash: string | null | undefined,
+  authorizations: RemoteAuthorizationState[],
+  now: Date | number = Date.now(),
+) {
+  // Account-owned heartbeats deliberately clear the paired marker. A paired
+  // snapshot is visible only while the exact credential generation that wrote
+  // it remains active; timestamps cannot safely establish ownership.
+  if (!pairedAuthorizationHash) return true;
+
+  const nowTime = now instanceof Date ? now.getTime() : now;
+  if (!Number.isFinite(nowTime)) return false;
+  return authorizations.some((authorization) => {
+    const expiresAt = dateTime(authorization.expiresAt);
+    return authorization.tokenHash === pairedAuthorizationHash
+      && !authorization.revokedAt
+      && Number.isFinite(expiresAt)
+      && expiresAt > nowTime;
+  });
+}
+
+export function projectSpiceConnectProgressMs(
+  state: RemoteProgressState,
+  now: Date | number = Date.now(),
+) {
+  const progressMs = boundedInteger(state.progressMs, 0, 0, 24 * 60 * 60 * 1000);
+  const durationMs = boundedInteger(state.durationMs, 0, 0, 24 * 60 * 60 * 1000);
+  if (!state.isPlaying) return Math.min(progressMs, durationMs || progressMs);
+
+  const nowTime = now instanceof Date ? now.getTime() : now;
+  const updatedAt = dateTime(state.updatedAt);
+  const elapsedMs = nowTime - updatedAt;
+  if (!Number.isFinite(elapsedMs) || elapsedMs <= 0) {
+    return Math.min(progressMs, durationMs || progressMs);
+  }
+
+  // Keep progress monotonic until the same cutoff used to declare a receiver
+  // stale, then hold the projection there instead of snapping backwards.
+  const projectedElapsedMs = Math.min(elapsedMs, SPICE_CONNECT_STALE_DEVICE_SECONDS * 1000);
+  const projected = progressMs + Math.round(projectedElapsedMs);
+  return Math.min(projected, durationMs || projected);
+}
+
+export function isSpiceConnectDeviceStale(
+  updatedAt: Date | string,
+  now: Date | number = Date.now(),
+) {
+  const nowTime = now instanceof Date ? now.getTime() : now;
+  const ageMs = nowTime - dateTime(updatedAt);
+  return !Number.isFinite(ageMs) || ageMs >= SPICE_CONNECT_STALE_DEVICE_SECONDS * 1000;
+}
+
+export function isSpiceConnectCommandDeliverable(
+  state: RemoteCommandDeliveryState,
+  now: Date | number = Date.now(),
+) {
+  const nowTime = now instanceof Date ? now.getTime() : now;
+  if (
+    !isSpiceConnectCommandFresh(state.createdAt, nowTime)
+    || !Number.isInteger(state.deliveryAttempts)
+    || state.deliveryAttempts < 0
+    || state.deliveryAttempts >= SPICE_CONNECT_MAX_COMMAND_DELIVERY_ATTEMPTS
+  ) return false;
+
+  if (!state.consumedAt) return true;
+  const lastDeliveredAt = dateTime(state.consumedAt);
+  return Number.isFinite(lastDeliveredAt)
+    && nowTime - lastDeliveredAt >= SPICE_CONNECT_COMMAND_REDELIVERY_MS;
+}
 
 export function spiceConnectCommandPollDelay({
   visible,

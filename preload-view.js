@@ -313,6 +313,30 @@ function installSpiceNativeShellBridge() {
 
 installSpiceNativeShellBridge();
 
+function installSpiceDesktopUpdaterBridge() {
+    if (!IS_SPICE_MUSIC || window.spiceDesktopUpdater) return;
+
+    const bridge = {
+        checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+        installUpdate: () => ipcRenderer.send('install-update'),
+        onUpdateStatus: (callback) => {
+            if (typeof callback !== 'function') return () => {};
+            const listener = (_event, status) => callback(status);
+            ipcRenderer.on('update-status', listener);
+            return () => ipcRenderer.removeListener('update-status', listener);
+        },
+    };
+
+    Object.defineProperty(window, 'spiceDesktopUpdater', {
+        configurable: false,
+        enumerable: false,
+        writable: false,
+        value: Object.freeze(bridge),
+    });
+}
+
+installSpiceDesktopUpdaterBridge();
+
 function installSpiceDesktopUiBridge() {
     if (!IS_SPICE_MUSIC) return;
 

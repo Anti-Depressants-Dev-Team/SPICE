@@ -86,6 +86,9 @@ jobs:
       - name: Build Android release APK
         env:
           GRADLE_OPTS: -Dorg.gradle.daemon=false
+          # This workflow only validates the release build and never publishes it.
+          # Tag releases deliberately omit this opt-in and require the stable key.
+          SPICE_ANDROID_ALLOW_EPHEMERAL_SIGNING: '1'
         run: |
           chmod +x apps/mobile/android/gradlew
           bash apps/mobile/scripts/android-release-ci.sh

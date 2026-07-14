@@ -44,11 +44,6 @@ const nextConfig: NextConfig = {
     NEXT_PUBLIC_SPICE_LOCAL_API_ORIGIN: localApiOrigin,
   },
   output: useStandaloneOutput ? "standalone" : undefined,
-  outputFileTracingIncludes: runtimeTarget === "local"
-    ? {
-        "/*": ["../../node_modules/ffmpeg-static/**/*"],
-      }
-    : undefined,
   outputFileTracingExcludes: runtimeTarget === "local"
     ? {
         "/*": [
@@ -69,9 +64,7 @@ const nextConfig: NextConfig = {
           "drizzle-orm/neon-http": "./lib/drizzle-local-stub.ts",
           "@/lib/proxy-system-settings": "./lib/proxy-system-settings-local.ts",
           }
-        : {
-          "ffmpeg-static": "./lib/ffmpeg-static-vercel-stub.ts",
-        }),
+        : {}),
     },
   },
 };

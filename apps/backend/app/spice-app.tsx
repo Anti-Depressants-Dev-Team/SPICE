@@ -90,6 +90,14 @@ import {
   shouldUsePlayerGainPath,
   shouldUseProxyForBoost,
 } from '@/lib/player-audio';
+import {
+  IDLE_PLAYER_TRACK,
+  projectRemotePlaybackProgress,
+  reconcileOptimisticRemoteUpdates,
+  remoteSnapshotAgeSeconds,
+  resolvePlaybackQueueIndex,
+  shouldBeginProfileListenCycle,
+} from './spice-client-runtime';
 
 const SPICE_VERSION_CHECK_INTERVAL_MS = 15 * 60 * 1000;
 const SHARED_PLAYLIST_INVITE_POLL_INTERVAL_MS = 5 * 60 * 1000;
@@ -707,16 +715,19 @@ interface NativeShellUpdateStatus {
   info?: { version?: string };
 }
 
-interface SpiceNativeShellBridge {
+interface SpiceDesktopUpdaterBridge {
+  checkForUpdates: () => Promise<{ success: boolean; error?: string }>;
+  installUpdate: () => void;
+  onUpdateStatus: (callback: (status: NativeShellUpdateStatus) => void) => () => void;
+}
+
+interface SpiceNativeShellBridge extends SpiceDesktopUpdaterBridge {
   getSettings: () => Promise<NativeShellPreferences>;
   setDiscordRpc: (enabled: boolean) => Promise<boolean>;
   setAlwaysOnTop: (enabled: boolean) => Promise<boolean>;
   setToolbarButtons: (buttons: Record<string, boolean>) => void;
   setCustomCss: (css: string) => void;
-  checkForUpdates: () => Promise<{ success: boolean; error?: string }>;
-  installUpdate: () => void;
   openDevTools: () => void;
-  onUpdateStatus: (callback: (status: NativeShellUpdateStatus) => void) => () => void;
 }
 
 const NATIVE_TOOLBAR_CONTROLS: Array<{
@@ -738,12 +749,21 @@ const getSpiceNativeShellBridge = () => {
   return (window as Window & { spiceNativeShell?: SpiceNativeShellBridge }).spiceNativeShell ?? null;
 };
 
+const getSpiceDesktopUpdaterBridge = () => {
+  if (typeof window === 'undefined') return null;
+  const updaterWindow = window as Window & {
+    spiceDesktopUpdater?: SpiceDesktopUpdaterBridge;
+    spiceNativeShell?: SpiceNativeShellBridge;
+  };
+  return updaterWindow.spiceDesktopUpdater ?? updaterWindow.spiceNativeShell ?? null;
+};
+
 const nativeUpdateStatusMessage = (status: NativeShellUpdateStatus | null) => {
   if (!status) return 'Ready to check for updates.';
   switch (status.status) {
     case 'checking': return 'Checking for updates...';
     case 'available': return `Update ${status.info?.version || ''} is available and will download automatically.`.replace('  ', ' ');
-    case 'not-available': return 'SPICE Native is up to date.';
+    case 'not-available': return 'SPICE Desktop is up to date.';
     case 'downloading': return `Downloading update... ${Math.round(status.progress?.percent ?? 0)}%`;
     case 'downloaded': return `Update ${status.info?.version || ''} is ready to install.`.replace('  ', ' ');
     case 'error': return status.error || 'The update check failed.';
@@ -1024,6 +1044,7 @@ interface RemoteDevice {
   volume: number;
   updatedAt: string;
   lastSeenSeconds?: number;
+  syncedAtMs?: number;
 }
 
 interface OptimisticRemoteDeviceState {
@@ -1673,6 +1694,7 @@ export default function SpiceApp() {
   const [sidebarSearchEnabled, setSidebarSearchEnabled] = useState(true);
   const [sidebarProfileEnabled, setSidebarProfileEnabled] = useState(true);
   const [sidebarSettingsEnabled, setSidebarSettingsEnabled] = useState(true);
+  const [desktopUpdaterAvailable, setDesktopUpdaterAvailable] = useState(false);
   const [nativeShellAvailable, setNativeShellAvailable] = useState(false);
   const [nativeShellSettings, setNativeShellSettings] = useState<NativeShellPreferences | null>(null);
   const [nativeShellCssDraft, setNativeShellCssDraft] = useState('');
@@ -1714,24 +1736,31 @@ export default function SpiceApp() {
   }, []);
 
   useEffect(() => {
+    const bridge = getSpiceDesktopUpdaterBridge();
+    if (!bridge) return;
+
+    setDesktopUpdaterAvailable(true);
+    const removeUpdateListener = bridge.onUpdateStatus((status) => {
+      setNativeUpdateStatus(status);
+      if (status.status !== 'checking' && status.status !== 'downloading') {
+        setNativeShellBusy((current) => current === 'updates' ? null : current);
+      }
+    });
+
+    return () => removeUpdateListener();
+  }, []);
+
+  useEffect(() => {
     const bridge = getSpiceNativeShellBridge();
     if (!bridge) return;
 
     let active = true;
-    let removeUpdateListener = () => {};
     bridge.getSettings()
       .then((settings) => {
         if (!active || !settings.nativeMode) return;
         setNativeShellAvailable(true);
         setNativeShellSettings(settings);
         setNativeShellCssDraft(settings.customCss || '');
-        removeUpdateListener = bridge.onUpdateStatus((status) => {
-          if (!active) return;
-          setNativeUpdateStatus(status);
-          if (status.status !== 'checking' && status.status !== 'downloading') {
-            setNativeShellBusy((current) => current === 'updates' ? null : current);
-          }
-        });
       })
       .catch((error) => {
         if (active) setNativeShellMessage(`Could not load Native shell settings: ${error instanceof Error ? error.message : String(error)}`);
@@ -1739,7 +1768,6 @@ export default function SpiceApp() {
 
     return () => {
       active = false;
-      removeUpdateListener();
     };
   }, []);
 
@@ -2018,12 +2046,7 @@ export default function SpiceApp() {
   const [newProfileAvatarUrl, setNewProfileAvatarUrl] = useState('');
 
   // ── Music Core State (Decoupled & Bound to Active Profile) ────────
-  const [currentTrack, setCurrentTrack] = useState<Track>({
-    id: 'placeholder',
-    title: 'Select a track to play',
-    artists: [{ id: 'Spice', name: 'Spice Player' }],
-    artworkUrl: '/icon.svg'
-  });
+  const [currentTrack, setCurrentTrack] = useState<Track>(IDLE_PLAYER_TRACK);
 
   const [streamUrl, setStreamUrl] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -2037,7 +2060,7 @@ export default function SpiceApp() {
   const [likedTrackDetails, setLikedTrackDetails] = useState<Record<string, Track>>(activeProfile.likedTrackDetails || {});
   const [customPlaylists, setCustomPlaylists] = useState<Playlist[]>(activeProfile.customPlaylists || []);
   const [history, setHistory] = useState<Track[]>(activeProfile.history || []);
-  const [queue, setQueue] = useState<Track[]>([currentTrack]);
+  const [queue, setQueue] = useState<Track[]>([IDLE_PLAYER_TRACK]);
   const [queueIndex, setQueueIndex] = useState(0);
 
   const [libraryView, setLibraryView] = useState<'list' | 'grid'>('list');
@@ -2213,8 +2236,7 @@ export default function SpiceApp() {
     }
     return 'server-device';
   });
-  const activePairedRemoteCredential = !cloudUser
-    && pairedRemoteCredential?.deviceId === remoteDeviceId
+  const activePairedRemoteCredential = pairedRemoteCredential?.deviceId === remoteDeviceId
     ? pairedRemoteCredential
     : null;
   const remoteAuthToken = activePairedRemoteCredential?.token || cloudToken;
@@ -2225,12 +2247,9 @@ export default function SpiceApp() {
     return 'Spice Connect Device';
   });
   const [remoteDevices, setRemoteDevices] = useState<RemoteDevice[]>([]);
-  const [selectedRemoteDeviceId, setSelectedRemoteDeviceId] = useState<string>(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('spice_connect_receiver_id') || '';
-    }
-    return '';
-  });
+  // Receiver targeting is a live-session choice. Restoring it on startup can
+  // make an old remote snapshot look like the track currently playing here.
+  const [selectedRemoteDeviceId, setSelectedRemoteDeviceId] = useState('');
   const [remoteStatus, setRemoteStatus] = useState<string | null>(null);
   const [receiverMenuOpen, setReceiverMenuOpen] = useState<ReceiverSelectVariant | null>(null);
   const [playerPlacement, setPlayerPlacement] = useState<'bottom' | 'top'>('bottom');
@@ -2244,6 +2263,10 @@ export default function SpiceApp() {
   const [isShuffle, setIsShuffle] = useState<boolean>(false);
   const [repeatMode, setRepeatMode] = useState<'none' | 'all' | 'one'>('all');
   const [expandedTab, setExpandedTab] = useState<'controls' | 'queue' | 'lyrics'>('controls');
+
+  useEffect(() => {
+    localStorage.removeItem('spice_connect_receiver_id');
+  }, []);
 
   // Dynamic Lyrics & Karaoke states
   const [lyricsData, setLyricsData] = useState<{
@@ -2515,6 +2538,7 @@ export default function SpiceApp() {
   const scrobbleStateRef = useRef<ProfileListenDeliveryState | null>(null);
   const profileListenRetryTimeoutsRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
   const remoteDeviceReportInFlightRef = useRef(false);
+  const remoteDeviceReportQueuedRef = useRef(false);
   const remoteDeviceLoadInFlightRef = useRef(false);
   const remoteCommandPollInFlightRef = useRef(false);
   const emptyRemoteCommandPollsRef = useRef(0);
@@ -2526,7 +2550,14 @@ export default function SpiceApp() {
 
   const handleAudioEndedRef = useRef<() => void>(() => { });
   const handleAudioErrorRef = useRef<() => void>(() => { });
-  const playTrackRef = useRef<(track: Track, newQueue?: Track[], queueIndexHint?: number, isSyncLoopCall?: boolean, isRetryCall?: boolean) => Promise<void>>(async () => { });
+  const playTrackRef = useRef<(
+    track: Track,
+    newQueue?: Track[],
+    queueIndexHint?: number,
+    isSyncLoopCall?: boolean,
+    isRetryCall?: boolean,
+    preserveCurrentListenCycle?: boolean,
+  ) => Promise<void>>(async () => { });
   const handleNextRef = useRef<(overrideIndex?: any) => void>(() => { });
 
   const applyAudioElementVolume = useCallback((
@@ -3126,10 +3157,6 @@ export default function SpiceApp() {
 
         const savedPlayback = getPlaybackState(activeProf.id);
         if (savedPlayback) {
-          setCurrentTrack(savedPlayback.currentTrack);
-          setQueue(savedPlayback.queue.length > 0 ? savedPlayback.queue : [savedPlayback.currentTrack]);
-          setQueueIndex(Math.min(savedPlayback.queueIndex, Math.max(savedPlayback.queue.length - 1, 0)));
-          setProgress(savedPlayback.progress);
           if (isRepeatMode(savedPlayback.repeatMode)) setRepeatMode(savedPlayback.repeatMode);
           if (typeof savedPlayback.isShuffle === 'boolean') setIsShuffle(savedPlayback.isShuffle);
           const savedPlaybackVolume = normalizePlayerVolume(savedPlayback.volume, restoredVolumeBoosterAccepted);
@@ -3137,10 +3164,21 @@ export default function SpiceApp() {
             volumeRef.current = savedPlaybackVolume;
             setVolume(savedPlaybackVolume);
           }
-        } else if (hydratedHistory.length > 0) {
-          setCurrentTrack(hydratedHistory[0]);
-          setQueue([hydratedHistory[0]]);
         }
+        // A stored snapshot is useful for preferences and history, but it is not an
+        // active playback session after a fresh launch. Keep it persisted without
+        // presenting the last song as though it were currently loaded or playing.
+        currentTrackRef.current = IDLE_PLAYER_TRACK;
+        queueRef.current = [IDLE_PLAYER_TRACK];
+        queueIndexRef.current = 0;
+        progressRef.current = 0;
+        durationRef.current = 0;
+        scrobbleStateRef.current = null;
+        setCurrentTrack(IDLE_PLAYER_TRACK);
+        setQueue([IDLE_PLAYER_TRACK]);
+        setQueueIndex(0);
+        setProgress(0);
+        setDuration(0);
         shouldAutoPlayRef.current = false;
         isPlayingRef.current = false;
         setIsPlaying(false);
@@ -3218,6 +3256,7 @@ export default function SpiceApp() {
       'visual-customization',
       'profile-privacy',
       'sidebar-controls',
+      ...(desktopUpdaterAvailable ? ['desktop-updates'] : []),
       ...(nativeShellAvailable ? ['native-shell'] : []),
       'audio-streaming',
       'profile-sync',
@@ -3247,7 +3286,7 @@ export default function SpiceApp() {
       mainEl.removeEventListener('scroll', handleScroll);
       if (animationFrame) window.cancelAnimationFrame(animationFrame);
     };
-  }, [currentPage, nativeShellAvailable]);
+  }, [currentPage, desktopUpdaterAvailable, nativeShellAvailable]);
 
   const scrollToSettingsSection = (id: string) => {
     const mainEl = document.getElementById('main');
@@ -3320,8 +3359,8 @@ export default function SpiceApp() {
     }
   };
 
-  const checkNativeShellUpdates = async () => {
-    const bridge = getSpiceNativeShellBridge();
+  const checkDesktopUpdates = async () => {
+    const bridge = getSpiceDesktopUpdaterBridge();
     if (!bridge) return;
     setNativeShellBusy('updates');
     setNativeShellMessage(null);
@@ -3609,8 +3648,10 @@ export default function SpiceApp() {
         try {
           const currentTime = ytPlayerRef.current.getCurrentTime();
           const durationTime = ytPlayerRef.current.getDuration();
+          progressRef.current = currentTime;
           setProgress(currentTime);
           if (durationTime > 0) {
+            durationRef.current = durationTime;
             setDuration(durationTime);
           }
         } catch { }
@@ -3894,12 +3935,16 @@ export default function SpiceApp() {
 
   const handleTimeUpdate = (slot: 0 | 1, audio: HTMLAudioElement) => {
     if (slot !== activeAudioSlotRef.current || audioRef.current !== audio) return;
+    progressRef.current = audio.currentTime;
     setProgress(audio.currentTime);
     updateCrossfade(audio, audio.currentTime);
   };
 
   const handleLoadedMetadata = (slot: 0 | 1, audio: HTMLAudioElement) => {
-    if (slot === activeAudioSlotRef.current) setDuration(audio.duration);
+    if (slot === activeAudioSlotRef.current) {
+      durationRef.current = audio.duration;
+      setDuration(audio.duration);
+    }
   };
 
   const handleAudioCanPlay = (slot: 0 | 1, audio: HTMLAudioElement) => {
@@ -3962,6 +4007,11 @@ export default function SpiceApp() {
     currentTrackRef.current = prepared.track;
     queueIndexRef.current = prepared.queueIndex;
     streamUrlRef.current = prepared.streamUrl;
+    progressRef.current = incoming.currentTime;
+    durationRef.current = Number.isFinite(incoming.duration)
+      ? incoming.duration
+      : (prepared.track.durationMs || 0) / 1000;
+    beginProfileListenCycle(prepared.track);
     setCurrentTrack(prepared.track);
     setQueueIndex(prepared.queueIndex);
     setStreamUrl(prepared.streamUrl);
@@ -4574,6 +4624,20 @@ export default function SpiceApp() {
     setIsPlaying(nextPlaying);
   };
 
+  const beginProfileListenCycle = (track: Track) => {
+    if (!track || track.id === 'placeholder' || track.id === 'spice-connect-placeholder') {
+      scrobbleStateRef.current = null;
+      setProfileSyncStatus('idle');
+      return;
+    }
+
+    scrobbleStateRef.current = createProfileListenDeliveryState(
+      playbackTrackKey(track),
+      Math.floor(currentTimestampMs() / 1000),
+    );
+    setProfileSyncStatus('idle');
+  };
+
   const clearPlaybackRetryTimer = () => {
     if (playbackRetryTimeoutRef.current) {
       clearTimeout(playbackRetryTimeoutRef.current);
@@ -4643,6 +4707,8 @@ export default function SpiceApp() {
       return;
     }
     playbackRetryCountsRef.current.delete(playbackTrackKey(currentTrackRef.current));
+    const endedTrack = currentTrackRef.current;
+    const endedTrackKey = playbackTrackKey(endedTrack);
 
     // Increment songs played on completion
     const currentSongsPlayed = activeProfileRef.current?.songsPlayed ?? 0;
@@ -4659,37 +4725,49 @@ export default function SpiceApp() {
     const scrobbleState = scrobbleStateRef.current;
     if (
       profileSyncEnabled
-      && currentTrack.id !== 'placeholder'
+      && endedTrack.id !== 'placeholder'
       && scrobbleState
-      && scrobbleState.trackKey === currentTrackKey
+      && scrobbleState.trackKey === endedTrackKey
     ) {
-      requestProfileListen('scrobble', scrobbleState, activeProfileListenProviders());
+      requestProfileListen(
+        'scrobble',
+        scrobbleState,
+        activeProfileListenProviders(),
+        endedTrack,
+        durationRef.current,
+      );
     }
 
     if (preparedCrossfadeRef.current?.started && finalizePreparedCrossfade()) return;
 
     if (currentRepeatMode === 'one') {
       cancelPreparedCrossfade();
-      if (currentStreamProtocol === 'embed' && isYouTubeTrack(currentTrack) && ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
+      if (currentStreamProtocol === 'embed' && isYouTubeTrack(endedTrack) && ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
         logDebug('player', 'Repeat mode is ONE. Seeking to 0 in YouTube embed...');
+        beginProfileListenCycle(endedTrack);
         ytPlayerRef.current.seekTo(0, true);
         ytPlayerRef.current.playVideo();
+        progressRef.current = 0;
         setProgress(0);
-        setIsPlaying(true);
+        setPlaybackPlaying(true);
       } else if (audioRef.current) {
         logDebug('player', 'Repeat mode is ONE. Replaying HTML5 audio...');
+        beginProfileListenCycle(endedTrack);
         audioRef.current.currentTime = 0;
         applyAudioElementVolume(audioRef.current, volumeRef.current, { resumeAudioContext: true });
         audioRef.current.play().catch(handleAudioError);
+        progressRef.current = 0;
         setProgress(0);
-        setIsPlaying(true);
+        setPlaybackPlaying(true);
       }
     } else if (currentRepeatMode === 'none' && currentQueueIndex === currentQueue.length - 1) {
       cancelPreparedCrossfade();
       logDebug('player', 'Queue ended and repeatMode is NONE. Stopping playback.');
-      setIsPlaying(false);
+      scrobbleStateRef.current = null;
+      setPlaybackPlaying(false);
+      progressRef.current = 0;
       setProgress(0);
-      if (currentStreamProtocol === 'embed' && isYouTubeTrack(currentTrack) && ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
+      if (currentStreamProtocol === 'embed' && isYouTubeTrack(endedTrack) && ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
         ytPlayerRef.current.seekTo(0, true);
         ytPlayerRef.current.pauseVideo();
       } else if (audioRef.current) {
@@ -5016,11 +5094,13 @@ export default function SpiceApp() {
       return;
     }
 
-    scrobbleStateRef.current = createProfileListenDeliveryState(
-      currentTrackKey,
-      Math.floor(currentTimestampMs() / 1000),
-    );
-    setProfileSyncStatus('idle');
+    if (scrobbleStateRef.current?.trackKey === currentTrackKey) return;
+    if (!shouldAutoPlayRef.current && !isPlayingRef.current && !isLoadingStreamRef.current) {
+      scrobbleStateRef.current = null;
+      setProfileSyncStatus('idle');
+      return;
+    }
+    beginProfileListenCycle(currentTrack);
   }, [currentTrackKey]);
 
   useEffect(() => {
@@ -5161,7 +5241,14 @@ export default function SpiceApp() {
   }, [playedTracksCount]);
 
   // Play a track
-  const playTrack = async (track: Track, newQueue?: Track[], _queueIndexHint?: number, isSyncLoopCall?: boolean, isRetryCall = false) => {
+  const playTrack = async (
+    track: Track,
+    newQueue?: Track[],
+    queueIndexHint?: number,
+    isSyncLoopCall = false,
+    isRetryCall = false,
+    preserveCurrentListenCycle = false,
+  ) => {
     if (listenTogetherHostSessionId && !isSyncLoopCall) {
       showSpiceNotice('You cannot change tracks while listening in a Listen Together session.', 'warning');
       return;
@@ -5185,11 +5272,23 @@ export default function SpiceApp() {
     }
 
     const trackKey = playbackTrackKey(track);
+    const beginsNewListenCycle = shouldBeginProfileListenCycle({
+      isRetryCall,
+      isSyncLoopCall,
+      preserveCurrentCycle: preserveCurrentListenCycle,
+    });
     if (!isRetryCall) {
       playbackRetryCountsRef.current.delete(trackKey);
       directEmbedRetryRef.current.delete(trackKey);
       embedProxyRetryRef.current.delete(trackKey);
       playbackTelemetryRecordedRef.current.delete(trackKey);
+    }
+    if (beginsNewListenCycle) {
+      beginProfileListenCycle(track);
+      progressRef.current = 0;
+      durationRef.current = (track.durationMs || 0) / 1000;
+      setProgress(0);
+      setDuration(durationRef.current);
     }
 
     const requestId = ++playbackRequestRef.current;
@@ -5206,6 +5305,7 @@ export default function SpiceApp() {
     setStreamUrl(null);
     streamUrlRef.current = null;
     rememberTrackSnapshots([track, ...(newQueue || [])]);
+    currentTrackRef.current = track;
     setCurrentTrack(track);
     if (isSoundCloudTrack(track)) {
       setShowVideoPlayer(false);
@@ -5218,8 +5318,7 @@ export default function SpiceApp() {
 
     if (newQueue && newQueue.length > 0) {
       updatedQueue = newQueue;
-      const idx = newQueue.findIndex(t => t.id === track.id);
-      updatedIndex = idx >= 0 ? idx : 0;
+      updatedIndex = resolvePlaybackQueueIndex(newQueue, track, queueIndexHint);
     } else {
       if (!queue.some(t => t.id === track.id)) {
         updatedQueue = [...queue];
@@ -5231,6 +5330,8 @@ export default function SpiceApp() {
       }
     }
 
+    queueRef.current = updatedQueue;
+    queueIndexRef.current = updatedIndex;
     setQueue(updatedQueue);
     setQueueIndex(updatedIndex);
 
@@ -5397,6 +5498,13 @@ export default function SpiceApp() {
     shouldAutoPlayRef.current = true;
     setError(undefined);
 
+    if (
+      streamUrlRef.current
+      && scrobbleStateRef.current?.trackKey !== playbackTrackKey(targetTrack)
+    ) {
+      beginProfileListenCycle(targetTrack);
+    }
+
     if (streamProtocolRef.current === 'embed' && isYouTubeTrack(targetTrack) && ytPlayerRef.current) {
       if (!streamUrlRef.current) {
         setStreamUrl('youtube-embed-active');
@@ -5485,16 +5593,19 @@ export default function SpiceApp() {
       : progress;
 
     if (progressTime > 3) {
+      const restartedTrack = currentTrackRef.current;
+      beginProfileListenCycle(restartedTrack);
+      progressRef.current = 0;
       if (streamProtocolRef.current === 'embed' && isYouTubeTrack(currentTrack) && ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
         ytPlayerRef.current.seekTo(0, true);
         setProgress(0);
-        setIsPlaying(true);
+        setPlaybackPlaying(true);
         return;
       }
       if (audioRef.current) {
         audioRef.current.currentTime = 0;
         setProgress(0);
-        setIsPlaying(true);
+        setPlaybackPlaying(true);
       }
       return;
     }
@@ -5580,6 +5691,7 @@ export default function SpiceApp() {
     const safeDuration = durationRef.current || duration || 0;
     const safeSeek = Math.max(0, Math.min(seekTime, safeDuration || seekTime));
 
+    progressRef.current = safeSeek;
     setProgress(safeSeek);
     const targetTrack = currentTrackRef.current;
     if (streamProtocolRef.current === 'embed' && isYouTubeTrack(targetTrack) && ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
@@ -5622,12 +5734,17 @@ export default function SpiceApp() {
   };
 
   const reportRemoteDeviceState = async () => {
-    if (!remoteAuthToken || !remoteControlEnabled || remoteDeviceReportInFlightRef.current) return;
+    if (!remoteAuthToken || !remoteControlEnabled) return;
+    if (remoteDeviceReportInFlightRef.current) {
+      remoteDeviceReportQueuedRef.current = true;
+      return;
+    }
 
     const targetTrack = currentTrackRef.current;
     const currentQueue = queueRef.current || [];
     const requestGeneration = remoteRequestGenerationRef.current;
     const requestToken = remoteAuthToken;
+    remoteDeviceReportQueuedRef.current = false;
     remoteDeviceReportInFlightRef.current = true;
     try {
       const response = await spiceFetch('cloud', '/remote/devices', {
@@ -5664,6 +5781,13 @@ export default function SpiceApp() {
       logDebug('error', `Spice Connect device state failed: ${message}`);
     } finally {
       remoteDeviceReportInFlightRef.current = false;
+      if (
+        remoteDeviceReportQueuedRef.current
+        && requestGeneration === remoteRequestGenerationRef.current
+      ) {
+        remoteDeviceReportQueuedRef.current = false;
+        queueMicrotask(() => void reportRemoteDeviceState());
+      }
     }
   };
 
@@ -5693,14 +5817,30 @@ export default function SpiceApp() {
           queue: Array.isArray(device.queue) ? enrichTrackSnapshots(device.queue) : [],
           shuffleEnabled: device.shuffleEnabled === true,
           repeatMode: isRepeatMode(device.repeatMode) ? device.repeatMode : 'none',
-          lastSeenSeconds: Math.max(0, Math.round((Date.now() - new Date(device.updatedAt).getTime()) / 1000)),
+          lastSeenSeconds: remoteSnapshotAgeSeconds(device.updatedAt, data.serverTime),
+          syncedAtMs: currentTimestampMs(),
         })).filter((device: any) => device.lastSeenSeconds <= 7200)
         : [];
       const optimisticState = optimisticRemoteDeviceStateRef.current;
       if (optimisticState && optimisticState.expiresAt <= currentTimestampMs()) {
         optimisticRemoteDeviceStateRef.current = null;
       }
-      const activeOptimisticState = optimisticRemoteDeviceStateRef.current;
+      let activeOptimisticState = optimisticRemoteDeviceStateRef.current;
+      if (activeOptimisticState) {
+        const receiverSnapshot = devices.find((device: RemoteDevice) => (
+          device.deviceId === activeOptimisticState?.deviceId
+        ));
+        if (receiverSnapshot) {
+          const remainingUpdates = reconcileOptimisticRemoteUpdates(
+            receiverSnapshot,
+            activeOptimisticState.updates,
+          );
+          activeOptimisticState = remainingUpdates
+            ? { ...activeOptimisticState, updates: remainingUpdates }
+            : null;
+          optimisticRemoteDeviceStateRef.current = activeOptimisticState;
+        }
+      }
       setRemoteDevices(activeOptimisticState
         ? devices.map((device: RemoteDevice) => (
           device.deviceId === activeOptimisticState.deviceId
@@ -5807,7 +5947,10 @@ export default function SpiceApp() {
       case 'volume': {
         const nextVolume = Number(command.payload?.volume);
         if (Number.isFinite(nextVolume)) {
-          setVolume(Math.max(0, Math.min(100, Math.round(nextVolume))));
+          const safeVolume = Math.max(0, Math.min(100, Math.round(nextVolume)));
+          volumeRef.current = safeVolume;
+          setVolume(safeVolume);
+          applyAudioElementVolume(audioRef.current, safeVolume);
         }
         break;
       }
@@ -5828,7 +5971,12 @@ export default function SpiceApp() {
           const hydratedQueue = Array.isArray(command.payload?.queue)
             ? enrichTrackSnapshots(command.payload.queue)
             : [hydratedTrack];
-          playTrack(hydratedTrack, hydratedQueue.length > 0 ? hydratedQueue : [hydratedTrack]);
+          const queueIndexHint = Number(command.payload?.queueIndex);
+          playTrack(
+            hydratedTrack,
+            hydratedQueue.length > 0 ? hydratedQueue : [hydratedTrack],
+            Number.isInteger(queueIndexHint) ? queueIndexHint : undefined,
+          );
         }
         break;
       }
@@ -5861,7 +6009,7 @@ export default function SpiceApp() {
       const commands = Array.isArray(data.commands) ? data.commands as RemoteCommand[] : [];
       const now = currentTimestampMs();
       const freshCommands = commands.filter((command) => {
-        if (!command.id || !rememberRemoteCommandId(command.id)) return false;
+        if (!command.id || appliedRemoteCommandIdsRef.current.has(command.id)) return false;
         if (!isSpiceConnectCommandFresh(command.createdAt, now, SPICE_CONNECT_COMMAND_TTL_MS)) {
           logDebug('remote', `Ignored stale Spice Connect command ${command.command}.`);
           return false;
@@ -5872,7 +6020,10 @@ export default function SpiceApp() {
       emptyRemoteCommandPollsRef.current = freshCommands.length > 0
         ? 0
         : Math.min(emptyRemoteCommandPollsRef.current + 1, SPICE_CONNECT_COMMAND_IDLE_BACKOFF_POLLS);
-      freshCommands.forEach((command) => applyRemoteCommand(command, now));
+      freshCommands.forEach((command) => {
+        applyRemoteCommand(command, now);
+        rememberRemoteCommandId(command.id);
+      });
     } catch (error) {
       if (requestGeneration !== remoteRequestGenerationRef.current) return;
       emptyRemoteCommandPollsRef.current = Math.min(
@@ -6064,9 +6215,6 @@ export default function SpiceApp() {
   };
 
   const claimSecurePairingCode = async (code: string, displayName: string) => {
-    if (cloudUser) {
-      throw new Error('This profile is already signed in. Sign out before using a phone pairing code.');
-    }
     const claimProfileId = activeProfileIdRef.current;
     const requestGeneration = remoteRequestGenerationRef.current;
     const response = await spiceFetch('cloud', '/remote/pairing/claim', {
@@ -6181,6 +6329,7 @@ export default function SpiceApp() {
     isShuffle,
     repeatMode,
     Math.round(volume),
+    Math.round(Math.max(0, duration) * 10),
     Math.floor(Math.max(0, progress) / 5),
   ].join('|');
 
@@ -7758,7 +7907,9 @@ export default function SpiceApp() {
     : queue;
   const playerQueueIndex = isControllingRemoteReceiver ? (selectedRemoteDevice?.queueIndex || 0) : queueIndex;
   const playerIsPlaying = isControllingRemoteReceiver ? Boolean(selectedRemoteDevice?.isPlaying) : isPlaying;
-  const playerProgress = isControllingRemoteReceiver ? (selectedRemoteDevice?.progress || 0) : progress;
+  const playerProgress = isControllingRemoteReceiver
+    ? projectRemotePlaybackProgress(selectedRemoteDevice, currentTimestampMs())
+    : progress;
   const playerDuration = isControllingRemoteReceiver ? (selectedRemoteDevice?.duration || 0) : duration;
   const playerVolume = isControllingRemoteReceiver ? (selectedRemoteDevice?.volume ?? 70) : volume;
   const playerVolumeMax = isControllingRemoteReceiver ? 100 : (volumeBoosterAccepted ? 1000 : 200);
@@ -7822,6 +7973,7 @@ export default function SpiceApp() {
           ...updates,
           updatedAt: new Date().toISOString(),
           lastSeenSeconds: 0,
+          syncedAtMs: currentTimestampMs(),
         }
         : device
     )));
@@ -7859,7 +8011,7 @@ export default function SpiceApp() {
         queueIndex: queueIndexPayload,
         isPlaying: true,
         progress: 0,
-        duration: track.durationMs ? track.durationMs / 1000 : selectedRemoteDevice?.duration || 0,
+        ...(track.durationMs ? { duration: track.durationMs / 1000 } : {}),
       });
       void sendRemoteCommand('play_track', {
         track,
@@ -7900,7 +8052,7 @@ export default function SpiceApp() {
     if (isControllingRemoteReceiver) {
       const nextCommand: RemoteCommandType = playerIsPlaying ? 'pause' : 'play';
       if (!canControlSelectedRemoteReceiver(nextCommand)) return;
-      patchSelectedRemoteDevice({ isPlaying: !playerIsPlaying });
+      patchSelectedRemoteDevice({ isPlaying: !playerIsPlaying, progress: playerProgress });
       void sendRemoteCommand(nextCommand);
       return;
     }
@@ -7975,7 +8127,7 @@ export default function SpiceApp() {
       if (activeTrack && activeTrack.id !== 'placeholder') {
         if (isPlayingRef.current) {
           setTimeout(() => {
-            void playTrackRef.current(activeTrack, queueRef.current, queueIndexRef.current);
+            void playTrackRef.current(activeTrack, queueRef.current, queueIndexRef.current, false, false, true);
           }, 0);
         } else {
           if (ytPlayerRef.current && typeof ytPlayerRef.current.pauseVideo === 'function') {
@@ -8250,31 +8402,27 @@ const getMaskedEmail = (email: string) => {
 
     const savedPlayback = getPlaybackState(target.id);
     if (savedPlayback) {
-      setCurrentTrack(savedPlayback.currentTrack);
-      setQueue(savedPlayback.queue.length > 0 ? savedPlayback.queue : [savedPlayback.currentTrack]);
-      setQueueIndex(Math.min(savedPlayback.queueIndex, Math.max(savedPlayback.queue.length - 1, 0)));
-      setProgress(savedPlayback.progress);
       if (isRepeatMode(savedPlayback.repeatMode)) setRepeatMode(savedPlayback.repeatMode);
       if (typeof savedPlayback.isShuffle === 'boolean') setIsShuffle(savedPlayback.isShuffle);
       const savedPlaybackVolume = normalizePlayerVolume(savedPlayback.volume, volumeBoosterAccepted);
-      if (savedPlaybackVolume !== null) setVolume(savedPlaybackVolume);
-    } else if (targetHistory.length > 0) {
-      setCurrentTrack(targetHistory[0]);
-      setQueue([targetHistory[0]]);
-    } else {
-      const placeholderTrack = {
-        id: 'placeholder',
-        title: 'Select a track to play',
-        artists: [{ id: 'Spice', name: 'Spice Player' }],
-        artworkUrl: '/icon.svg'
-      };
-      setCurrentTrack(placeholderTrack);
-      setQueue([placeholderTrack]);
+      if (savedPlaybackVolume !== null) {
+        volumeRef.current = savedPlaybackVolume;
+        setVolume(savedPlaybackVolume);
+      }
     }
-    if (!savedPlayback) {
-      setQueueIndex(0);
-      setProgress(0);
-    }
+    // A profile change is also a fresh playback session. Keep preferences and
+    // history, but never make a saved track look loaded or currently playing.
+    currentTrackRef.current = IDLE_PLAYER_TRACK;
+    queueRef.current = [IDLE_PLAYER_TRACK];
+    queueIndexRef.current = 0;
+    progressRef.current = 0;
+    durationRef.current = 0;
+    scrobbleStateRef.current = null;
+    setCurrentTrack(IDLE_PLAYER_TRACK);
+    setQueue([IDLE_PLAYER_TRACK]);
+    setQueueIndex(0);
+    setProgress(0);
+    setDuration(0);
     setStreamUrl(null);
     streamUrlRef.current = null;
     shouldAutoPlayRef.current = false;
@@ -12152,6 +12300,7 @@ const getMaskedEmail = (email: string) => {
                       { id: 'visual-customization', label: 'Visual Layout', icon: Icons.monitor },
                       { id: 'profile-privacy', label: 'Profile Settings', icon: Icons.shield },
                       { id: 'sidebar-controls', label: 'Sidebar Panels', icon: Icons.grid },
+                      ...(desktopUpdaterAvailable ? [{ id: 'desktop-updates', label: 'Desktop Updates', icon: Icons.download }] : []),
                       ...(nativeShellAvailable ? [{ id: 'native-shell', label: 'Native Desktop', icon: Icons.monitor }] : []),
                       { id: 'audio-streaming', label: 'Audio & Quality', icon: Icons.volume },
                       { id: 'profile-sync', label: 'Cloud Sync', icon: Icons.account },
@@ -12442,6 +12591,35 @@ const getMaskedEmail = (email: string) => {
                     </div>
                   </div>
 
+                  {desktopUpdaterAvailable && (
+                    <div id="desktop-updates" className="native-shell-settings">
+                      <div className="native-shell-settings__heading">
+                        <div>
+                          <h3>{Icons.download} SPICE Desktop Updates</h3>
+                          <p>{nativeUpdateStatusMessage(nativeUpdateStatus)}</p>
+                        </div>
+                        <span className={`native-shell-settings__update-state native-shell-settings__update-state--${nativeUpdateStatus?.status || 'idle'}`}>
+                          {nativeUpdateStatus?.status === 'downloaded' ? 'Ready' : nativeUpdateStatus?.status === 'error' ? 'Error' : 'Updater'}
+                        </span>
+                      </div>
+                      <div className="native-shell-settings__actions native-shell-settings__actions--start">
+                        <button
+                          type="button"
+                          className="btn btn--ghost"
+                          disabled={nativeShellBusy === 'updates'}
+                          onClick={() => void checkDesktopUpdates()}
+                        >
+                          {nativeShellBusy === 'updates' ? 'Checking...' : 'Check for updates'}
+                        </button>
+                        {nativeUpdateStatus?.status === 'downloaded' && (
+                          <button type="button" className="btn btn--primary" onClick={() => getSpiceDesktopUpdaterBridge()?.installUpdate()}>
+                            Restart and install
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
                   {nativeShellAvailable && nativeShellSettings && (
                     <div id="native-shell" className="native-shell-settings">
                       <div className="native-shell-settings__heading">
@@ -12537,53 +12715,24 @@ const getMaskedEmail = (email: string) => {
                         </div>
                       </div>
 
-                      <div className="native-shell-settings__utility-grid">
-                        <div className="native-shell-settings__group">
-                          <div className="native-shell-settings__group-heading">
-                            <div>
-                              <strong>Desktop updates</strong>
-                              <small>{nativeUpdateStatusMessage(nativeUpdateStatus)}</small>
-                            </div>
-                            <span className={`native-shell-settings__update-state native-shell-settings__update-state--${nativeUpdateStatus?.status || 'idle'}`}>
-                              {nativeUpdateStatus?.status === 'downloaded' ? 'Ready' : nativeUpdateStatus?.status === 'error' ? 'Error' : 'Updater'}
-                            </span>
-                          </div>
-                          <div className="native-shell-settings__actions native-shell-settings__actions--start">
-                            <button
-                              type="button"
-                              className="btn btn--ghost"
-                              disabled={nativeShellBusy === 'updates'}
-                              onClick={() => void checkNativeShellUpdates()}
-                            >
-                              {nativeShellBusy === 'updates' ? 'Checking...' : 'Check for updates'}
-                            </button>
-                            {nativeUpdateStatus?.status === 'downloaded' && (
-                              <button type="button" className="btn btn--primary" onClick={() => getSpiceNativeShellBridge()?.installUpdate()}>
-                                Restart and install
-                              </button>
-                            )}
+                      <div className="native-shell-settings__group">
+                        <div className="native-shell-settings__group-heading">
+                          <div>
+                            <strong>Mini Player &amp; OBS</strong>
+                            <small>Use the local desktop companion surfaces from a browser or OBS Browser Source.</small>
                           </div>
                         </div>
-
-                        <div className="native-shell-settings__group">
-                          <div className="native-shell-settings__group-heading">
-                            <div>
-                              <strong>Mini Player &amp; OBS</strong>
-                              <small>Use the local desktop companion surfaces from a browser or OBS Browser Source.</small>
-                            </div>
-                          </div>
-                          <div className="native-shell-settings__link-row">
-                            <code>http://localhost:6969/mini-player/</code>
-                            <button type="button" onClick={() => void copyNativeUtilityUrl('http://localhost:6969/mini-player/', 'Mini Player')}>Copy</button>
-                          </div>
-                          <div className="native-shell-settings__link-row">
-                            <code>http://localhost:6969/obs/</code>
-                            <button type="button" onClick={() => void copyNativeUtilityUrl('http://localhost:6969/obs/', 'OBS')}>Copy</button>
-                          </div>
-                          <button type="button" className="btn btn--ghost native-shell-settings__console" onClick={() => getSpiceNativeShellBridge()?.openDevTools()}>
-                            Open developer console
-                          </button>
+                        <div className="native-shell-settings__link-row">
+                          <code>http://localhost:6969/mini-player/</code>
+                          <button type="button" onClick={() => void copyNativeUtilityUrl('http://localhost:6969/mini-player/', 'Mini Player')}>Copy</button>
                         </div>
+                        <div className="native-shell-settings__link-row">
+                          <code>http://localhost:6969/obs/</code>
+                          <button type="button" onClick={() => void copyNativeUtilityUrl('http://localhost:6969/obs/', 'OBS')}>Copy</button>
+                        </div>
+                        <button type="button" className="btn btn--ghost native-shell-settings__console" onClick={() => getSpiceNativeShellBridge()?.openDevTools()}>
+                          Open developer console
+                        </button>
                       </div>
 
                       <p className="native-shell-settings__ownership-note">

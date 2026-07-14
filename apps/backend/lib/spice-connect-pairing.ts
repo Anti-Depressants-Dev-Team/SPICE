@@ -25,6 +25,16 @@ export interface RemoteDeviceAuthorizationState {
   revokedAt?: Date | string | null;
 }
 
+export type RemoteAuthorizationRevokeResolution<T> = {
+  status: 'revoked';
+  authorization: T;
+  alreadyRevoked: boolean;
+} | {
+  status: 'missing';
+} | {
+  status: 'conflict';
+};
+
 export function isSpiceConnectAccountRoleActive(accountRole: unknown) {
   return accountRole !== 'banned';
 }
@@ -47,7 +57,10 @@ function validTime(value: Date | string) {
 
 export function normalizePairingCode(value: unknown) {
   if (typeof value !== 'string') return null;
-  const normalized = value.toUpperCase().replace(/[\s-]+/g, '');
+  const normalized = value
+    .normalize('NFKC')
+    .toUpperCase()
+    .replace(/[\s\-\u2010-\u2015\u2212]+/g, '');
   if (normalized.length !== SPICE_CONNECT_PAIRING_CODE_LENGTH) return null;
   if (![...normalized].every((character) => PAIRING_ALPHABET.includes(character))) return null;
   return normalized;
@@ -131,4 +144,34 @@ export function isRemoteDeviceAuthorizationActive(
     && Number.isFinite(expiresAt)
     && !state.revokedAt
     && expiresAt > nowTime;
+}
+
+export async function resolveRemoteAuthorizationRevoke<T extends { revokedAt?: Date | string | null }>({
+  tryRevoke,
+  loadAuthorization,
+  maxAttempts = 3,
+}: {
+  tryRevoke: () => Promise<T | null | undefined>;
+  loadAuthorization: () => Promise<T | null | undefined>;
+  maxAttempts?: number;
+}): Promise<RemoteAuthorizationRevokeResolution<T>> {
+  const attempts = Math.max(1, Math.min(10, Math.floor(maxAttempts)));
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const revoked = await tryRevoke();
+    if (revoked) {
+      return { status: 'revoked', authorization: revoked, alreadyRevoked: false };
+    }
+
+    const existing = await loadAuthorization();
+    if (!existing) return { status: 'missing' };
+    if (existing.revokedAt) {
+      return { status: 'revoked', authorization: existing, alreadyRevoked: true };
+    }
+
+    // The authorization became active between the conditional update and the
+    // fallback read (for example, a concurrent re-pair). Retry the conditional
+    // revoke; never report this active row as already revoked.
+  }
+
+  return { status: 'conflict' };
 }

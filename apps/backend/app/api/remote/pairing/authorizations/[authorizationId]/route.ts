@@ -1,8 +1,10 @@
-import { and, eq, isNull, or } from 'drizzle-orm';
+import { and, eq, isNull, lte, or } from 'drizzle-orm';
 
 import { db } from '@/db';
-import { remoteCommands, remoteDeviceAuthorizations } from '@/db/schema';
+import { remoteCommands, remoteDeviceAuthorizations, remoteDevices } from '@/db/schema';
 import { jsonResponse, optionsResponse } from '@/lib/cors';
+import { SPICE_CONNECT_MAX_COMMAND_DELIVERY_ATTEMPTS } from '@/lib/spice-connect';
+import { resolveRemoteAuthorizationRevoke } from '@/lib/spice-connect-pairing';
 import {
   authorizeSpiceConnectAccountRequest,
   SpiceConnectAuthorizationError,
@@ -44,43 +46,85 @@ export async function DELETE(
     );
   }
   const now = new Date();
-  const [revoked] = await db
-    .update(remoteDeviceAuthorizations)
-    .set({ revokedAt: now })
-    .where(and(
-      eq(remoteDeviceAuthorizations.id, authorizationId),
-      eq(remoteDeviceAuthorizations.userId, principal.userId),
-      isNull(remoteDeviceAuthorizations.revokedAt),
-    ))
-    .returning({
-      id: remoteDeviceAuthorizations.id,
-      deviceId: remoteDeviceAuthorizations.deviceId,
-    });
+  const resolution = await resolveRemoteAuthorizationRevoke({
+    tryRevoke: async () => {
+      const [revoked] = await db
+        .update(remoteDeviceAuthorizations)
+        .set({ revokedAt: now })
+        .where(and(
+          eq(remoteDeviceAuthorizations.id, authorizationId),
+          eq(remoteDeviceAuthorizations.userId, principal.userId),
+          isNull(remoteDeviceAuthorizations.revokedAt),
+        ))
+        .returning({
+          id: remoteDeviceAuthorizations.id,
+          deviceId: remoteDeviceAuthorizations.deviceId,
+          tokenHash: remoteDeviceAuthorizations.tokenHash,
+          revokedAt: remoteDeviceAuthorizations.revokedAt,
+        });
+      return revoked;
+    },
+    loadAuthorization: () => db.query.remoteDeviceAuthorizations.findFirst({
+      columns: { id: true, deviceId: true, tokenHash: true, revokedAt: true },
+      where: and(
+        eq(remoteDeviceAuthorizations.id, authorizationId),
+        eq(remoteDeviceAuthorizations.userId, principal.userId),
+      ),
+    }),
+  });
 
-  if (!revoked) {
+  if (resolution.status === 'missing') {
     return jsonResponse(
-      { error: 'authorization_not_found', message: 'Paired device authorization was not found or is already revoked.' },
+      { error: 'authorization_not_found', message: 'Paired device authorization was not found.' },
       { status: 404 },
       request,
     );
   }
+  if (resolution.status === 'conflict') {
+    return jsonResponse(
+      {
+        error: 'authorization_changed',
+        message: 'The paired authorization changed while it was being revoked. Refresh and try again.',
+      },
+      { status: 409, headers: { 'Cache-Control': 'no-store, max-age=0' } },
+      request,
+    );
+  }
+  const revoked = resolution.authorization;
 
   await db
     .update(remoteCommands)
-    .set({ consumedAt: now })
+    .set({
+      consumedAt: now,
+      deliveryAttempts: SPICE_CONNECT_MAX_COMMAND_DELIVERY_ATTEMPTS,
+    })
     .where(and(
       eq(remoteCommands.userId, principal.userId),
-      isNull(remoteCommands.consumedAt),
+      lte(remoteCommands.createdAt, now),
       or(
         eq(remoteCommands.sourceDeviceId, revoked.deviceId),
         eq(remoteCommands.targetDeviceId, revoked.deviceId),
       ),
     ));
 
+  const revokedAt = new Date(revoked.revokedAt as Date | string);
+
+  // The credential hash identifies the exact paired generation that wrote the
+  // snapshot. A late old heartbeat or a newer re-pair cannot be confused with
+  // an account-owned or newly paired device state.
+  await db
+    .delete(remoteDevices)
+    .where(and(
+      eq(remoteDevices.userId, principal.userId),
+      eq(remoteDevices.deviceId, revoked.deviceId),
+      eq(remoteDevices.pairedAuthorizationHash, revoked.tokenHash),
+    ));
+
   return jsonResponse({
     success: true,
     authorizationId: revoked.id,
     deviceId: revoked.deviceId,
-    revokedAt: now.toISOString(),
-  }, {}, request);
+    revokedAt: revokedAt.toISOString(),
+    alreadyRevoked: resolution.alreadyRevoked,
+  }, { headers: { 'Cache-Control': 'no-store, max-age=0' } }, request);
 }

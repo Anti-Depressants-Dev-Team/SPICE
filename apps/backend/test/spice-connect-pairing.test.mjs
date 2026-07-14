@@ -14,6 +14,7 @@ import {
   isRemoteDeviceToken,
   normalizePairingCode,
   normalizePairingDeviceInput,
+  resolveRemoteAuthorizationRevoke,
   SPICE_CONNECT_DEVICE_TOKEN_PREFIX,
 } from '../lib/spice-connect-pairing.ts';
 
@@ -25,7 +26,10 @@ test('Spice Connect rejects banned account roles at live authorization boundarie
 
 test('pairing codes use an unambiguous normalized format', () => {
   assert.equal(normalizePairingCode('abcd-2345'), 'ABCD2345');
+  assert.equal(normalizePairingCode('abcd2345'), 'ABCD2345');
   assert.equal(normalizePairingCode(' ABCD 2345 '), 'ABCD2345');
+  assert.equal(normalizePairingCode('ABCD–2345'), 'ABCD2345');
+  assert.equal(normalizePairingCode('ＡＢＣＤ－２３４５'), 'ABCD2345');
   assert.equal(formatPairingCode('abcd2345'), 'ABCD-2345');
   assert.equal(normalizePairingCode('ABCI2345'), null);
   assert.equal(normalizePairingCode('short'), null);
@@ -92,6 +96,38 @@ test('revoked and expired remote authorizations are inactive', () => {
   assert.equal(isRemoteDeviceAuthorizationActive({ expiresAt: future }, now), true);
   assert.equal(isRemoteDeviceAuthorizationActive({ expiresAt: past }, now), false);
   assert.equal(isRemoteDeviceAuthorizationActive({ expiresAt: future, revokedAt: now }, now), false);
+});
+
+test('idempotent revoke retries an authorization that became active during fallback', async () => {
+  const revokedAt = new Date('2026-07-14T12:00:00.000Z');
+  let revokeAttempts = 0;
+  const retried = await resolveRemoteAuthorizationRevoke({
+    tryRevoke: async () => {
+      revokeAttempts += 1;
+      return revokeAttempts === 2 ? { id: 'authorization', revokedAt } : null;
+    },
+    loadAuthorization: async () => ({ id: 'authorization', revokedAt: null }),
+  });
+  assert.equal(revokeAttempts, 2);
+  assert.deepEqual(retried, {
+    status: 'revoked',
+    authorization: { id: 'authorization', revokedAt },
+    alreadyRevoked: false,
+  });
+
+  const alreadyRevoked = await resolveRemoteAuthorizationRevoke({
+    tryRevoke: async () => null,
+    loadAuthorization: async () => ({ id: 'authorization', revokedAt }),
+  });
+  assert.equal(alreadyRevoked.status, 'revoked');
+  assert.equal(alreadyRevoked.alreadyRevoked, true);
+
+  const conflict = await resolveRemoteAuthorizationRevoke({
+    tryRevoke: async () => null,
+    loadAuthorization: async () => ({ id: 'authorization', revokedAt: null }),
+    maxAttempts: 2,
+  });
+  assert.deepEqual(conflict, { status: 'conflict' });
 });
 
 test('pairing migration stores only code and credential hashes', async () => {

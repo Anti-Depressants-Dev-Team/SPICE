@@ -6,4 +6,10 @@
     <files-path
         name="internal_downloads"
         path="downloads/" />
+    <files-path
+        name="signed_updates"
+        path="updates/" />
+    <external-files-path
+        name="external_signed_updates"
+        path="Download/updates/" />
 </paths>

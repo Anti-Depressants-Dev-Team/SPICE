@@ -178,6 +178,7 @@ data class RemoteDevice(
     val durationMs: Long = 0,
     val volume: Int = 70,
     val updatedAt: String = "",
+    val observedAtElapsedRealtimeMs: Long = 0L,
 )
 
 data class RemoteCommand(

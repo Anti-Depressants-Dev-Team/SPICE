@@ -1,8 +1,15 @@
 import { jsonResponse, optionsResponse } from '@/lib/cors';
 import { db } from '@/db';
-import { remoteDevices } from '@/db/schema';
+import { remoteDeviceAuthorizations, remoteDevices } from '@/db/schema';
 import { desc, eq } from 'drizzle-orm';
-import { normalizeSpiceConnectDeviceInput, parseJson, safeJsonStringify } from '@/lib/spice-connect';
+import {
+  isSpiceConnectRemoteDeviceVisible,
+  isSpiceConnectDeviceStale,
+  normalizeSpiceConnectDeviceInput,
+  parseJson,
+  projectSpiceConnectProgressMs,
+  safeJsonStringify,
+} from '@/lib/spice-connect';
 import {
   authorizeSpiceConnectRequest,
   requirePrincipalDevice,
@@ -11,8 +18,8 @@ import {
 
 export const runtime = 'nodejs';
 
-export function OPTIONS() {
-  return optionsResponse();
+export function OPTIONS(request: Request) {
+  return optionsResponse(request);
 }
 
 export async function GET(request: Request) {
@@ -22,30 +29,55 @@ export async function GET(request: Request) {
       return jsonResponse(
         { error: 'database_not_configured', message: 'Backend DATABASE_URL environment variable is not configured.' },
         { status: 500 },
+        request,
       );
     }
 
-    const devices = await db.query.remoteDevices.findMany({
-      where: eq(remoteDevices.userId, principal.userId),
-      orderBy: desc(remoteDevices.updatedAt),
-    });
+    const [devices, authorizations] = await Promise.all([
+      db.query.remoteDevices.findMany({
+        where: eq(remoteDevices.userId, principal.userId),
+        orderBy: desc(remoteDevices.updatedAt),
+      }),
+      db.query.remoteDeviceAuthorizations.findMany({
+        columns: {
+          deviceId: true,
+          tokenHash: true,
+          expiresAt: true,
+          revokedAt: true,
+        },
+        where: eq(remoteDeviceAuthorizations.userId, principal.userId),
+      }),
+    ]);
+    const now = new Date();
+    const authorizationsByDevice = new Map<string, typeof authorizations>();
+    for (const authorization of authorizations) {
+      const current = authorizationsByDevice.get(authorization.deviceId) ?? [];
+      current.push(authorization);
+      authorizationsByDevice.set(authorization.deviceId, current);
+    }
+    const visibleDevices = devices.filter((device) => isSpiceConnectRemoteDeviceVisible(
+      device.pairedAuthorizationHash,
+      authorizationsByDevice.get(device.deviceId) ?? [],
+      now,
+    ));
 
     return jsonResponse({
-      devices: devices.map((device) => ({
+      serverTime: now.toISOString(),
+      devices: visibleDevices.map((device) => ({
         deviceId: device.deviceId,
         displayName: device.displayName,
         currentTrack: parseJson(device.currentTrackJson, null),
         queue: parseJson(device.queueJson, []),
         queueIndex: device.queueIndex,
-        isPlaying: device.isPlaying,
+        isPlaying: device.isPlaying && !isSpiceConnectDeviceStale(device.updatedAt, now),
         shuffleEnabled: device.shuffleEnabled,
         repeatMode: device.repeatMode,
-        progress: device.progressMs / 1000,
+        progress: projectSpiceConnectProgressMs(device, now) / 1000,
         duration: device.durationMs / 1000,
         volume: device.volume,
         updatedAt: device.updatedAt.toISOString(),
       })),
-    });
+    }, { headers: { 'Cache-Control': 'no-store, max-age=0' } }, request);
   } catch (error) {
     if (error instanceof SpiceConnectAuthorizationError) {
       return jsonResponse({ error: error.code, message: error.message }, { status: error.status }, request);
@@ -56,6 +88,7 @@ export async function GET(request: Request) {
         message: error instanceof Error ? error.message : 'Failed to load Spice Connect devices.',
       },
       { status: 500 },
+      request,
     );
   }
 }
@@ -67,23 +100,28 @@ export async function POST(request: Request) {
       return jsonResponse(
         { error: 'database_not_configured', message: 'Backend DATABASE_URL environment variable is not configured.' },
         { status: 500 },
+        request,
       );
     }
 
     const body = await request.json().catch(() => ({}));
     const input = normalizeSpiceConnectDeviceInput(body);
     if (!input) {
-      return jsonResponse({ error: 'invalid_device', message: 'A deviceId is required.' }, { status: 400 });
+      return jsonResponse({ error: 'invalid_device', message: 'A deviceId is required.' }, { status: 400 }, request);
     }
     requirePrincipalDevice(principal, input.deviceId);
 
     const updatedAt = new Date();
+    const pairedAuthorizationHash = principal.kind === 'paired_device'
+      ? principal.authorizationHash
+      : null;
 
     await db
       .insert(remoteDevices)
       .values({
         userId: principal.userId,
         deviceId: input.deviceId,
+        pairedAuthorizationHash,
         displayName: input.displayName,
         currentTrackJson: safeJsonStringify(input.currentTrack, 'null'),
         queueJson: safeJsonStringify(input.queue, '[]'),
@@ -100,6 +138,7 @@ export async function POST(request: Request) {
         target: [remoteDevices.userId, remoteDevices.deviceId],
         set: {
           displayName: input.displayName,
+          pairedAuthorizationHash,
           currentTrackJson: safeJsonStringify(input.currentTrack, 'null'),
           queueJson: safeJsonStringify(input.queue, '[]'),
           queueIndex: input.queueIndex,
@@ -113,7 +152,11 @@ export async function POST(request: Request) {
         },
       });
 
-    return jsonResponse({ success: true, updatedAt: updatedAt.toISOString() });
+    return jsonResponse(
+      { success: true, updatedAt: updatedAt.toISOString() },
+      { headers: { 'Cache-Control': 'no-store, max-age=0' } },
+      request,
+    );
   } catch (error) {
     if (error instanceof SpiceConnectAuthorizationError) {
       return jsonResponse({ error: error.code, message: error.message }, { status: error.status }, request);
@@ -124,6 +167,7 @@ export async function POST(request: Request) {
         message: error instanceof Error ? error.message : 'Failed to update Spice Connect device.',
       },
       { status: 500 },
+      request,
     );
   }
 }
