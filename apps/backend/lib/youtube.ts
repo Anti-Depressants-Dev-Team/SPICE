@@ -87,6 +87,61 @@ export async function searchTracks(query: string, limit: number, kind: string) {
   return tracks;
 }
 
+export async function getRelatedTracks(id: string, limit = 30) {
+  const yt = await getYouTube();
+  const upNext = await yt.music.getUpNext(id, true);
+  const tracks: SpiceTrack[] = [];
+  const seen = new Set<string>([id]);
+
+  for (const item of upNext.contents) {
+    const videos = 'video_id' in item
+      ? [item]
+      : 'primary' in item
+        ? [item.primary, ...(item.counterpart ?? [])]
+        : [];
+
+    for (const video of videos) {
+      if (!video || seen.has(video.video_id) || video.selected) continue;
+      const track = playlistPanelVideoToTrack(video);
+      if (!track) continue;
+      seen.add(track.id);
+      tracks.push(track);
+      if (tracks.length >= limit) return tracks;
+    }
+  }
+
+  return tracks;
+}
+
+function playlistPanelVideoToTrack(video: YTNodes.PlaylistPanelVideo): SpiceTrack | null {
+  const title = video.title?.toString();
+  if (!video.video_id || !title) return null;
+
+  const artists = video.artists?.map((artist) => ({
+    id: artist.channel_id ?? artist.name,
+    name: artist.name,
+  })) ?? artistNameToList(video.author);
+
+  return {
+    sourceId: YOUTUBE_MUSIC_SOURCE_ID,
+    id: video.video_id,
+    title,
+    artists,
+    album: video.album
+      ? {
+          id: video.album.id ?? video.album.name,
+          title: video.album.name,
+          artists,
+          year: video.album.year ? Number(video.album.year) || undefined : undefined,
+        }
+      : undefined,
+    durationMs: Number.isFinite(video.duration?.seconds)
+      ? video.duration.seconds * 1000
+      : undefined,
+    artworkUrl: bestThumbnailUrl(video.thumbnail),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Stream resolution — uses mobile / alternative InnerTube clients that serve
 // pre-decoded URLs without requiring PO (Proof of Origin) tokens.

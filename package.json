@@ -1,6 +1,6 @@
 {
   "name": "spice",
-  "version": "1.4.37",
+  "version": "1.4.38",
   "description": "Unified Electron, web runtime, and Android music client.",
   "workspaces": [
     "apps/backend"

@@ -21,6 +21,7 @@ const first = {
   artistsJson: '[{"id":"artist-1","name":"Artist"}]',
   artworkUrl: 'https://example.com/first.jpg',
   durationMs: 180000,
+  msListened: 30000,
 };
 const second = {
   sourceId: 'soundcloud',
@@ -29,6 +30,7 @@ const second = {
   artistsJson: '[]',
   artworkUrl: null,
   durationMs: null,
+  msListened: 30000,
 };
 
 test('history snapshot equality preserves playback order and normalized metadata', () => {
@@ -53,12 +55,48 @@ test('history snapshot equality preserves playback order and normalized metadata
     { kind: 'trim', insert: [], removeIds: ['history-2'] },
   );
   assert.deepEqual(
+    historyRoute.planHistorySnapshotChanges(
+      [
+        { ...second, id: 'history-newer', playedAt: new Date('2026-07-13T08:00:00Z') },
+        { ...first, id: 'history-older', playedAt: new Date('2026-07-13T07:00:00Z') },
+      ],
+      [{ ...first }],
+    ),
+    { kind: 'unchanged', insert: [], removeIds: [] },
+  );
+  assert.deepEqual(
     historyRoute.planHistorySnapshotChanges(stored, [{ ...second, trackId: 'new-track' }, first]),
     {
       kind: 'prepend',
       insert: [{ ...second, trackId: 'new-track' }],
       removeIds: ['history-2'],
     },
+  );
+
+  assert.deepEqual(
+    historyRoute.planHistorySnapshotChanges(stored, [{ ...first, msListened: 60000 }, second]),
+    {
+      kind: 'patch',
+      insert: [],
+      removeIds: [],
+      update: [{ id: 'history-1', item: { ...first, msListened: 60000 } }],
+    },
+  );
+  assert.deepEqual(
+    historyRoute.planHistorySnapshotChanges(stored, [{ ...second, msListened: 60000 }, first]),
+    {
+      kind: 'promote',
+      insert: [],
+      removeIds: [],
+      update: [{ id: 'history-2', item: { ...second, msListened: 60000 } }],
+    },
+  );
+  assert.deepEqual(
+    historyRoute.preserveMonotonicListenCredit(
+      [{ ...first, msListened: 90000 }],
+      [{ ...first, msListened: 30000 }],
+    ),
+    [{ ...first, msListened: 90000 }],
   );
 });
 

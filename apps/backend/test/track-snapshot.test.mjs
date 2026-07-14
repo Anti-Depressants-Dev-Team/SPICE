@@ -62,6 +62,7 @@ test('trackSnapshotFromRow maps complete row', () => {
     artistsJson: JSON.stringify([{ id: '2', name: 'Row Artist' }]),
     artworkUrl: 'http://example.com/row.jpg',
     durationMs: 999,
+    msListened: 60000,
   });
 
   assert.deepEqual(result, {
@@ -71,6 +72,7 @@ test('trackSnapshotFromRow maps complete row', () => {
     artists: [{ id: '2', name: 'Row Artist' }],
     artworkUrl: 'http://example.com/row.jpg',
     durationMs: 999,
+    msListened: 60000,
   });
 });
 
@@ -82,6 +84,7 @@ test('trackSnapshotFromRow handles empty artistsJson', () => {
     artistsJson: '[]',
     artworkUrl: null,
     durationMs: null,
+    msListened: 0,
   });
 
   assert.deepEqual(result, {
@@ -89,6 +92,7 @@ test('trackSnapshotFromRow handles empty artistsJson', () => {
     sourceId: 'src-1',
     title: 'Row Title',
     artists: [],
+    msListened: 0,
   });
 });
 
@@ -100,6 +104,7 @@ test('trackSnapshotFromRow handles invalid artistsJson', () => {
     artistsJson: 'invalid json',
     artworkUrl: null,
     durationMs: null,
+    msListened: 30000,
   });
 
   assert.deepEqual(result, {
@@ -107,6 +112,7 @@ test('trackSnapshotFromRow handles invalid artistsJson', () => {
     sourceId: 'src-1',
     title: 'Row Title',
     artists: [],
+    msListened: 30000,
   });
 });
 
@@ -118,6 +124,7 @@ test('trackSnapshotFromRow sanitizes parsed artists', () => {
     artistsJson: JSON.stringify([{ name: 'Sanitized' }, { id: '3' }]),
     artworkUrl: null,
     durationMs: null,
+    msListened: 30000,
   });
 
   assert.deepEqual(result.artists, [

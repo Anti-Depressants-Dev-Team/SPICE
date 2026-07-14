@@ -5,6 +5,7 @@ export interface TrackSnapshotInput {
   artworkUrl?: string;
   durationMs?: number;
   sourceId?: string;
+  msListened?: number;
 }
 
 interface TrackSnapshotRow {
@@ -14,6 +15,7 @@ interface TrackSnapshotRow {
   artistsJson: string;
   artworkUrl: string | null;
   durationMs: number | null;
+  msListened?: number;
 }
 
 function sanitizeArtists(artists: TrackSnapshotInput['artists']) {
@@ -52,5 +54,6 @@ export function trackSnapshotFromRow(row: TrackSnapshotRow) {
     artists,
     ...(row.artworkUrl ? { artworkUrl: row.artworkUrl } : {}),
     ...(row.durationMs ? { durationMs: row.durationMs } : {}),
+    ...(typeof row.msListened === 'number' ? { msListened: row.msListened } : {}),
   };
 }
