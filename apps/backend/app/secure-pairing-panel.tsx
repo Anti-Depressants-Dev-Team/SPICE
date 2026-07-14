@@ -1,6 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import {
+  formatPairingCodeInput,
+  normalizePairingCodeInput,
+  pairingCodeInputSegments,
+} from './spice-client-runtime';
 
 export interface PairingCodeResult {
   pairingId: string;
@@ -43,11 +48,23 @@ export default function SecurePairingPanel({
   onForgetCredential,
 }: SecurePairingPanelProps) {
   const [pairingCode, setPairingCode] = useState<PairingCodeResult | null>(null);
-  const [claimCode, setClaimCode] = useState('');
+  const [claimCodeFirst, setClaimCodeFirst] = useState('');
+  const [claimCodeSecond, setClaimCodeSecond] = useState('');
   const [claimName, setClaimName] = useState(deviceName);
   const [authorizations, setAuthorizations] = useState<PairedDeviceAuthorization[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('Pair a phone without sharing your account password.');
+  const secondCodeInputRef = useRef<HTMLInputElement>(null);
+  const claimCode = `${claimCodeFirst}${claimCodeSecond}`;
+
+  const applyPastedCode = (value: string) => {
+    const segments = pairingCodeInputSegments(value);
+    setClaimCodeFirst(segments.first);
+    setClaimCodeSecond(segments.second);
+    if (segments.first.length === 4) {
+      requestAnimationFrame(() => secondCodeInputRef.current?.focus());
+    }
+  };
 
   const refreshAuthorizations = async () => {
     if (!accountAvailable) return;
@@ -129,24 +146,47 @@ export default function SecurePairingPanel({
           </label>
           <label>
             Pairing code
-            <input
-              value={claimCode}
-              maxLength={9}
-              placeholder="ABCD-2345"
-              autoComplete="one-time-code"
-              onChange={(event) => setClaimCode(event.target.value.toUpperCase())}
-            />
+            <span
+              className="secure-pairing__code-input"
+              onPaste={(event) => {
+                event.preventDefault();
+                applyPastedCode(event.clipboardData.getData('text'));
+              }}
+            >
+              <input
+                value={claimCodeFirst}
+                maxLength={4}
+                placeholder="ABCD"
+                autoComplete="one-time-code"
+                aria-label="Pairing code first four characters"
+                onChange={(event) => {
+                  const next = normalizePairingCodeInput(event.target.value).slice(0, 4);
+                  setClaimCodeFirst(next);
+                  if (next.length === 4) secondCodeInputRef.current?.focus();
+                }}
+              />
+              <span aria-hidden="true">-</span>
+              <input
+                ref={secondCodeInputRef}
+                value={claimCodeSecond}
+                maxLength={4}
+                placeholder="2345"
+                aria-label="Pairing code last four characters"
+                onChange={(event) => setClaimCodeSecond(normalizePairingCodeInput(event.target.value).slice(0, 4))}
+              />
+            </span>
           </label>
           <div className="secure-pairing__actions">
             <button
               type="button"
               className="btn btn--primary"
-              disabled={busy || claimCode.trim().length < 8 || !claimName.trim()}
+              disabled={busy || claimCode.length !== 8 || !claimName.trim()}
               onClick={async () => {
                 setBusy(true);
                 try {
-                  await onClaimCode(claimCode, claimName);
-                  setClaimCode('');
+                  await onClaimCode(formatPairingCodeInput(claimCode), claimName);
+                  setClaimCodeFirst('');
+                  setClaimCodeSecond('');
                   setStatus('This device is paired and can use Spice Connect.');
                   await refreshAuthorizations().catch(() => undefined);
                 } catch (error) {

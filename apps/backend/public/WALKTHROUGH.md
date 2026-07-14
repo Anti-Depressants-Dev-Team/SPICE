@@ -1,5 +1,19 @@
 # SPICE Walkthrough
 
+## v1.0.138
+
+- [Spice.Music main] Restore desktop update checks inside SPICE Settings for both wrapper and Native shells, including live download state and restart-to-install handling.
+- [Spice.Music main] Start fresh launches and profile changes on an explicit `Start playing something` state instead of reviving saved local or remote track snapshots.
+- [Spice.Music main] Give every real playback start and repeat its own Last.fm/ListenBrainz delivery cycle, retry transient provider failures, and keep SPICE playback timers responsive while the desktop is minimized.
+- [Spice.Connect main] Make `XXXX-XXXX` pairing entry stable across desktop and Android, normalize pasted Unicode input, atomically consume one-time codes, and allow signed-in desktops to claim a friend's pairing code without replacing their account session.
+- [Spice.Connect main] Bind device presence to the exact paired credential generation so revoke is idempotent and race-safe, retry short command deliveries, delete terminal commands after their TTL, and prevent late heartbeats from resurrecting access.
+- [Spice.Connect main] Reconcile controller optimism with receiver-confirmed track, queue, duration, and progress state, use server time across skewed PCs, and keep projected playback monotonic until a receiver becomes stale.
+- [Spice.Music main] Resolve the packaged FFmpeg executable at runtime so M4A streams convert to real MP3 downloads without leaking a build-machine path into Native packages.
+- [Spice.Mobile main] Check the official stable GitHub release on startup, validate the exact signed APK asset, size, digest, version, package, and signing certificate, and hand verified downloads to Android's package installer.
+- [Spice.Mobile main] Republish receiver presence after credential fallback, persist bounded command deduplication, and refresh remote track metadata and progress promptly after connected-device playback changes.
+- [Shared CI] Require a stable Android release key for published tag assets while retaining explicit ephemeral signing only for non-publishing release-build checks.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.138`.
+
 ## v1.0.137
 
 - [Spice.Music main] Mark Last.fm scrobbles as delivered only after an explicit accepted response, surface filtered HTTP-200 responses as errors, and retry transient provider failures independently with bounded backoff.

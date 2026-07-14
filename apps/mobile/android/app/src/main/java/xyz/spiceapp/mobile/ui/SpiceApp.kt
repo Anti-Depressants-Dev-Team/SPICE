@@ -1,5 +1,6 @@
 package xyz.spiceapp.mobile.ui
 
+import android.os.SystemClock
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -71,6 +72,7 @@ import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationBar
@@ -93,6 +95,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -101,17 +104,32 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.input.TransformedText
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
+import kotlinx.coroutines.delay
 import xyz.spiceapp.mobile.BuildConfig
 import xyz.spiceapp.mobile.SpiceUiState
+import xyz.spiceapp.mobile.formatSpiceConnectPairingCodeInput
 import xyz.spiceapp.mobile.isCompleteSpiceConnectPairingCode
+import xyz.spiceapp.mobile.normalizeSpiceConnectPairingCodeInput
+import xyz.spiceapp.mobile.projectedSpiceConnectProgressMs
+import xyz.spiceapp.mobile.sanitizeSpiceConnectPairingCodeEdit
+import xyz.spiceapp.mobile.data.update.AppUpdateUiState
 import xyz.spiceapp.mobile.model.AccentTheme
 import xyz.spiceapp.mobile.model.AppScreen
 import xyz.spiceapp.mobile.model.AuthMode
@@ -199,6 +217,11 @@ fun SpiceApp(
     onShareDownload: (DownloadedTrack) -> Unit,
     onRemoveDownload: (DownloadedTrack) -> Unit,
     onRetryHome: () -> Unit,
+    onDownloadAppUpdate: () -> Unit,
+    onCancelAppUpdateDownload: () -> Unit,
+    onDismissAppUpdate: () -> Unit,
+    onInstallAppUpdate: (String, String) -> Unit,
+    onOpenAppUpdateReleasePage: () -> Unit,
     onClearMessage: () -> Unit,
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
@@ -210,8 +233,9 @@ fun SpiceApp(
     }
     val isRemotePlayback = uiState.selectedPlaybackDeviceId.isNotBlank()
     val activeTrack = if (isRemotePlayback) selectedRemoteDevice?.currentTrack else uiState.currentTrack
+    val remotePlayer = rememberRemotePlayerUiState(selectedRemoteDevice)
     val activePlayer = if (isRemotePlayback) {
-        selectedRemoteDevice?.toPlayerUiState() ?: PlayerUiState()
+        remotePlayer
     } else {
         playerState
     }
@@ -427,6 +451,113 @@ fun SpiceApp(
             onRefreshTracks = onRefreshSharedPlaylistTracks,
         )
     }
+
+    if (uiState.appUpdate.update != null && !uiState.appUpdate.dismissed) {
+        AppUpdateDialog(
+            state = uiState.appUpdate,
+            onDownload = onDownloadAppUpdate,
+            onCancelDownload = onCancelAppUpdateDownload,
+            onInstall = onInstallAppUpdate,
+            onOpenReleasePage = onOpenAppUpdateReleasePage,
+            onDismiss = onDismissAppUpdate,
+        )
+    }
+}
+
+@Composable
+private fun AppUpdateDialog(
+    state: AppUpdateUiState,
+    onDownload: () -> Unit,
+    onCancelDownload: () -> Unit,
+    onInstall: (String, String) -> Unit,
+    onOpenReleasePage: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val update = state.update ?: return
+    val downloadedPath = state.downloadedApkPath
+    val fraction = if (state.totalBytes > 0L) {
+        (state.downloadedBytes.toFloat() / state.totalBytes.toFloat()).coerceIn(0f, 1f)
+    } else {
+        0f
+    }
+    AlertDialog(
+        onDismissRequest = { if (!state.downloading) onDismiss() },
+        title = { Text("SPICE ${update.version} is available") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    when {
+                        state.downloading -> "Downloading the signed Android update..."
+                        downloadedPath != null -> "The signed update is ready. Android will ask you to confirm installation."
+                        else -> "Do you want to update to the newest SPICE release?"
+                    },
+                )
+                if (state.downloading) {
+                    LinearProgressIndicator(
+                        progress = { fraction },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(
+                        "${formatFileSize(state.downloadedBytes)} / ${formatFileSize(state.totalBytes)}",
+                        color = SpiceTextMuted,
+                        fontSize = 12.sp,
+                    )
+                }
+                state.error?.let { error ->
+                    Text(error, color = MaterialTheme.colorScheme.error, fontSize = 13.sp)
+                }
+                update.releaseNotes
+                    .lineSequence()
+                    .map(String::trim)
+                    .filter(String::isNotEmpty)
+                    .take(4)
+                    .joinToString("\n")
+                    .takeIf(String::isNotEmpty)
+                    ?.let { notes ->
+                        Text(notes, color = SpiceTextMuted, fontSize = 12.sp, maxLines = 6)
+                    }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    when {
+                        state.downloading -> onCancelDownload()
+                        downloadedPath != null -> onInstall(downloadedPath, update.version)
+                        else -> onDownload()
+                    }
+                },
+            ) {
+                Text(
+                    when {
+                        state.downloading -> "Cancel download"
+                        downloadedPath != null -> "Install update"
+                        state.error != null -> "Retry download"
+                        else -> "Download update"
+                    },
+                )
+            }
+        },
+        dismissButton = if (state.downloading) {
+            null
+        } else {
+            {
+                Row {
+                    if (state.error != null) {
+                        TextButton(onClick = onOpenReleasePage) { Text("Official release") }
+                    }
+                    TextButton(onClick = onDismiss) { Text("Later") }
+                }
+            }
+        },
+    )
+}
+
+private fun formatFileSize(bytes: Long): String = when {
+    bytes <= 0L -> "0 MB"
+    bytes >= 1024L * 1024L -> String.format("%.1f MB", bytes / (1024.0 * 1024.0))
+    bytes >= 1024L -> String.format("%.1f KB", bytes / 1024.0)
+    else -> "$bytes B"
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1702,19 +1833,10 @@ private fun SecurePairingSection(
                 color = SpiceTextMuted,
                 fontSize = 13.sp,
             )
-            OutlinedTextField(
+            StablePairingCodeField(
                 value = uiState.pairingCode,
                 onValueChange = onPairingCodeChanged,
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                label = { Text("Pairing code") },
-                placeholder = { Text("ABCD-2345") },
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Ascii,
-                    imeAction = ImeAction.Done,
-                ),
-                keyboardActions = KeyboardActions(onDone = { onClaimPairingCode() }),
-                shape = RoundedCornerShape(8.dp),
+                onDone = onClaimPairingCode,
             )
             Button(
                 onClick = onClaimPairingCode,
@@ -1734,6 +1856,71 @@ private fun SecurePairingSection(
                 fontSize = 13.sp,
             )
         }
+    }
+}
+
+@Composable
+private fun StablePairingCodeField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    onDone: () -> Unit,
+) {
+    var editValue by remember {
+        val normalized = normalizeSpiceConnectPairingCodeInput(value)
+        mutableStateOf(TextFieldValue(normalized, TextRange(normalized.length)))
+    }
+    LaunchedEffect(value) {
+        val normalized = normalizeSpiceConnectPairingCodeInput(value)
+        if (normalized != editValue.text) {
+            editValue = TextFieldValue(normalized, TextRange(normalized.length))
+        }
+    }
+    OutlinedTextField(
+        value = editValue,
+        onValueChange = { proposed ->
+            val sanitized = sanitizeSpiceConnectPairingCodeEdit(
+                value = proposed.text,
+                selectionStart = proposed.selection.start,
+                selectionEnd = proposed.selection.end,
+            )
+            editValue = TextFieldValue(
+                text = sanitized.text,
+                selection = TextRange(sanitized.selectionStart, sanitized.selectionEnd),
+            )
+            onValueChange(sanitized.text)
+        },
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics { contentDescription = "Pairing code" },
+        singleLine = true,
+        textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace),
+        visualTransformation = StablePairingCodeVisualTransformation,
+        keyboardOptions = KeyboardOptions(
+            keyboardType = KeyboardType.Ascii,
+            imeAction = ImeAction.Done,
+        ),
+        keyboardActions = KeyboardActions(onDone = { onDone() }),
+        shape = RoundedCornerShape(8.dp),
+    )
+}
+
+private object StablePairingCodeVisualTransformation : VisualTransformation {
+    override fun filter(text: AnnotatedString): TransformedText {
+        val normalizedLength = normalizeSpiceConnectPairingCodeInput(text.text).length
+        return TransformedText(
+            text = AnnotatedString(formatSpiceConnectPairingCodeInput(text.text)),
+            offsetMapping = object : OffsetMapping {
+                override fun originalToTransformed(offset: Int): Int {
+                    val safeOffset = offset.coerceIn(0, normalizedLength)
+                    return if (safeOffset <= 4) safeOffset else safeOffset + 1
+                }
+
+                override fun transformedToOriginal(offset: Int): Int {
+                    val rawOffset = if (offset.coerceAtLeast(0) <= 4) offset else offset - 1
+                    return rawOffset.coerceIn(0, normalizedLength)
+                }
+            },
+        )
     }
 }
 
@@ -2249,19 +2436,45 @@ private fun SpiceConnectReceiverMenu(
     }
 }
 
-private fun RemoteDevice.toPlayerUiState(): PlayerUiState = PlayerUiState(
+private fun RemoteDevice.toPlayerUiState(nowElapsedRealtimeMs: Long): PlayerUiState = PlayerUiState(
     connected = true,
     mediaId = currentTrack?.id.orEmpty(),
     title = currentTrack?.title.orEmpty(),
     artist = currentTrack?.artist.orEmpty(),
     artworkUrl = currentTrack?.artworkUrl.orEmpty(),
     isPlaying = isPlaying,
-    positionMs = progressMs,
+    positionMs = projectedSpiceConnectProgressMs(
+        progressMs = progressMs,
+        durationMs = durationMs,
+        isPlaying = isPlaying,
+        observedAtElapsedRealtimeMs = observedAtElapsedRealtimeMs,
+        nowElapsedRealtimeMs = nowElapsedRealtimeMs,
+    ),
     durationMs = durationMs,
     volume = volume,
     shuffleEnabled = shuffleEnabled,
     repeatMode = repeatMode,
 )
+
+@Composable
+private fun rememberRemotePlayerUiState(device: RemoteDevice?): PlayerUiState {
+    var nowElapsedRealtimeMs by remember(device?.deviceId) {
+        mutableLongStateOf(SystemClock.elapsedRealtime())
+    }
+    LaunchedEffect(
+        device?.deviceId,
+        device?.isPlaying,
+        device?.observedAtElapsedRealtimeMs,
+        device?.progressMs,
+    ) {
+        nowElapsedRealtimeMs = SystemClock.elapsedRealtime()
+        while (device?.isPlaying == true) {
+            delay(500L)
+            nowElapsedRealtimeMs = SystemClock.elapsedRealtime()
+        }
+    }
+    return device?.toPlayerUiState(nowElapsedRealtimeMs) ?: PlayerUiState()
+}
 
 @Composable
 private fun MiniPlayer(

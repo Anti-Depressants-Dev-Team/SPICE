@@ -1,3 +1,5 @@
+import groovy.json.JsonSlurper
+
 apply plugin: 'com.android.application'
 apply plugin: 'org.jetbrains.kotlin.android'
 apply plugin: 'org.jetbrains.kotlin.plugin.compose'
@@ -18,6 +20,27 @@ def hasReleaseSigning = releaseSigningStoreFile &&
     releaseSigningKeyAlias &&
     releaseSigningKeyPassword
 def allowDebugReleaseSigning = (project.findProperty("spiceAndroidDebugSignRelease") ?: System.getenv("SPICE_ANDROID_DEBUG_SIGN_RELEASE") ?: "false").toString().toBoolean()
+def rootPackageJson = file("../../../../package.json")
+def spiceReleaseVersion = rootPackageJson.isFile()
+    ? new JsonSlurper().parse(rootPackageJson).version?.toString()
+    : null
+if (!spiceReleaseVersion) {
+    throw new GradleException("Could not read the SPICE release version from the root package.json")
+}
+def spiceReleaseMatch = (spiceReleaseVersion =~ /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/)
+if (!spiceReleaseMatch.matches()) {
+    throw new GradleException("The root SPICE version must be a stable semantic version")
+}
+def spiceReleaseMajor = spiceReleaseMatch.group(1).toInteger()
+def spiceReleaseMinor = spiceReleaseMatch.group(2).toInteger()
+def spiceReleasePatch = spiceReleaseMatch.group(3).toInteger()
+if (spiceReleaseMinor > 999 || spiceReleasePatch > 999) {
+    throw new GradleException("The SPICE minor and patch versions must stay below 1000 for Android versionCode ordering")
+}
+def spiceAndroidVersionCode = spiceReleaseMajor * 1_000_000 + spiceReleaseMinor * 1_000 + spiceReleasePatch
+if (spiceAndroidVersionCode <= 18 || spiceAndroidVersionCode > 2_100_000_000) {
+    throw new GradleException("The root SPICE version cannot be represented as an Android versionCode")
+}
 
 android {
     namespace = "xyz.spiceapp.mobile"
@@ -27,13 +50,14 @@ android {
         applicationId "xyz.spiceapp.mobile"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 18
-        versionName "1.0.8"
+        versionCode spiceAndroidVersionCode
+        versionName spiceReleaseVersion
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
         buildConfigField "String", "SPICE_CLOUD_BASE_URL", buildConfigString(project.findProperty("spiceCloudBaseUrl") ?: "https://music.spice-app.xyz")
         buildConfigField "String", "SPICE_MEDIA_BASE_URLS", buildConfigString(project.findProperty("spiceMediaBaseUrls") ?: "http://127.0.0.1:3939")
         buildConfigField "String", "SOUNDCLOUD_CLIENT_ID", buildConfigString(project.findProperty("soundCloudClientId") ?: "")
+        buildConfigField "String", "SPICE_RELEASE_VERSION", buildConfigString(spiceReleaseVersion)
     }
 
     signingConfigs {

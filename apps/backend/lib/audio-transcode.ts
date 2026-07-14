@@ -1,7 +1,5 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { PassThrough, Readable } from 'node:stream';
-
-import ffmpegStaticPath from 'ffmpeg-static';
 
 import { audioContentDisposition } from './audio-download.ts';
 
@@ -15,9 +13,40 @@ type Mp3DownloadOptions = {
   signal?: AbortSignal;
 };
 
+type FfmpegPathOptions = {
+  bundledPath?: string | null;
+  explicitPath?: string | null;
+};
+
+export function ffmpegExecutableCandidates({
+  bundledPath = null,
+}: Pick<FfmpegPathOptions, 'bundledPath'> = {}) {
+  return typeof bundledPath === 'string' && bundledPath.trim()
+    ? [bundledPath.trim()]
+    : [];
+}
+
+export function resolveFfmpegPath(options: FfmpegPathOptions = {}) {
+  const explicitPath = options.explicitPath === undefined
+    ? process.env.SPICE_FFMPEG_PATH?.trim()
+    : options.explicitPath?.trim();
+  const candidates = explicitPath
+    ? [explicitPath]
+    : ffmpegExecutableCandidates(options);
+  const resolved = candidates[0];
+
+  if (resolved) return resolved;
+
+  throw new Error(
+    explicitPath
+      ? 'SPICE_FFMPEG_PATH must point to an FFmpeg executable.'
+      : 'MP3 conversion is unavailable because the packaged FFmpeg executable could not be found.',
+  );
+}
+
 export function mp3TranscodeArgs(sourceUrl: string, userAgent: string) {
-  const source = new URL(sourceUrl);
-  if (source.protocol !== 'http:' && source.protocol !== 'https:') {
+  const source = URL.parse(sourceUrl);
+  if (!source || (source.protocol !== 'http:' && source.protocol !== 'https:')) {
     throw new Error('Only HTTP(S) audio sources can be converted.');
   }
 
@@ -60,20 +89,21 @@ export async function createMp3DownloadResponse({
   headers,
   signal,
 }: Mp3DownloadOptions) {
-  const ffmpegPath = process.env.SPICE_FFMPEG_PATH?.trim() || ffmpegStaticPath;
-  if (!ffmpegPath) {
-    throw new Error('MP3 conversion is not available in this runtime.');
-  }
+  const ffmpegPath = resolveFfmpegPath();
   if (signal?.aborted) {
     throw new Error('The MP3 conversion request was cancelled.');
   }
 
   const output = new PassThrough();
-  const child = spawn(ffmpegPath, mp3TranscodeArgs(sourceUrl, userAgent), {
-    shell: false,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: true,
-  });
+  const child = Reflect.apply(spawn, undefined, [
+    ffmpegPath,
+    mp3TranscodeArgs(sourceUrl, userAgent),
+    {
+      shell: false,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    },
+  ]) as ChildProcessWithoutNullStreams;
   let stderr = '';
 
   child.stderr.setEncoding('utf8');
@@ -85,7 +115,9 @@ export async function createMp3DownloadResponse({
 
   await new Promise<void>((resolve, reject) => {
     child.once('spawn', resolve);
-    child.once('error', reject);
+    child.once('error', (error) => reject(new Error(
+      `MP3 conversion could not start the packaged FFmpeg executable at ${ffmpegPath}: ${error.message}`,
+    )));
   });
 
   const stopConversion = () => {

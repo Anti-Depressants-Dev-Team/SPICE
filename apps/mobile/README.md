@@ -26,6 +26,9 @@ Native Android preview for Spice Music, built with Jetpack Compose and Media3.
 - Compact full-player download action with progress and cancellation for explicit audio downloads
 - Lyrics sheet using LRCLIB-style lookup for the current track
 - Compact Spice Connect receiver menus in both players, with local/remote track, shuffle, repeat, and transport routing
+- Fixed `XXXX-XXXX` Spice Connect pairing mask with paste/edit-safe cursor handling
+- One-second Spice Connect command/device refresh while controlling a receiver, projected progress between snapshots, and persisted command-ID deduplication for safe redelivery
+- Startup checks for newer signed Android APKs on the official SPICE GitHub release, with an explicit download/install prompt, progress, cancellation, integrity checks, and secure package-installer handoff
 - Settings Terms and Licenses tabs for native resolver and download dependencies
 - Media3/ExoPlayer playback service with Android media session and notification
 - Lock-screen controls, audio focus, headset/Bluetooth commands, noisy-output pause, and background playback
@@ -73,6 +76,16 @@ POST /api/remote/pairing/claim
 
 The returned `spice_pair_...` credential is restricted to this Android device and Spice Connect remote APIs. It is stored in its own Android Keystore AES-GCM blob, separate from the cloud account JWT, and is preferred for remote-device and command requests. The app tracks the owner user ID, authorization ID, expiry, and device ID; it removes the credential locally when it expires or when the backend returns `401` after revocation. Pairing credentials expire after 30 days and do not grant account, sync, playlist, or profile access.
 
+The pairing editor always displays a fixed `XXXX-XXXX` mask. It accepts pasted raw or dashed codes, keeps cursor edits stable, and submits the canonical ASCII-dashed form. A phone may be paired while its full Spice account is signed in; the scoped pairing credential remains separate.
+
+Spice Connect receivers poll commands every second. Applied command IDs are kept in a bounded persisted history so a bounded server redelivery cannot repeat actions such as toggle, next, or seek. While this phone controls another device, snapshots refresh every second and the UI projects playing progress between snapshots; track metadata and duration reconcile as soon as the receiver acknowledges a handoff.
+
+## Android self-updates
+
+On startup, Android checks the public `Anti-Depressants-Dev-Team/SPICE` latest GitHub release. It compares the stable semantic release tag with the root release version embedded at build time and only prompts when the GitHub release is newer. The updater accepts only the exact `Spice-Android-v{version}-release-signed.apk` asset from the official repository; unsigned, duplicate, malformed, empty, wrong-content-type, or unexpected-host assets are ignored.
+
+Downloads remain an explicit action in the update prompt and show byte progress with cancellation and retry. Android's durable `DownloadManager` stores the APK under the app-private external `Download/updates/` directory, so a large release keeps downloading if SPICE is backgrounded or its process is restarted; SPICE restores and verifies that download the next time it opens. SPICE validates the advertised size and GitHub SHA-256 digest when supplied, then verifies the APK package name, exact release `versionName`, newer `versionCode`, and signing certificate against the installed app. Only then does it share that narrow path with Android through a read-only `FileProvider` content URI. Android 8+ users are sent to the per-app unknown-sources setting when needed, and the system package installer always presents the final install confirmation. Installations made with the legacy signing key receive a one-time uninstall/reinstall explanation and a button to the official release page; users should sync or back up their library first. The root semantic release also produces the APK `versionName` and monotonic `versionCode`, so each tagged APK can upgrade the preceding installation.
+
 ## Commands
 
 Run from the repository root:
@@ -107,7 +120,7 @@ apps/mobile/android/app/build/outputs/apk/release/app-release.apk
 mobile:android:check runs Android lint, JVM unit tests, and a debug APK assembly.
 mobile:android:release:check runs release lint, release JVM unit tests, and unsigned release APK assembly.
 
-The tag-driven `Release Spice` GitHub Actions workflow builds the Android release APK on Ubuntu alongside the desktop release matrix, uploads it as a workflow artifact, and attaches it to the same GitHub Release as `Spice-Android-v{desktop-version}-release-{signed|unsigned}.apk`. Signed CI builds use these repository secrets when present: `SPICE_ANDROID_KEYSTORE_BASE64`, `SPICE_ANDROID_KEYSTORE_PASSWORD`, `SPICE_ANDROID_KEY_ALIAS`, and `SPICE_ANDROID_KEY_PASSWORD`.
+The tag-driven `Release Spice` GitHub Actions workflow builds the Android release APK on Ubuntu alongside the desktop release matrix, uploads it as a workflow artifact, and attaches it to the same GitHub Release as `Spice-Android-v{desktop-version}-release-signed.apk`. Publishing fails unless the stable release key is available through `SPICE_ANDROID_KEYSTORE_BASE64`, `SPICE_ANDROID_KEYSTORE_PASSWORD`, `SPICE_ANDROID_KEY_ALIAS`, and `SPICE_ANDROID_KEY_PASSWORD`. The separate non-publishing release-build check opts into an ephemeral debug signature only to validate that the release variant assembles and verifies.
 
 ## Prerequisites
 
@@ -165,6 +178,6 @@ NewPipe Extractor and youtubedl-android are GPL-3.0-family dependencies, with FF
 
 ## Release Status
 
-Version 1.0.8 is a private sideload release target. No public store release is planned. The APK is installable and the native media stack is wired for direct SoundCloud, NewPipe-resolved YouTube, queue playback with next/previous, shuffle and repeat-all auto-advance, explicit downloads, account sync, profile stats, notifications, invite acceptance, member management, shared playlist editing, lyrics, player-integrated Spice Connect playback modes, and local-runtime fallback streams.
+Android follows the unified root SPICE release version embedded by Gradle. It remains a private sideload release target; no public store release is planned. The APK is installable and the native media stack is wired for direct SoundCloud, NewPipe-resolved YouTube, queue playback with next/previous, shuffle and repeat-all auto-advance, explicit downloads, account sync, profile stats, notifications, invite acceptance, member management, shared playlist editing, lyrics, player-integrated Spice Connect playback modes, signed GitHub self-updates, and local-runtime fallback streams.
 
 Remaining QA is device-side: playback, downloads, share intents, invite links, member management, shared editing, lyrics, Spice Connect command flow, and resolver stability on the target phones.

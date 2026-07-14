@@ -265,6 +265,12 @@ class SpiceLocalRuntimeManager {
           ...process.env,
           ELECTRON_RUN_AS_NODE: "1",
           SPICE_RUNTIME_TARGET: "local",
+          SPICE_FFMPEG_PATH: process.env.SPICE_FFMPEG_PATH || path.join(
+            this.runtimeDir,
+            "node_modules",
+            "ffmpeg-static",
+            this.platform === "win32" ? "ffmpeg.exe" : "ffmpeg",
+          ),
           HOSTNAME: process.env.SPICE_LOCAL_HOSTNAME || "127.0.0.1",
           PORT: process.env.SPICE_LOCAL_PORT || "3939",
           SPICE_CLOUD_API_ORIGIN: process.env.SPICE_CLOUD_API_ORIGIN || "https://music.spice-app.xyz",

@@ -160,6 +160,7 @@ export const remoteDevices = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     deviceId: text('device_id').notNull(),
+    pairedAuthorizationHash: text('paired_authorization_hash'),
     displayName: text('display_name').notNull().default('SPICE Device'),
     currentTrackJson: text('current_track_json'),
     queueJson: text('queue_json').notNull().default('[]'),
@@ -188,11 +189,12 @@ export const remoteCommands = pgTable(
     payloadJson: text('payload_json').notNull().default('{}'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     consumedAt: timestamp('consumed_at', { withTimezone: true }),
+    deliveryAttempts: integer('delivery_attempts').notNull().default(0),
   },
   (t) => [
-    index('remote_commands_pending_idx')
+    index('remote_commands_delivery_idx')
       .on(t.userId, t.targetDeviceId, t.createdAt)
-      .where(sql`${t.consumedAt} IS NULL`),
+      .where(sql`${t.deliveryAttempts} < 3`),
   ],
 );
 

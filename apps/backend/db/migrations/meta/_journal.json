@@ -92,6 +92,13 @@
       "when": 1783925772005,
       "tag": "0012_lying_lady_mastermind",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1784032021410,
+      "tag": "0013_blue_shooting_star",
+      "breakpoints": true
     }
   ]
 }

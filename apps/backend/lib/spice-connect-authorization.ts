@@ -18,6 +18,7 @@ export type SpiceConnectPrincipal = {
   userId: string;
   deviceId: string;
   authorizationId: string;
+  authorizationHash: string;
 };
 
 export class SpiceConnectAuthorizationError extends Error {
@@ -121,6 +122,7 @@ export async function authorizeSpiceConnectRequest(request: Request): Promise<Sp
     userId: authorization.userId,
     deviceId: authorization.deviceId,
     authorizationId: authorization.id,
+    authorizationHash: tokenHash,
   };
 }
 
