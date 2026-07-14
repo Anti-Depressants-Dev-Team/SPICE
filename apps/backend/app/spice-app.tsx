@@ -5,7 +5,7 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 /* eslint-disable react-hooks/exhaustive-deps */
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import {
   enrichTrackSnapshot,
   enrichTrackSnapshots,
@@ -51,9 +51,21 @@ import {
 } from '@/lib/theme-palette';
 import {
   buildPrivateTasteProfile,
+  beginRecommendationListenProgress,
   buildRecommendationSeeds,
+  buildRecommendationShelves,
+  createRelatedRecommendationSeed,
+  incrementRecommendationListenMs,
   rankRecommendedTracks,
+  recordRecommendationListenProgress,
+  recommendationListenThresholdSeconds,
+  resetRecommendationListenObservation,
+  shouldAwaitPersonalizedContinuation,
+  shouldRepeatPlaylistAtQueueTail,
+  type RecommendationListenProgress,
+  type RecommendationShelf,
 } from './recommendations';
+import { HistorySyncQueue } from './history-sync-queue';
 import {
   isSpiceConnectCommandFresh,
   spiceConnectCommandPollDelay,
@@ -75,6 +87,7 @@ import {
   mergeProfileUsername,
 } from '@/lib/profile-identity';
 import { mergeSongsPlayedCount } from '@/lib/profile-sync';
+import { requiresProfileMetadataSync } from '@/lib/profile-metadata-sync';
 import {
   beginProfileListenDelivery,
   createProfileListenDeliveryState,
@@ -101,6 +114,7 @@ import {
 } from './spice-client-runtime';
 
 const SPICE_VERSION_CHECK_INTERVAL_MS = 15 * 60 * 1000;
+const RECOMMENDATION_CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 const SHARED_PLAYLIST_INVITE_POLL_INTERVAL_MS = 5 * 60 * 1000;
 const LISTEN_TOGETHER_INVITE_POLL_INTERVAL_MS = 60 * 1000;
 const LISTEN_TOGETHER_HOST_INVITE_POLL_INTERVAL_MS = 30 * 1000;
@@ -661,6 +675,7 @@ interface Track {
   sourceId?: string;
   permalinkUrl?: string;
   previewOnly?: boolean;
+  msListened?: number;
   addedBy?: { userId: string; username: string | null; displayName: string };
 }
 
@@ -1088,6 +1103,11 @@ interface UserProfile {
   cloudUser?: CloudAccount | null;
   cloudUsername?: string | null;
   isPrivate?: boolean;
+}
+
+interface QueuedHistorySync {
+  history: Track[];
+  token: string;
 }
 
 interface ProfileSyncProviderResult {
@@ -2065,6 +2085,12 @@ export default function SpiceApp() {
   const [queue, setQueue] = useState<Track[]>([IDLE_PLAYER_TRACK]);
   const [queueIndex, setQueueIndex] = useState(0);
 
+  const privateTasteProfile = useMemo(() => buildPrivateTasteProfile({
+    history,
+    likedTracks: Object.values(likedTrackDetails),
+    playlists: customPlaylists,
+  }), [history, likedTrackDetails, customPlaylists]);
+
   const [libraryView, setLibraryView] = useState<'list' | 'grid'>('list');
   const [libraryFilter, setLibraryFilter] = useState<'playlists' | 'shared' | 'liked' | 'history'>('playlists');
 
@@ -2297,10 +2323,9 @@ export default function SpiceApp() {
 
   // Dynamic Home Page Queries
   const [homeTrending, setHomeTrending] = useState<Track[]>([]);
-  const [homeChill, setHomeChill] = useState<Track[]>([]);
-  const [homeEnergy, setHomeEnergy] = useState<Track[]>([]);
   const [homeListenAgain, setHomeListenAgain] = useState<Track[]>([]);
   const [homeRecommended, setHomeRecommended] = useState<Track[]>([]);
+  const [homeRecommendationShelves, setHomeRecommendationShelves] = useState<RecommendationShelf<Track>[]>([]);
   const [homeRecommendationSeed, setHomeRecommendationSeed] = useState<import('./recommendations').RecommendationSeed | null>(null);
   const [isLoadingRecommendations, setIsLoadingRecommendations] = useState(false);
   const [isLoadingHome, setIsLoadingHome] = useState(true);
@@ -2530,6 +2555,13 @@ export default function SpiceApp() {
   const playbackRetryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const playbackRetryCountsRef = useRef<Map<string, number>>(new Map());
   const playbackTelemetryRecordedRef = useRef<Set<string>>(new Set());
+  const recommendationListenCreditedRef = useRef(false);
+  const recommendationListenProgressRef = useRef<RecommendationListenProgress | null>(null);
+  const personalizedQueueContinuationSuppressedRef = useRef<string | null>(null);
+  const playlistQueueOriginRef = useRef<string | null>(null);
+  const relatedQueueInFlightRef = useRef<Map<string, Promise<Track[]>>>(new Map());
+  const relatedQueueCacheRef = useRef<Map<string, Track[]>>(new Map());
+  const historySyncQueueRef = useRef<HistorySyncQueue<QueuedHistorySync> | null>(null);
   const playbackRequestRef = useRef(0);
   const shouldAutoPlayRef = useRef(false);
   const clientBootedAtRef = useRef(0);
@@ -2559,8 +2591,43 @@ export default function SpiceApp() {
     isSyncLoopCall?: boolean,
     isRetryCall?: boolean,
     preserveCurrentListenCycle?: boolean,
+    playlistQueueOriginId?: string,
   ) => Promise<void>>(async () => { });
   const handleNextRef = useRef<(overrideIndex?: any) => void>(() => { });
+  const ensurePersonalizedUpNextRef = useRef<(track: Track) => Promise<Track[]>>(async () => []);
+
+  useEffect(() => {
+    const queue = new HistorySyncQueue<QueuedHistorySync>(
+      async (profileId, snapshot) => {
+        const res = await spiceFetch('cloud', '/sync/history', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${snapshot.token}`,
+          },
+          body: JSON.stringify({ history: snapshot.history, profileId }),
+        });
+        if (res.ok) {
+          logDebug('database', 'Listening history auto-saved to cloud database.');
+          return;
+        }
+        const data = await res.json().catch(() => ({}));
+        const message = data.message || `${res.status} ${res.statusText}`;
+        if (res.status === 429 || res.status >= 500) {
+          throw new Error(`History sync failed: ${message}`);
+        }
+        logDebug('error', `Auto-sync history failed: ${message}`);
+      },
+      (error) => {
+        logDebug('error', `Auto-sync history failed: ${error instanceof Error ? error.message : String(error)}`);
+      },
+    );
+    historySyncQueueRef.current = queue;
+    return () => {
+      queue.dispose();
+      if (historySyncQueueRef.current === queue) historySyncQueueRef.current = null;
+    };
+  }, [logDebug]);
 
   const applyAudioElementVolume = useCallback((
     audio: HTMLAudioElement | null,
@@ -2633,6 +2700,7 @@ export default function SpiceApp() {
 
   useEffect(() => {
     activeProfileIdRef.current = activeProfileId;
+    personalizedQueueContinuationSuppressedRef.current = null;
     listenTogetherHostSessionIdRef.current = listenTogetherHostSessionId;
     cloudTokenRef.current = cloudToken;
     cloudUserRef.current = cloudUser;
@@ -2666,6 +2734,7 @@ export default function SpiceApp() {
 
   // ── Sync Active Profile back to Profiles DB Helper ──────────────
   const updateProfileData = (profileId: string, updates: Partial<UserProfile>) => {
+    const shouldSyncProfileMetadata = requiresProfileMetadataSync(Object.keys(updates));
     setProfiles(prev => {
       let baseProfiles = prev;
       if (typeof window !== 'undefined') {
@@ -2687,7 +2756,7 @@ export default function SpiceApp() {
         return p;
       });
       saveProfilesToStorage(updated);
-      autoSyncProfiles(updated);
+      if (shouldSyncProfileMetadata) autoSyncProfiles(updated);
       return updated;
     });
   };
@@ -2696,20 +2765,16 @@ export default function SpiceApp() {
     updateProfileData(activeProfileId, updates);
   };
 
-  const autoSyncHistory = (updatedHistory: Track[]) => {
-    if (!cloudToken) return;
-    spiceFetch('cloud', '/sync/history', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${cloudToken}`
-      },
-      body: JSON.stringify({ history: updatedHistory, profileId: activeProfileId })
-    }).then(res => {
-      if (res.ok) logDebug('database', 'Listening history auto-saved to cloud database.');
-    }).catch(err => {
-      logDebug('error', `Auto-sync history failed: ${err}`);
-    });
+  const autoSyncHistory = (
+    updatedHistory: Track[],
+    profileId = activeProfileIdRef.current,
+    profileToken?: string | null,
+  ) => {
+    const token = profileToken ?? (
+      profileId === activeProfileIdRef.current ? cloudTokenRef.current : null
+    );
+    if (!token) return;
+    historySyncQueueRef.current?.enqueue(profileId, { history: updatedHistory, token });
   };
 
   const autoSyncPlaylists = (updatedPlaylists: Playlist[]) => {
@@ -3173,6 +3238,7 @@ export default function SpiceApp() {
         // presenting the last song as though it were currently loaded or playing.
         currentTrackRef.current = IDLE_PLAYER_TRACK;
         queueRef.current = [IDLE_PLAYER_TRACK];
+        playlistQueueOriginRef.current = null;
         queueIndexRef.current = 0;
         progressRef.current = 0;
         durationRef.current = 0;
@@ -3723,23 +3789,12 @@ export default function SpiceApp() {
       setIsLoadingHome(true);
       try {
         const trendRes = await spiceFetch('local', '/yt/search', undefined, { q: 'Top Hits 2026', limit: 8 });
-        const chillRes = await spiceFetch('local', '/yt/search', undefined, { q: 'Chill Study Lofi Beats', limit: 8 });
-        const energyRes = await spiceFetch('local', '/yt/search', undefined, { q: 'Workout Gym Power', limit: 8 });
-
         const trendData = trendRes.ok ? await trendRes.json() : { tracks: [] };
-        const chillData = chillRes.ok ? await chillRes.json() : { tracks: [] };
-        const energyData = energyRes.ok ? await energyRes.json() : { tracks: [] };
-        rememberTrackSnapshots([
-          ...(trendData.tracks || []),
-          ...(chillData.tracks || []),
-          ...(energyData.tracks || []),
-        ]);
+        rememberTrackSnapshots(trendData.tracks || []);
 
         if (trendData.tracks?.length > 0) {
           setHomeTrending(trendData.tracks);
         }
-        if (chillData.tracks?.length > 0) setHomeChill(chillData.tracks);
-        if (energyData.tracks?.length > 0) setHomeEnergy(energyData.tracks);
 
       } catch (err) {
         console.error('Failed to load dynamic home feeds:', err);
@@ -3816,11 +3871,23 @@ export default function SpiceApp() {
     return spiceApiResponseUrl('local', payload.streams[0].url);
   };
 
+  // Playlist playback must remain an intentional playlist queue even if the
+  // listener navigates away from its detail page. UI selection is not queue
+  // provenance, so use the explicit origin recorded when playback starts.
+  const isIntentionalPlaylistQueue = () => playlistQueueOriginRef.current !== null;
+
   const nextCrossfadeTarget = () => {
     const currentQueue = queueRef.current;
     const currentIndex = queueIndexRef.current;
     if (currentQueue.length < 2 || repeatModeRef.current === 'one') return null;
-    if (repeatModeRef.current === 'none' && currentIndex >= currentQueue.length - 1) return null;
+    const atQueueTail = currentIndex >= currentQueue.length - 1;
+    if (
+      atQueueTail
+      && !shouldRepeatPlaylistAtQueueTail(
+        isIntentionalPlaylistQueue(),
+        repeatModeRef.current,
+      )
+    ) return null;
     let nextIndex = (currentIndex + 1) % currentQueue.length;
     if (isShuffleRef.current) {
       do {
@@ -4237,8 +4304,9 @@ export default function SpiceApp() {
       );
 
       const mergedHistoryMap = new Map<string, Track>();
-      [...serverHistory, ...localHistory].forEach(track => {
-        mergedHistoryMap.set(track.id, enrichTrackSnapshot(mergeTrackSnapshots(mergedHistoryMap.get(track.id), track)));
+      [...localHistory, ...serverHistory].forEach(track => {
+        const key = playbackTrackKey(track);
+        mergedHistoryMap.set(key, enrichTrackSnapshot(mergeTrackSnapshots(mergedHistoryMap.get(key), track)));
       });
       const mergedHistory = Array.from(mergedHistoryMap.values()).slice(0, 50);
 
@@ -4420,6 +4488,7 @@ export default function SpiceApp() {
         setLikedTrackDetails(mergedLikedDetails);
         setHistory(mergedHistory);
         setCustomPlaylists(mergedPlaylists);
+        activeProfileRef.current = visibleProfile;
         setActiveProfileId(activeProf.id);
         localStorage.setItem('spice_active_profile_id', activeProf.id);
         setEditName(visibleProfile.displayName);
@@ -4595,6 +4664,7 @@ export default function SpiceApp() {
   const handleLogout = () => {
     remoteRequestGenerationRef.current += 1;
     const logoutProfileId = activeProfileIdRef.current;
+    historySyncQueueRef.current?.cancel(logoutProfileId);
     localStorage.removeItem('spice_cloud_token');
     localStorage.removeItem('spice_cloud_user');
     localStorage.removeItem(remotePairingCredentialStorageKey(logoutProfileId));
@@ -4648,9 +4718,7 @@ export default function SpiceApp() {
         setHomeListenAgain(uniqueHistoryTracks.slice(0, 8));
       }
     } else {
-      if (homeTrending.length > 0) {
-        setHomeListenAgain(homeTrending.slice(0, 8));
-      }
+      setHomeListenAgain([]);
     }
   }, [history, homeTrending]);
 
@@ -4775,17 +4843,33 @@ export default function SpiceApp() {
   }, [currentTrackKey, streamProtocol, likedTracks]);
 
   const setPlaybackPlaying = (nextPlaying: boolean) => {
+    if (isPlayingRef.current !== nextPlaying) {
+      const track = currentTrackRef.current;
+      recommendationListenProgressRef.current = resetRecommendationListenObservation(
+        recommendationListenProgressRef.current,
+        playbackTrackKey(track),
+        Math.max(0, progressRef.current),
+        currentTimestampMs(),
+      );
+    }
     isPlayingRef.current = nextPlaying;
     setIsPlaying(nextPlaying);
   };
 
   const beginProfileListenCycle = (track: Track) => {
+    recommendationListenCreditedRef.current = false;
     if (!track || track.id === 'placeholder' || track.id === 'spice-connect-placeholder') {
       scrobbleStateRef.current = null;
       setProfileSyncStatus('idle');
       setLastFmPlaybackStatus(null);
       return;
     }
+
+    recommendationListenProgressRef.current = beginRecommendationListenProgress(
+      playbackTrackKey(track),
+      0,
+      currentTimestampMs(),
+    );
 
     scrobbleStateRef.current = createProfileListenDeliveryState(
       playbackTrackKey(track),
@@ -4845,14 +4929,20 @@ export default function SpiceApp() {
     if (playbackTelemetryRecordedRef.current.has(trackKey)) return;
     playbackTelemetryRecordedRef.current.add(trackKey);
 
-    const filteredHist = history.filter(t => t.id !== track.id);
-    const newHist = [track, ...filteredHist].slice(0, 50);
-    setHistory(newHist);
-    updateActiveProfileData({
+    const profileHistory = activeProfileRef.current?.history || history;
+    const existingTrack = profileHistory.find((item) => playbackTrackKey(item) === trackKey);
+    const historyTrack = {
+      ...mergeTrackSnapshots(existingTrack, track),
+      msListened: existingTrack?.msListened ?? 0,
+    } as Track;
+    const filteredHist = profileHistory.filter((item) => playbackTrackKey(item) !== trackKey);
+    const newHist = [historyTrack, ...filteredHist].slice(0, 50);
+    activeProfileRef.current = {
+      ...activeProfileRef.current,
       history: newHist,
-      songsPlayed: activeProfile.songsPlayed + 1
-    });
-    autoSyncHistory(newHist);
+    };
+    setHistory(newHist);
+    updateActiveProfileData({ history: newHist });
   };
 
   const handleAudioEnded = (slot: 0 | 1 = activeAudioSlotRef.current) => {
@@ -4866,11 +4956,6 @@ export default function SpiceApp() {
     playbackRetryCountsRef.current.delete(playbackTrackKey(currentTrackRef.current));
     const endedTrack = currentTrackRef.current;
     const endedTrackKey = playbackTrackKey(endedTrack);
-
-    // Increment songs played on completion
-    const currentSongsPlayed = activeProfileRef.current?.songsPlayed ?? 0;
-    const updatedSongsCount = currentSongsPlayed + 1;
-    updateActiveProfileData({ songsPlayed: updatedSongsCount });
 
     const currentRepeatMode = repeatModeRef.current;
     const currentStreamProtocol = streamProtocolRef.current;
@@ -4926,7 +5011,11 @@ export default function SpiceApp() {
         setProgress(0);
         setPlaybackPlaying(true);
       }
-    } else if (currentRepeatMode === 'none' && currentQueueIndex === currentQueue.length - 1) {
+    } else if (
+      currentRepeatMode === 'none'
+      && currentQueueIndex === currentQueue.length - 1
+      && isIntentionalPlaylistQueue()
+    ) {
       cancelPreparedCrossfade();
       logDebug('player', 'Queue ended and repeatMode is NONE. Stopping playback.');
       scrobbleStateRef.current = null;
@@ -5324,6 +5413,67 @@ export default function SpiceApp() {
   }, [profileSyncEnabled, cloudToken, lastFmSessionKey, lastFmAccountLinked, listenBrainzToken, listenBrainzAccountLinked, isPlaying, currentTrackKey]);
 
   useEffect(() => {
+    if (!isPlaying || currentTrack.id === 'placeholder' || currentTrack.id === 'spice-connect-placeholder') return;
+
+    const creditMeaningfulListen = () => {
+      if (recommendationListenCreditedRef.current) return;
+      const listenCycle = scrobbleStateRef.current;
+      if (!listenCycle || listenCycle.trackKey !== currentTrackKey) return;
+
+      const durationSeconds = durationRef.current > 0
+        ? durationRef.current
+        : (currentTrack.durationMs || 0) / 1000;
+      const threshold = recommendationListenThresholdSeconds(durationSeconds);
+      const listenProgress = recordRecommendationListenProgress(
+        recommendationListenProgressRef.current,
+        currentTrackKey,
+        Math.max(0, progressRef.current),
+        currentTimestampMs(),
+      );
+      recommendationListenProgressRef.current = listenProgress;
+      if (
+        progressRef.current < threshold
+        || listenProgress.forwardSeconds < threshold
+      ) return;
+
+      recommendationListenCreditedRef.current = true;
+      const profile = activeProfileRef.current;
+      const profileHistory = profile.history || [];
+      const existing = profileHistory.find((item) => playbackTrackKey(item) === currentTrackKey);
+      const qualifiedTrack = {
+        ...mergeTrackSnapshots(existing, currentTrack),
+        msListened: incrementRecommendationListenMs(existing?.msListened),
+      } as Track;
+      const nextHistory = [
+        qualifiedTrack,
+        ...profileHistory.filter((item) => playbackTrackKey(item) !== currentTrackKey),
+      ].slice(0, 50);
+      const nextSongsPlayed = (profile.songsPlayed || 0) + 1;
+
+      activeProfileRef.current = {
+        ...profile,
+        history: nextHistory,
+        songsPlayed: nextSongsPlayed,
+      };
+      setHistory(nextHistory);
+      updateProfileData(profile.id, {
+        history: nextHistory,
+        songsPlayed: nextSongsPlayed,
+      });
+      autoSyncHistory(
+        nextHistory,
+        profile.id,
+        profile.cloudToken ?? (profile.id === activeProfileIdRef.current ? cloudTokenRef.current : null),
+      );
+      logDebug('recommendations', `Credited a meaningful listen for "${currentTrack.title}" on profile ${profile.id}.`);
+    };
+
+    creditMeaningfulListen();
+    const interval = window.setInterval(creditMeaningfulListen, 1000);
+    return () => window.clearInterval(interval);
+  }, [activeProfileId, currentTrackKey, isPlaying]);
+
+  useEffect(() => {
     handleAudioEndedRef.current = handleAudioEnded;
     handleAudioErrorRef.current = handleAudioError;
   });
@@ -5443,6 +5593,7 @@ export default function SpiceApp() {
     isSyncLoopCall = false,
     isRetryCall = false,
     preserveCurrentListenCycle = false,
+    playlistQueueOriginId?: string,
   ) => {
     if (listenTogetherHostSessionId && !isSyncLoopCall) {
       showSpiceNotice('You cannot change tracks while listening in a Listen Together session.', 'warning');
@@ -5467,6 +5618,12 @@ export default function SpiceApp() {
     }
 
     const trackKey = playbackTrackKey(track);
+    if (
+      personalizedQueueContinuationSuppressedRef.current
+      && personalizedQueueContinuationSuppressedRef.current !== trackKey
+    ) {
+      personalizedQueueContinuationSuppressedRef.current = null;
+    }
     const beginsNewListenCycle = shouldBeginProfileListenCycle({
       isRetryCall,
       isSyncLoopCall,
@@ -5499,6 +5656,22 @@ export default function SpiceApp() {
     }
     setStreamUrl(null);
     streamUrlRef.current = null;
+    const replacesCurrentQueue = Boolean(
+      newQueue
+      && newQueue.length > 0
+      && (
+        newQueue.length !== queueRef.current.length
+        || newQueue.some((item, index) => {
+          const currentItem = queueRef.current[index];
+          return !currentItem || playbackTrackKey(item) !== playbackTrackKey(currentItem);
+        })
+      )
+    );
+    if (playlistQueueOriginId) {
+      playlistQueueOriginRef.current = playlistQueueOriginId;
+    } else if (replacesCurrentQueue) {
+      playlistQueueOriginRef.current = null;
+    }
     rememberTrackSnapshots([track, ...(newQueue || [])]);
     currentTrackRef.current = track;
     setCurrentTrack(track);
@@ -5833,6 +6006,50 @@ export default function SpiceApp() {
     const currentIndex = (overrideIndex !== undefined && typeof overrideIndex === 'number')
       ? overrideIndex
       : queueIndexRef.current;
+
+    const isSelectedPlaylistQueue = isIntentionalPlaylistQueue();
+    if (!isShuffleRef.current && isSelectedPlaylistQueue && currentIndex >= currentQueue.length - 1) {
+      if (shouldRepeatPlaylistAtQueueTail(true, repeatModeRef.current) && currentQueue[0]) {
+        void playTrackRef.current(currentQueue[0], currentQueue, 0);
+        return;
+      }
+      shouldAutoPlayRef.current = false;
+      setPlaybackPlaying(false);
+      return;
+    }
+
+    if (shouldAwaitPersonalizedContinuation(currentQueue.length, currentIndex, isShuffleRef.current)) {
+      const sourceTrack = currentQueue[currentIndex] || currentTrackRef.current;
+      const sourceTrackKey = playbackTrackKey(sourceTrack);
+      const shouldRepeatPlaylist = shouldRepeatPlaylistAtQueueTail(
+        isSelectedPlaylistQueue,
+        repeatModeRef.current,
+      );
+      void ensurePersonalizedUpNextRef.current(sourceTrack).then((additions) => {
+        if (
+          !shouldAutoPlayRef.current
+          || playbackTrackKey(currentTrackRef.current) !== sourceTrackKey
+          || personalizedQueueContinuationSuppressedRef.current === sourceTrackKey
+        ) return;
+        const refreshedQueue = queueRef.current;
+        const refreshedIndex = refreshedQueue.findIndex((item) => (
+          playbackTrackKey(item) === sourceTrackKey
+        ));
+        const nextTrack = refreshedIndex >= 0 ? refreshedQueue[refreshedIndex + 1] : additions[0];
+        if (nextTrack) {
+          void playTrackRef.current(nextTrack, refreshedQueue, refreshedIndex + 1);
+          return;
+        }
+        if (shouldRepeatPlaylist && refreshedQueue[0]) {
+          void playTrackRef.current(refreshedQueue[0], refreshedQueue, 0);
+          return;
+        }
+        shouldAutoPlayRef.current = false;
+        setPlaybackPlaying(false);
+        showSpiceNotice('SPICE could not find a related next track right now.', 'info');
+      });
+      return;
+    }
 
     let nextIdx = currentIndex;
     if (isShuffleRef.current) {
@@ -6664,6 +6881,146 @@ export default function SpiceApp() {
     return fetchProvider(provider, 20);
   };
 
+  const ensurePersonalizedUpNext = async (track: Track): Promise<Track[]> => {
+    if (
+      !track
+      || track.id === 'placeholder'
+      || track.id === 'spice-connect-placeholder'
+      || selectedRemoteDeviceId
+      || listenTogetherHostSessionIdRef.current
+      || personalizedQueueContinuationSuppressedRef.current === playbackTrackKey(track)
+      || isIntentionalPlaylistQueue()
+    ) return [];
+
+    const profileId = activeProfileIdRef.current;
+    const requestKey = `${profileId}:${playbackTrackKey(track)}`;
+    const existingRequest = relatedQueueInFlightRef.current.get(requestKey);
+    if (existingRequest) return existingRequest;
+
+    const request = (async () => {
+      const seed = createRelatedRecommendationSeed(track);
+      let relatedTracks = relatedQueueCacheRef.current.get(requestKey) || [];
+
+      if (relatedTracks.length === 0) {
+        try {
+          if (isYouTubeTrack(track)) {
+            const response = await spiceFetch(
+              'local',
+              `/yt/related/${encodeURIComponent(track.id)}`,
+              undefined,
+              { limit: 30 },
+            );
+            if (response.ok) {
+              const data = await response.json();
+              relatedTracks = playableSearchTracks(
+                enrichTrackSnapshots(data.tracks || []) as Track[],
+              );
+            }
+          }
+
+          if (relatedTracks.length < 3) {
+            const fallbackProvider: SearchProvider = isSoundCloudTrack(track)
+              ? 'soundcloud'
+              : 'youtube_music';
+            relatedTracks = dedupeTracks([
+              ...relatedTracks,
+              ...await fetchSearchProviderResults(seed.query, fallbackProvider),
+            ]);
+          }
+        } catch (error) {
+          logDebug(
+            'recommendations',
+            `Related queue lookup failed for "${track.title}": ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+
+        if (relatedTracks.length > 0) {
+          if (relatedQueueCacheRef.current.size >= 40) {
+            const oldestKey = relatedQueueCacheRef.current.keys().next().value;
+            if (oldestKey) relatedQueueCacheRef.current.delete(oldestKey);
+          }
+          relatedQueueCacheRef.current.set(requestKey, relatedTracks);
+        }
+      }
+
+      if (activeProfileIdRef.current !== profileId || relatedTracks.length === 0) return [];
+      const profile = activeProfileRef.current;
+      const taste = buildPrivateTasteProfile({
+        history: profile.history || [],
+        likedTracks: Object.values(profile.likedTrackDetails || {}),
+        playlists: profile.customPlaylists || [],
+      });
+      const queueSnapshot = queueRef.current;
+      let ranked = rankRecommendedTracks([{ seed, tracks: relatedTracks }], taste, {
+        exclude: queueSnapshot,
+        limit: 16,
+      });
+      if (ranked.length === 0) {
+        ranked = rankRecommendedTracks([{ seed, tracks: relatedTracks }], taste, {
+          exclude: queueSnapshot,
+          includeKnown: true,
+          limit: 16,
+        });
+      }
+      if (ranked.length === 0) return [];
+
+      const currentQueue = queueRef.current;
+      const currentIndex = currentQueue.findIndex((item) => (
+        playbackTrackKey(item) === playbackTrackKey(track)
+      ));
+      if (
+        activeProfileIdRef.current !== profileId
+        || currentIndex < 0
+        || currentIndex < currentQueue.length - 1
+        || personalizedQueueContinuationSuppressedRef.current === playbackTrackKey(track)
+      ) return currentIndex >= 0 ? currentQueue.slice(currentIndex + 1) : [];
+
+      const existingKeys = new Set(currentQueue.map(playbackTrackKey));
+      const additions = ranked.filter((item) => !existingKeys.has(playbackTrackKey(item)));
+      if (additions.length === 0) return [];
+
+      const nextQueue = [...currentQueue, ...additions];
+      rememberTrackSnapshots(additions);
+      queueRef.current = nextQueue;
+      setQueue(nextQueue);
+      logDebug(
+        'recommendations',
+        `Added ${additions.length} taste-ranked related tracks after "${track.title}".`,
+      );
+      return additions;
+    })();
+
+    relatedQueueInFlightRef.current.set(requestKey, request);
+    try {
+      return await request;
+    } finally {
+      relatedQueueInFlightRef.current.delete(requestKey);
+    }
+  };
+
+  useEffect(() => {
+    ensurePersonalizedUpNextRef.current = ensurePersonalizedUpNext;
+  });
+
+  useEffect(() => {
+    if (
+      selectedRemoteDeviceId
+      || repeatMode === 'one'
+      || currentTrack.id === 'placeholder'
+      || currentTrack.id === 'spice-connect-placeholder'
+    ) return;
+    const currentQueue = queueRef.current;
+    const currentIndex = currentQueue.findIndex((track) => (
+      playbackTrackKey(track) === currentTrackKey
+    ));
+    if (
+      currentIndex < 0
+      || currentIndex < currentQueue.length - 1
+      || isIntentionalPlaylistQueue()
+    ) return;
+    void ensurePersonalizedUpNext(currentTrack);
+  }, [activeProfileId, currentTrackKey, queueIndex, queue.length, repeatMode, selectedRemoteDeviceId]);
+
   // Search logic (debounced)
   const queueSearch = (query: string, provider = searchProvider) => {
     const requestId = ++searchRequestRef.current;
@@ -6933,18 +7290,12 @@ export default function SpiceApp() {
   };
 
   useEffect(() => {
-    if (currentPage !== 'home') {
-      setHomeRecommendationSeed(null);
-      setHomeRecommended([]);
+    if (currentPage !== 'home' && currentPage !== 'search') {
       setIsLoadingRecommendations(false);
       return;
     }
 
-    const profile = buildPrivateTasteProfile({
-      history,
-      likedTracks: Object.values(likedTrackDetails),
-      playlists: customPlaylists,
-    });
+    const profile = privateTasteProfile;
     const seeds = buildRecommendationSeeds(profile, 4);
     const requestId = ++recommendationRequestRef.current;
     const primarySeed = seeds[0] ?? null;
@@ -6953,25 +7304,50 @@ export default function SpiceApp() {
 
     if (!primarySeed) {
       setHomeRecommended([]);
+      setHomeRecommendationShelves([]);
       setIsLoadingRecommendations(false);
       return;
     }
 
     const exclude = [currentTrack, ...history.slice(0, 20)];
-    const cachedBatches = seeds.flatMap((seed) => {
+    const cachedBySeed = new Map(seeds.flatMap((seed) => {
       const cached = getCachedSearch(seed.query, 'hybrid');
       if (!cached) return [];
 
-      return [{
+      return [[seed.id, {
         seed,
         tracks: playableSearchTracks(cached.tracks as Track[]),
-      }];
+        savedAt: cached.savedAt,
+      }] as const];
+    }));
+    const cachedBatches = seeds.flatMap((seed) => {
+      const cached = cachedBySeed.get(seed.id);
+      return cached ? [{ seed, tracks: cached.tracks }] : [];
     });
+    const commitRecommendations = (batches: { seed: import('./recommendations').RecommendationSeed; tracks: Track[] }[]) => {
+      const ranked = rankRecommendedTracks(batches, profile, { exclude, limit: 12 });
+      const shelves = buildRecommendationShelves(batches, profile, {
+        exclude: [...exclude, ...ranked],
+        limitPerShelf: 8,
+        minimumTracks: 3,
+      });
+      rememberTrackSnapshots([
+        ...ranked,
+        ...shelves.flatMap((shelf) => shelf.tracks),
+      ]);
+      setHomeRecommended(ranked);
+      setHomeRecommendationShelves(shelves);
+    };
 
-    if (cachedBatches.length > 0) {
-      setHomeRecommended(rankRecommendedTracks(cachedBatches, profile, { exclude, limit: 12 }));
-    } else {
-      setHomeRecommended([]);
+    commitRecommendations(cachedBatches);
+
+    const staleBefore = Date.now() - RECOMMENDATION_CACHE_MAX_AGE_MS;
+    const seedsToRefresh = seeds.filter((seed) => (
+      (cachedBySeed.get(seed.id)?.savedAt ?? 0) < staleBefore
+    ));
+    if (seedsToRefresh.length === 0) {
+      setIsLoadingRecommendations(false);
+      return;
     }
 
     let cancelled = false;
@@ -6979,7 +7355,7 @@ export default function SpiceApp() {
     const timeout = setTimeout(async () => {
       try {
         const batches = await Promise.allSettled(
-          seeds.map(async (seed) => {
+          seedsToRefresh.map(async (seed) => {
             const tracks = await fetchSearchProviderResults(seed.query, 'hybrid');
             rememberSearchResults(seed.query, tracks, 'hybrid');
             return { seed, tracks };
@@ -6988,12 +7364,16 @@ export default function SpiceApp() {
 
         if (cancelled || requestId !== recommendationRequestRef.current) return;
 
-        const fulfilled = batches.flatMap((batch) =>
-          batch.status === 'fulfilled' ? [batch.value] : [],
-        );
-        const ranked = rankRecommendedTracks(fulfilled, profile, { exclude, limit: 12 });
-        rememberTrackSnapshots(ranked);
-        setHomeRecommended(ranked);
+        const refreshedBySeed = new Map(batches.flatMap((batch) => (
+          batch.status === 'fulfilled' ? [[batch.value.seed.id, batch.value] as const] : []
+        )));
+        const combinedBatches = seeds.flatMap((seed) => {
+          const refreshed = refreshedBySeed.get(seed.id);
+          if (refreshed) return [refreshed];
+          const cached = cachedBySeed.get(seed.id);
+          return cached ? [{ seed, tracks: cached.tracks }] : [];
+        });
+        commitRecommendations(combinedBatches);
       } finally {
         if (!cancelled && requestId === recommendationRequestRef.current) {
           setIsLoadingRecommendations(false);
@@ -7005,7 +7385,7 @@ export default function SpiceApp() {
       cancelled = true;
       clearTimeout(timeout);
     };
-  }, [currentPage, history, likedTrackDetails, customPlaylists, currentTrack]);
+  }, [currentPage, privateTasteProfile, currentTrackKey]);
 
   // Playlists Operations
   const persistCustomPlaylists = (updated: Playlist[], syncOwnedPlaylists = true) => {
@@ -7065,12 +7445,14 @@ export default function SpiceApp() {
       }
 
       const updated = customPlaylists.filter(pl => pl.id !== playlistId);
+      if (playlistQueueOriginRef.current === playlistId) playlistQueueOriginRef.current = null;
       persistCustomPlaylists(updated, false);
       setSelectedPlaylist(null);
       return;
     }
 
     const updated = customPlaylists.filter(pl => pl.id !== playlistId);
+    if (playlistQueueOriginRef.current === playlistId) playlistQueueOriginRef.current = null;
     persistCustomPlaylists(updated);
     setSelectedPlaylist(null);
   };
@@ -8200,7 +8582,11 @@ export default function SpiceApp() {
     });
   };
 
-  const startTrackOnActiveReceiver = (track: Track, newQueue?: Track[]) => {
+  const startTrackOnActiveReceiver = (
+    track: Track,
+    newQueue?: Track[],
+    playlistQueueOriginId?: string,
+  ) => {
     if (isControllingRemoteReceiver) {
       if (!canControlSelectedRemoteReceiver('play_track')) return;
       const queuePayload = newQueue && newQueue.length > 0 ? newQueue : [track];
@@ -8223,7 +8609,7 @@ export default function SpiceApp() {
       return;
     }
 
-    playTrack(track, newQueue);
+    playTrack(track, newQueue, undefined, false, false, false, playlistQueueOriginId);
   };
 
   const handleReceiverPrev = () => {
@@ -8482,12 +8868,13 @@ export default function SpiceApp() {
     });
   };
 
-  const shufflePlaylistPlay = (tracks: Track[]) => {
+  const shufflePlaylistPlay = (playlist: Playlist) => {
+    const tracks = playlist.tracks;
     if (!tracks || tracks.length === 0) return;
     setIsShuffle(true);
     localStorage.setItem(PLAYER_SHUFFLE_STORAGE_KEY, 'true');
     const shuffled = [...tracks].sort(() => getSecureRandom() - 0.5);
-    startTrackOnActiveReceiver(shuffled[0], shuffled);
+    startTrackOnActiveReceiver(shuffled[0], shuffled, playlist.id);
   };
 
   // Profile switching, locking and passcode validations
@@ -8503,6 +8890,7 @@ const getMaskedEmail = (email: string) => {
 
   const switchProfile = (profileId: string, profileOverride?: UserProfile) => {
     remoteRequestGenerationRef.current += 1;
+    playbackRequestRef.current += 1;
     setEmailVerification(null);
     setEmailVerificationCode('');
     setLastFmAccountLinked(false);
@@ -8591,10 +8979,19 @@ const getMaskedEmail = (email: string) => {
       ...playlist,
       tracks: enrichTrackSnapshots(playlist.tracks || []),
     }));
+    activeProfileRef.current = {
+      ...target,
+      history: targetHistory,
+      likedTrackDetails: targetLikedDetails,
+      customPlaylists: targetPlaylists,
+    };
     setLikedTracks(new Set(target.likedTracks));
     setLikedTrackDetails(targetLikedDetails);
     setCustomPlaylists(targetPlaylists);
     setHistory(targetHistory);
+    setHomeRecommended([]);
+    setHomeRecommendationShelves([]);
+    setHomeRecommendationSeed(null);
     setEditName(target.displayName);
     setEditBio(target.bio);
     setEditGradient(target.gradient);
@@ -8615,10 +9012,12 @@ const getMaskedEmail = (email: string) => {
     // history, but never make a saved track look loaded or currently playing.
     currentTrackRef.current = IDLE_PLAYER_TRACK;
     queueRef.current = [IDLE_PLAYER_TRACK];
+    playlistQueueOriginRef.current = null;
     queueIndexRef.current = 0;
     progressRef.current = 0;
     durationRef.current = 0;
     scrobbleStateRef.current = null;
+    recommendationListenCreditedRef.current = false;
     setCurrentTrack(IDLE_PLAYER_TRACK);
     setQueue([IDLE_PLAYER_TRACK]);
     setQueueIndex(0);
@@ -8694,6 +9093,7 @@ const getMaskedEmail = (email: string) => {
       confirmLabel: 'Delete Profile',
       kind: 'danger',
       onConfirm: () => {
+        historySyncQueueRef.current?.cancel(profileId);
         localStorage.removeItem(remotePairingCredentialStorageKey(profileId));
         const updated = profiles.filter(p => p.id !== profileId);
         setProfiles(updated);
@@ -9362,8 +9762,8 @@ const getMaskedEmail = (email: string) => {
       queue.slice(queueIndex + 1),
       searchResults,
       homeTrending,
-      homeChill,
-      homeEnergy,
+      homeRecommended,
+      homeRecommendationShelves.flatMap((shelf) => shelf.tracks),
       Object.values(likedTrackDetails),
       history,
     ) as Track[];
@@ -9389,6 +9789,7 @@ const getMaskedEmail = (email: string) => {
       showSpiceNotice('No eligible tracks were available for the smart queue.', 'info');
       return;
     }
+    playlistQueueOriginRef.current = null;
     setQueue([currentTrack, ...smartTracks]);
     setQueueIndex(0);
     showSpiceNotice(`Smart queue rebuilt with ${smartTracks.length} upcoming tracks.`, 'success');
@@ -10664,7 +11065,11 @@ const getMaskedEmail = (email: string) => {
                     <button
                       className="btn btn--primary"
                       style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
-                      onClick={() => startTrackOnActiveReceiver(selectedPlaylist.tracks[0], selectedPlaylist.tracks)}
+                      onClick={() => startTrackOnActiveReceiver(
+                        selectedPlaylist.tracks[0],
+                        selectedPlaylist.tracks,
+                        selectedPlaylist.id,
+                      )}
                     >
                       {Icons.play} Play all
                     </button>
@@ -10673,7 +11078,7 @@ const getMaskedEmail = (email: string) => {
                     <button
                       className="btn btn--ghost playlist-hero__action-btn"
                       style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
-                      onClick={() => shufflePlaylistPlay(selectedPlaylist.tracks)}
+                      onClick={() => shufflePlaylistPlay(selectedPlaylist)}
                     >
                       {Icons.shuffle} Shuffle Play
                     </button>
@@ -10856,7 +11261,11 @@ const getMaskedEmail = (email: string) => {
                           <button
                             type="button"
                             className="library-item__play"
-                            onClick={() => startTrackOnActiveReceiver(song, selectedPlaylist.tracks)}
+                            onClick={() => startTrackOnActiveReceiver(
+                              song,
+                              selectedPlaylist.tracks,
+                              selectedPlaylist.id,
+                            )}
                             aria-label={`Play ${song.title}`}
                             aria-current={isPlayingCurrent ? 'true' : undefined}
                           >
@@ -11215,19 +11624,45 @@ const getMaskedEmail = (email: string) => {
                     </section>
                   )}
 
-                  {/* Private recommendations */}
-                  {(isLoadingRecommendations || homeRecommended.length > 0) && (
+                  {/* Profile-scoped recommendations */}
+                  {!privateTasteProfile.isReady ? (
+                    <section className="section animate-in">
+                      <div className="section__header">
+                        <div>
+                          <h2 className="section__title">Recommended Next</h2>
+                          <p className="taste-learning__eyebrow">Learns separately for {activeProfile.displayName}</p>
+                        </div>
+                      </div>
+                      <div className="taste-learning">
+                        <div className="taste-learning__icon" aria-hidden="true">{Icons.musicFolder}</div>
+                        <div className="taste-learning__copy">
+                          <h3>Your taste is still warming up</h3>
+                          <p>
+                            Listen through or like {Math.max(1, privateTasteProfile.signalsNeeded)} more
+                            {' '}song{privateTasteProfile.signalsNeeded === 1 ? '' : 's'} so SPICE can find patterns that last.
+                            Quick skips barely count, and one song will not reshape this profile.
+                          </p>
+                          <div className="taste-learning__progress" aria-label="Taste profile learning progress">
+                            <span style={{ width: `${Math.min(100, Math.round((privateTasteProfile.evidenceUnits / 6) * 100))}%` }} />
+                          </div>
+                          <span className="taste-learning__status">
+                            {privateTasteProfile.evidenceTrackCount} meaningful track{privateTasteProfile.evidenceTrackCount === 1 ? '' : 's'} learned
+                          </span>
+                        </div>
+                      </div>
+                    </section>
+                  ) : (
                     <section className="section animate-in">
                       <div className="section__header">
                         <div>
                           <h2 className="section__title">
-                            {homeRecommendationSeed?.label || 'Recommended For You'}
-                            <span style={{ marginLeft: '10px', fontSize: '0.7rem', fontWeight: 700, color: 'var(--accent-pink)', border: '1px solid var(--border-color)', borderRadius: '999px', padding: '3px 8px', verticalAlign: 'middle' }}>
-                              Private mix
+                            Recommended Next
+                            <span className="taste-profile-badge">
+                              {activeProfile.displayName}&apos;s mix
                             </span>
                           </h2>
-                          <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '6px 0 0' }}>
-                            {homeRecommendationSeed?.reason || 'Built locally from this profile. Only coarse source searches leave the device.'}
+                          <p className="taste-section-reason">
+                            Balanced from this profile&apos;s meaningful plays, likes, artists, albums, and playlist themes.
                           </p>
                         </div>
                         {homeRecommendationSeed && (
@@ -11268,6 +11703,35 @@ const getMaskedEmail = (email: string) => {
                     </section>
                   )}
 
+                  {privateTasteProfile.isReady && homeRecommendationShelves.map((shelf) => (
+                    <section key={shelf.seed.id} className="section animate-in">
+                      <div className="section__header">
+                        <div>
+                          <h2 className="section__title">{shelf.seed.label}</h2>
+                          <p className="taste-section-reason">{shelf.seed.reason}</p>
+                        </div>
+                      </div>
+                      <div className="carousel-wrapper">
+                        <div className="carousel">
+                          {shelf.tracks.map((song) => (
+                            <div
+                              key={`${shelf.seed.id}:${song.sourceId || 'youtube_music'}:${song.id}`}
+                              className="card animate-in"
+                              onClick={() => startTrackOnActiveReceiver(song, shelf.tracks)}
+                            >
+                              <div className="card__art-wrapper">
+                                <img className="card__art" src={song.artworkUrl || '/icon.svg'} alt={song.title} />
+                                <div className="card__play-overlay">{Icons.play}</div>
+                              </div>
+                              <div className="card__title truncate">{song.title}</div>
+                              <div className="card__subtitle truncate">{song.artists.map(a => a.name).join(', ')}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </section>
+                  ))}
+
                   {/* Quick Picks (dynamic charts) */}
                   <section className="section">
                     <div className="section__header">
@@ -11292,59 +11756,6 @@ const getMaskedEmail = (email: string) => {
                     )}
                   </section>
 
-                  {/* Chill & Focus (dynamic charts) */}
-                  <section className="section animate-in">
-                    <div className="section__header">
-                      <h2 className="section__title">Lofi & Chill Beats</h2>
-                    </div>
-                    <div className="carousel-wrapper">
-                      <div className="carousel">
-                        {isLoadingHome ? (
-                          [...Array(4)].map((_, i) => (
-                            <div key={i} style={{ width: '180px', height: '220px', background: 'var(--card-bg)', borderRadius: '12px', flexShrink: 0 }} />
-                          ))
-                        ) : (
-                          homeChill.map((song) => (
-                            <div key={song.id} className="card animate-in" onClick={() => startTrackOnActiveReceiver(song, homeChill)}>
-                              <div className="card__art-wrapper">
-                                <img className="card__art" src={song.artworkUrl || '/icon.svg'} alt={song.title} />
-                                <div className="card__play-overlay">{Icons.play}</div>
-                              </div>
-                              <div className="card__title truncate">{song.title}</div>
-                              <div className="card__subtitle truncate">{song.artists.map(a => a.name).join(', ')}</div>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    </div>
-                  </section>
-
-                  {/* Workout Energy (dynamic charts) */}
-                  <section className="section animate-in">
-                    <div className="section__header">
-                      <h2 className="section__title">Workout Energy</h2>
-                    </div>
-                    <div className="carousel-wrapper">
-                      <div className="carousel">
-                        {isLoadingHome ? (
-                          [...Array(4)].map((_, i) => (
-                            <div key={i} style={{ width: '180px', height: '220px', background: 'var(--card-bg)', borderRadius: '12px', flexShrink: 0 }} />
-                          ))
-                        ) : (
-                          homeEnergy.map((song) => (
-                            <div key={song.id} className="card animate-in" onClick={() => startTrackOnActiveReceiver(song, homeEnergy)}>
-                              <div className="card__art-wrapper">
-                                <img className="card__art" src={song.artworkUrl || '/icon.svg'} alt={song.title} />
-                                <div className="card__play-overlay">{Icons.play}</div>
-                              </div>
-                              <div className="card__title truncate">{song.title}</div>
-                              <div className="card__subtitle truncate">{song.artists.map(a => a.name).join(', ')}</div>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    </div>
-                  </section>
                 </>
               )}
 
@@ -14419,7 +14830,11 @@ const getMaskedEmail = (email: string) => {
                         newQ.splice(idx, 1);
                         if (idx === queueIndex) {
                           const nextIndex = Math.min(idx, newQ.length - 1);
-                          startTrackOnActiveReceiver(newQ[nextIndex], newQ);
+                          startTrackOnActiveReceiver(
+                            newQ[nextIndex],
+                            newQ,
+                            playlistQueueOriginRef.current ?? undefined,
+                          );
                         } else {
                           setQueue(newQ);
                           if (idx < queueIndex) {
@@ -14443,6 +14858,8 @@ const getMaskedEmail = (email: string) => {
               Smart mix
             </button>
             <button className="btn btn--ghost" style={{ padding: '4px 8px', fontSize: '0.75rem' }} disabled={isControllingRemoteReceiver} onClick={() => {
+              personalizedQueueContinuationSuppressedRef.current = playbackTrackKey(currentTrack);
+              playlistQueueOriginRef.current = null;
               setQueue([currentTrack]);
               setQueueIndex(0);
             }}>

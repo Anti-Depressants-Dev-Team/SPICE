@@ -24,6 +24,7 @@ export interface TrackSnapshot {
   sourceId?: string;
   permalinkUrl?: string;
   previewOnly?: boolean;
+  msListened?: number;
 }
 
 export interface SearchCacheEntry {
@@ -113,6 +114,14 @@ function snapshotScore(track: TrackSnapshot) {
   return score;
 }
 
+// This store is shared by every local profile and exists only to restore
+// provider metadata. Listening credit belongs to a profile's history, so it
+// must never be carried through this shared cache.
+function withoutListenCredit(track: TrackSnapshot): TrackSnapshot {
+  const { msListened: _msListened, ...metadata } = track;
+  return metadata;
+}
+
 export function mergeTrackSnapshots(
   existing: TrackSnapshot | undefined,
   incoming: TrackSnapshot,
@@ -133,6 +142,11 @@ export function mergeTrackSnapshots(
     sourceId: preferred.sourceId ?? fallback.sourceId,
     permalinkUrl: preferred.permalinkUrl ?? fallback.permalinkUrl,
     previewOnly: preferred.previewOnly ?? fallback.previewOnly,
+    ...(
+      preferred.msListened !== undefined || fallback.msListened !== undefined
+        ? { msListened: Math.max(preferred.msListened ?? 0, fallback.msListened ?? 0) }
+        : {}
+    ),
   };
 }
 
@@ -145,7 +159,7 @@ function enrichTrackSnapshotFromStore(
   snapshots: Record<string, StoredTrackSnapshot>,
 ): TrackSnapshot {
   const saved = snapshots[track.id]?.track;
-  return saved ? mergeTrackSnapshots(saved, track) : track;
+  return saved ? mergeTrackSnapshots(withoutListenCredit(saved), track) : track;
 }
 
 function enrichTrackSnapshotsFromStore(
@@ -170,7 +184,12 @@ export function rememberTrackSnapshots(tracks: TrackSnapshot[]) {
   for (const track of tracks) {
     if (!isUsefulTrack(track)) continue;
     snapshots[track.id] = {
-      track: mergeTrackSnapshots(snapshots[track.id]?.track, track),
+      track: mergeTrackSnapshots(
+        snapshots[track.id]?.track
+          ? withoutListenCredit(snapshots[track.id].track)
+          : undefined,
+        withoutListenCredit(track),
+      ),
       savedAt,
     };
   }

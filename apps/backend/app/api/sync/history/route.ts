@@ -18,6 +18,7 @@ type NormalizedHistoryItem = {
   artistsJson: string;
   artworkUrl: string | null;
   durationMs: number | null;
+  msListened: number;
 };
 
 type StoredHistoryItem = NormalizedHistoryItem & {
@@ -31,7 +32,28 @@ function historySnapshotMatches(existing: NormalizedHistoryItem, incoming: Norma
     && existing.title === incoming.title
     && existing.artistsJson === incoming.artistsJson
     && existing.artworkUrl === incoming.artworkUrl
-    && existing.durationMs === incoming.durationMs;
+    && existing.durationMs === incoming.durationMs
+    && existing.msListened === incoming.msListened;
+}
+
+function historyIdentityMatches(existing: NormalizedHistoryItem, incoming: NormalizedHistoryItem) {
+  return existing.sourceId === incoming.sourceId && existing.trackId === incoming.trackId;
+}
+
+export function preserveMonotonicListenCredit(
+  existing: NormalizedHistoryItem[],
+  incoming: NormalizedHistoryItem[],
+) {
+  const existingByTrack = new Map(existing.map((row) => [
+    JSON.stringify([row.sourceId, row.trackId]),
+    row,
+  ]));
+  return incoming.map((row) => {
+    const stored = existingByTrack.get(JSON.stringify([row.sourceId, row.trackId]));
+    return stored && stored.msListened > row.msListened
+      ? { ...row, msListened: stored.msListened }
+      : row;
+  });
 }
 
 export function historySnapshotsMatch(
@@ -46,16 +68,66 @@ export function planHistorySnapshotChanges(
   existing: StoredHistoryItem[],
   incoming: NormalizedHistoryItem[],
 ) {
-  if (existing.length > 50) {
-    return { kind: 'replace' as const, insert: incoming, removeIds: existing.map((row) => row.id) };
-  }
   if (historySnapshotsMatch(existing, incoming)) {
     return { kind: 'unchanged' as const, insert: [], removeIds: [] };
+  }
+
+  if (
+    existing.length === incoming.length
+    && incoming.every((row, index) => historyIdentityMatches(existing[index], row))
+  ) {
+    return {
+      kind: 'patch' as const,
+      insert: [],
+      removeIds: [],
+      update: incoming.flatMap((row, index) => (
+        historySnapshotMatches(existing[index], row)
+          ? []
+          : [{ id: existing[index].id, item: row }]
+      )),
+    };
+  }
+
+  for (let promotedIndex = 1; promotedIndex < existing.length; promotedIndex += 1) {
+    if (!historyIdentityMatches(existing[promotedIndex], incoming[0])) continue;
+    const reorderedExisting = [
+      existing[promotedIndex],
+      ...existing.slice(0, promotedIndex),
+      ...existing.slice(promotedIndex + 1),
+    ];
+    if (
+      reorderedExisting.length === incoming.length
+      && incoming.slice(1).every((row, index) => (
+        historySnapshotMatches(reorderedExisting[index + 1], row)
+      ))
+    ) {
+      return {
+        kind: 'promote' as const,
+        insert: [],
+        removeIds: [],
+        update: [{ id: existing[promotedIndex].id, item: incoming[0] }],
+      };
+    }
   }
 
   const incomingMatchesExistingPrefix = incoming.every((row, index) => (
     index < existing.length && historySnapshotMatches(existing[index], row)
   ));
+
+  // A late snapshot from this or another device may contain an older suffix
+  // only. Treat it as stale rather than deleting newer listens it never saw.
+  const incomingIsStoredSuffixOrSubset = incoming.length > 0
+    && incoming.length < existing.length
+    && !incomingMatchesExistingPrefix
+    && incoming.every((row) => existing.some((stored) => historySnapshotMatches(stored, row)));
+  if (incomingIsStoredSuffixOrSubset) {
+    return { kind: 'unchanged' as const, insert: [], removeIds: [] };
+  }
+
+  if (existing.length > 50) {
+    return { kind: 'replace' as const, insert: incoming, removeIds: existing.map((row) => row.id) };
+  }
+
   if (incomingMatchesExistingPrefix) {
     return {
       kind: 'trim' as const,
@@ -146,10 +218,17 @@ export async function POST(request: Request) {
       return jsonResponse({ error: 'database_not_configured', message: 'Backend DATABASE_URL environment variable is not configured.' }, { status: 500 });
     }
 
-    const normalizedHistory = clientHistory.slice(0, 50).map((h: { id: string; sourceId?: string }) => ({
+    const normalizedHistory = clientHistory.slice(0, 50).map((h: {
+      id: string;
+      sourceId?: string;
+      msListened?: number;
+    }) => ({
       sourceId: h.sourceId || 'youtube_music',
       trackId: h.id,
       ...trackSnapshotColumns(h, h.id),
+      msListened: Number.isFinite(h.msListened)
+        ? Math.max(0, Math.min(600_000, Math.round(h.msListened!)))
+        : 30_000,
     }));
     const existingHistory = await db
       .select({
@@ -160,6 +239,7 @@ export async function POST(request: Request) {
         artistsJson: history.artistsJson,
         artworkUrl: history.artworkUrl,
         durationMs: history.durationMs,
+        msListened: history.msListened,
         playedAt: history.playedAt,
       })
       .from(history)
@@ -170,7 +250,8 @@ export async function POST(request: Request) {
       .orderBy(desc(history.playedAt))
       .limit(51);
 
-    const plan = planHistorySnapshotChanges(existingHistory, normalizedHistory);
+    const monotonicHistory = preserveMonotonicListenCredit(existingHistory, normalizedHistory);
+    const plan = planHistorySnapshotChanges(existingHistory, monotonicHistory);
     if (plan.kind === 'unchanged') {
       return jsonResponse({ success: true, count: clientHistory.length });
     }
@@ -189,6 +270,28 @@ export async function POST(request: Request) {
       )));
     }
 
+    if (plan.kind === 'patch' || plan.kind === 'promote') {
+      const newestStoredTime = existingHistory[0]?.playedAt.getTime() ?? 0;
+      for (const update of plan.update) {
+        batch.push(db.update(history)
+          .set({
+            title: update.item.title,
+            artistsJson: update.item.artistsJson,
+            artworkUrl: update.item.artworkUrl,
+            durationMs: update.item.durationMs,
+            msListened: update.item.msListened,
+            ...(plan.kind === 'promote'
+              ? { playedAt: new Date(Math.max(Date.now(), newestStoredTime + 1)) }
+              : {}),
+          })
+          .where(and(
+            eq(history.userId, session.userId),
+            eq(history.profileId, profileId),
+            eq(history.id, update.id),
+          )));
+      }
+    }
+
     if (plan.insert.length > 0) {
       const newestStoredTime = existingHistory[0]?.playedAt.getTime() ?? 0;
       const baseTime = plan.kind === 'prepend'
@@ -199,7 +302,6 @@ export async function POST(request: Request) {
         profileId,
         ...item,
         playedAt: new Date(baseTime - (plan.kind === 'prepend' ? i : i * 1000)),
-        msListened: 30000,
       }));
       batch.push(db.insert(history).values(payload));
     }

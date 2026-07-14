@@ -6,6 +6,7 @@ import {
   profileWriteMatches,
   profileWriteValues,
 } from '../lib/profile-sync.ts';
+import { requiresProfileMetadataSync } from '../lib/profile-metadata-sync.ts';
 
 test('profile sync preserves the highest monotonic songs-played count', () => {
   assert.equal(mergeSongsPlayedCount(149, 0, 50), 149);
@@ -33,4 +34,9 @@ test('profile writes can skip unchanged rows and detect meaningful changes', () 
   assert.equal(profileWriteMatches(stored, input), true);
   assert.equal(profileWriteMatches({ ...stored, songsPlayed: 1 }, input), false);
   assert.equal(profileWriteMatches({ ...stored, avatarUrl: 'https://example.com/avatar.png' }, input), false);
+});
+
+test('meaningful listening avoids a broad profile metadata write', () => {
+  assert.equal(requiresProfileMetadataSync(['history', 'songsPlayed']), false);
+  assert.equal(requiresProfileMetadataSync(['displayName']), true);
 });

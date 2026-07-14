@@ -1,5 +1,13 @@
 # SPICE Walkthrough
 
+## v1.0.140
+
+- [Spice.Home main] Replace fixed Lofi and workout rows with a private, per-profile Recommended Next shelf that learns stable artists, producers, genres, moods, languages, and listening contexts without letting one song rewrite a feed.
+- [Spice.Home main] Show a clear cold-start card until a profile has enough distinct meaningful listens, including progress and an explanation that quick skips and one-off plays barely affect recommendations.
+- [Spice.Player main] Build related, taste-ranked Up Next continuations for standalone songs and the end of non-playlist queues, while preserving an intentional playlist's order and repeat behavior.
+- [Spice.Music main] Keep recommendation evidence inside each profile's history, serialize history syncs, and make cache, write, and queue refresh paths cost-conscious so routine listening avoids broad profile writes and stale cloud snapshots.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.140`.
+
 ## v1.0.139
 
 - [Spice.Music main] Drive local and connected-device progress from authoritative playback clocks so the duration slider, elapsed time, native mini player, and crossfade transitions keep moving together.

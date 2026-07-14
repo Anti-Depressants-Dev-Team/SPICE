@@ -5,6 +5,7 @@ import {
   enrichTrackSnapshot,
   enrichTrackSnapshots,
   getPlaybackState,
+  rememberTrackSnapshots,
   savePlaybackProgress,
   savePlaybackState,
 } from '../app/spice-storage.ts';
@@ -122,6 +123,31 @@ test('enrichTrackSnapshot preserves the single-track lookup behavior', () => {
     assert.equal(enriched.title, storedTrack.title);
     assert.deepEqual(enriched.artists, storedTrack.artists);
     assert.equal(enriched.sourceId, storedTrack.sourceId);
+  });
+});
+
+test('shared track metadata never carries listening credit between profiles', () => {
+  const sharedTrack = {
+    id: 'shared-track',
+    title: 'Shared track',
+    artists: [{ id: 'artist', name: 'Artist' }],
+    sourceId: 'youtube_music',
+  };
+
+  withWritableStorage({
+    [TRACK_SNAPSHOTS_KEY]: JSON.stringify({
+      [sharedTrack.id]: {
+        track: { ...sharedTrack, msListened: 60000 },
+        savedAt: 1,
+      },
+    }),
+  }, ({ values }) => {
+    const secondProfileTrack = enrichTrackSnapshot({ ...sharedTrack, msListened: 0 });
+    assert.equal(secondProfileTrack.msListened, 0);
+
+    rememberTrackSnapshots([{ ...sharedTrack, msListened: 30000 }]);
+    const persisted = JSON.parse(values.get(TRACK_SNAPSHOTS_KEY));
+    assert.equal(persisted[sharedTrack.id].track.msListened, undefined);
   });
 });
 
