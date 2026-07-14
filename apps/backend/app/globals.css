@@ -3561,6 +3561,76 @@ h4 { font-size: 1rem; }
   scrollbar-color: rgba(var(--accent-pink-rgb, 124, 58, 237), 0.42) transparent;
 }
 
+.settings-page-nav__header {
+  padding: 0 8px 10px;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.settings-page-nav__group {
+  display: grid;
+  gap: 3px;
+  padding-top: 4px;
+}
+
+.settings-page-nav__group + .settings-page-nav__group {
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-color);
+}
+
+.settings-page-nav__group-title {
+  padding: 0 8px 4px;
+  color: var(--text-secondary);
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  opacity: 0.72;
+  text-transform: uppercase;
+}
+
+.settings-page-nav__item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--text-secondary);
+  background: transparent;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 650;
+  text-align: left;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.settings-page-nav__item:hover {
+  color: var(--text-primary);
+  background: var(--bg-glass);
+}
+
+.settings-page-nav__item.is-current {
+  color: var(--accent-pink);
+  background: rgba(var(--accent-pink-rgb, 124, 58, 237), 0.12);
+}
+
+.settings-page-nav__item-icon {
+  display: flex;
+  align-items: center;
+  opacity: 0.72;
+}
+
+.settings-page-nav__item.is-current .settings-page-nav__item-icon {
+  opacity: 1;
+}
+
 .settings-page-content {
   min-width: 0;
   flex: 1 1 auto;
@@ -3800,6 +3870,63 @@ h4 { font-size: 1rem; }
   font-size: 0.75rem;
 }
 
+.discord-activity-settings__toggle {
+  margin-top: 18px;
+}
+
+.discord-activity-settings__preview {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  background:
+    linear-gradient(135deg, rgba(var(--accent-pink-rgb, 124, 58, 237), 0.12), transparent 58%),
+    var(--bg-glass);
+}
+
+.discord-activity-settings__preview img {
+  width: 64px;
+  height: 64px;
+  flex: 0 0 64px;
+  border-radius: 12px;
+  object-fit: cover;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.28);
+}
+
+.discord-activity-settings__preview div {
+  min-width: 0;
+}
+
+.discord-activity-settings__preview strong,
+.discord-activity-settings__preview span,
+.discord-activity-settings__preview small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.discord-activity-settings__preview strong {
+  color: var(--text-primary);
+  font-size: 0.94rem;
+}
+
+.discord-activity-settings__preview span {
+  margin-top: 3px;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.discord-activity-settings__preview small {
+  margin-top: 9px;
+  color: var(--accent-pink);
+  font-size: 0.7rem;
+  font-weight: 750;
+}
+
 @media (max-width: 1100px) {
   .settings-page-layout {
     flex-direction: column;
@@ -3821,12 +3948,17 @@ h4 { font-size: 1rem; }
     -webkit-backdrop-filter: blur(18px);
   }
 
-  .settings-page-nav > div {
+  .settings-page-nav__header,
+  .settings-page-nav__group-title {
     display: none;
   }
 
-  .settings-page-nav > button {
-    width: auto !important;
+  .settings-page-nav__group {
+    display: contents;
+  }
+
+  .settings-page-nav__item {
+    width: auto;
     flex: 0 0 auto;
     white-space: nowrap;
   }

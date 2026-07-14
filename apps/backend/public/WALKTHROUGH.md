@@ -1,5 +1,15 @@
 # SPICE Walkthrough
 
+## v1.0.139
+
+- [Spice.Music main] Drive local and connected-device progress from authoritative playback clocks so the duration slider, elapsed time, native mini player, and crossfade transitions keep moving together.
+- [Spice.Music main] Schedule Last.fm scrobbles independently of React rendering, follow the official longer-than-30-seconds and half-or-four-minute rules, retry provider delivery, and show a separate permanent-scrobble countdown and confirmation.
+- [Spice.Native main] Publish first-class Media Session playback snapshots so the shell always reads the active crossfade slot, track duration, cover artwork, and public song link instead of scraping a stale hidden audio element.
+- [Spice.Native main] Rate-limit and deduplicate Discord Rich Presence updates while preserving track changes, repeats, seeks, pause state, live timestamps, song artwork, and Listen on SPICE or Download SPICE actions.
+- [Spice.Settings main] Group settings into Personalize, Desktop, Playback, Connect, and Support, add navigation for previously unsectioned tools, expose Discord Activity as a dedicated Native section, and keep the Admin Dashboard shortcut only in Account.
+- [Spice.Music main] Rename the fresh idle player state to `Nothing playing` and add privacy-safe server delivery diagnostics for Last.fm and ListenBrainz requests.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.139`.
+
 ## v1.0.138
 
 - [Spice.Music main] Restore desktop update checks inside SPICE Settings for both wrapper and Native shells, including live download state and restart-to-install handling.

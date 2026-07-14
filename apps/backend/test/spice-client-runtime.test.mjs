@@ -12,6 +12,7 @@ import {
   IDLE_PLAYER_TRACK,
   normalizePairingCodeInput,
   pairingCodeInputSegments,
+  profileScrobbleThresholdSeconds,
   projectRemotePlaybackProgress,
   reconcileOptimisticRemoteUpdates,
   remoteSnapshotAgeSeconds,
@@ -22,8 +23,16 @@ import {
 
 test('fresh player state is an explicit idle prompt with zero duration', () => {
   assert.equal(IDLE_PLAYER_TRACK.id, 'placeholder');
-  assert.equal(IDLE_PLAYER_TRACK.title, 'Start playing something');
+  assert.equal(IDLE_PLAYER_TRACK.title, 'Nothing playing');
   assert.equal(IDLE_PLAYER_TRACK.durationMs, 0);
+});
+
+test('Last.fm scrobble thresholds follow the official half-or-four-minute rule', () => {
+  assert.equal(profileScrobbleThresholdSeconds(30), null);
+  assert.equal(profileScrobbleThresholdSeconds(31), 15.5);
+  assert.equal(profileScrobbleThresholdSeconds(180), 90);
+  assert.equal(profileScrobbleThresholdSeconds(600), 240);
+  assert.equal(profileScrobbleThresholdSeconds(Number.NaN), null);
 });
 
 test('pairing code input keeps an unambiguous XXXX-XXXX format', () => {

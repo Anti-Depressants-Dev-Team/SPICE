@@ -1677,7 +1677,40 @@ function startTrackPolling() {
                         const serviceKey = ${JSON.stringify(currentService)};
 
                         if (serviceKey === 'spice_crazy') {
-                            const media = document.querySelector('audio, video');
+                            try {
+                                const snapshot = typeof window.__spiceGetPlaybackSnapshot === 'function'
+                                    ? window.__spiceGetPlaybackSnapshot()
+                                    : null;
+                                if (snapshot && typeof snapshot === 'object') {
+                                    return {
+                                        sourceService: 'spice_crazy',
+                                        shellOnly: snapshot.shellOnly === true,
+                                        id: snapshot.id || '',
+                                        sourceId: snapshot.sourceId || '',
+                                        title: snapshot.title || '',
+                                        artist: snapshot.artist || '',
+                                        album: snapshot.album || '',
+                                        albumArt: snapshot.albumArt || '',
+                                        duration: Number.isFinite(snapshot.duration) ? snapshot.duration : 0,
+                                        paused: snapshot.paused !== false,
+                                        currentTime: Number.isFinite(snapshot.currentTime) ? snapshot.currentTime : 0,
+                                        listenUrl: snapshot.listenUrl || '',
+                                        shuffle: snapshot.shuffle === true,
+                                        repeat: snapshot.repeat || 'off',
+                                        likeStatus: snapshot.likeStatus === true,
+                                        repeatDebug: 'spice-playback-snapshot'
+                                    };
+                                }
+                            } catch (e) {
+                                // Fall through to DOM detection for older cloud runtimes.
+                            }
+
+                            const mediaElements = Array.from(document.querySelectorAll('audio, video'));
+                            const media = mediaElements.find((element) => element.dataset && element.dataset.spiceActive === 'true')
+                                || mediaElements.find((element) => !element.paused && (element.currentSrc || element.src))
+                                || mediaElements.find((element) => Number.isFinite(element.duration) && element.duration > 0)
+                                || mediaElements[0]
+                                || null;
                             const mediaSession = navigator.mediaSession && navigator.mediaSession.metadata
                                 ? navigator.mediaSession.metadata
                                 : null;
@@ -2148,6 +2181,8 @@ function startTrackPolling() {
       let track = null;
       if (rawData && rawData.sourceService === "spice_crazy" && rawData.title) {
         track = {
+          id: rawData.id || "",
+          sourceId: rawData.sourceId || "",
           track: rawData.title,
           title: rawData.title,
           artist: rawData.artist || "Unknown Artist",
@@ -2159,10 +2194,10 @@ function startTrackPolling() {
           url: rawData.listenUrl || "",
           paused: rawData.paused,
           currentTime: rawData.currentTime,
-          shuffle: false,
-          repeat: "off",
-          likeStatus: false,
-          repeatDebug: "",
+          shuffle: rawData.shuffle || false,
+          repeat: rawData.repeat || "off",
+          likeStatus: rawData.likeStatus || false,
+          repeatDebug: rawData.repeatDebug || "",
         };
       } else if (rawData && rawData.sourceService === "spice_crazy") {
         track = null;
