@@ -1,4 +1,5 @@
 import type { NextRequest } from 'next/server';
+import { randomUUID } from 'node:crypto';
 
 import { verifySession } from '@/lib/auth';
 import { jsonResponse, optionsResponse } from '@/lib/cors';
@@ -36,20 +37,32 @@ export function OPTIONS() {
 }
 
 export async function POST(request: NextRequest) {
+  const requestId = request.headers.get('x-vercel-id') || randomUUID();
   let body: ProfileListenRequest;
   try {
     body = await request.json() as ProfileListenRequest;
   } catch {
+    logProfileListen(requestId, 'rejected', { reason: 'invalid_json' });
     return jsonResponse({ error: 'invalid_json' }, { status: 400 });
   }
 
   if (body.type !== 'playing_now' && body.type !== 'scrobble') {
+    logProfileListen(requestId, 'rejected', { reason: 'invalid_listen_type' });
     return jsonResponse({ error: 'invalid_listen_type' }, { status: 400 });
   }
 
   if (!body.track?.title || !body.track.artist) {
+    logProfileListen(requestId, 'rejected', { reason: 'invalid_track', type: body.type });
     return jsonResponse({ error: 'invalid_track' }, { status: 400 });
   }
+
+  logProfileListen(requestId, 'started', {
+    type: body.type,
+    providers: {
+      lastfm: body.providers?.lastfm !== undefined,
+      listenbrainz: body.providers?.listenbrainz !== undefined,
+    },
+  });
 
   const listenedAt = Number.isFinite(body.listenedAt)
     ? Math.trunc(body.listenedAt as number)
@@ -114,7 +127,24 @@ export async function POST(request: NextRequest) {
 
   await Promise.all(tasks);
 
-  return jsonResponse({ results });
+  logProfileListen(requestId, 'completed', {
+    type: body.type,
+    providers: {
+      lastfm: providerLogResult(results.lastfm),
+      listenbrainz: providerLogResult(results.listenbrainz),
+    },
+  });
+
+  return jsonResponse({ requestId, results });
+}
+
+function logProfileListen(requestId: string, event: string, details: Record<string, unknown>) {
+  console.info('[profile-listens]', JSON.stringify({ requestId, event, ...details }));
+}
+
+function providerLogResult(result: ProviderResult) {
+  if (result.skipped) return 'skipped';
+  return result.ok ? 'ok' : 'failed';
 }
 
 function errorMessage(error: unknown) {

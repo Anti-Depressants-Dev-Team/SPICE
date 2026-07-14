@@ -92,6 +92,7 @@ import {
 } from '@/lib/player-audio';
 import {
   IDLE_PLAYER_TRACK,
+  profileScrobbleThresholdSeconds,
   projectRemotePlaybackProgress,
   reconcileOptimisticRemoteUpdates,
   remoteSnapshotAgeSeconds,
@@ -1384,6 +1385,12 @@ const buildSongShareUrl = (track: Track) => {
   return url.toString();
 };
 
+const buildPublicSongShareUrl = (track: Track) => {
+  const url = new URL('https://music.spice-app.xyz/');
+  url.searchParams.set('song', encodeSongShareToken(track));
+  return url.toString();
+};
+
 const directAudioExtensionPattern = /\.(mp3|m4a|aac|wav|flac|ogg|opus|webm)(?:$|[?#])/iu;
 
 const directAudioDownloadUrl = (track: Track) => {
@@ -1417,13 +1424,6 @@ const extensionFromAudioUrl = (url: string) => {
     return 'm4a';
   }
 };
-
-const scrobbleThresholdSeconds = (durationSeconds: number) => {
-  if (!durationSeconds || !Number.isFinite(durationSeconds)) return 60;
-  if (durationSeconds < 30) return Math.max(5, durationSeconds * 0.5);
-  return Math.min(Math.max(durationSeconds * 0.5, 30), 240);
-};
-
 
 /**
  * Generates a random number between 0 (inclusive) and 1 (exclusive) using crypto.getRandomValues
@@ -1706,6 +1706,7 @@ export default function SpiceApp() {
   const [lastFmAccountLinked, setLastFmAccountLinked] = useState(false);
   const [lastFmLinkedUser, setLastFmLinkedUser] = useState('');
   const [lastFmLinkStatus, setLastFmLinkStatus] = useState<string | null>(null);
+  const [lastFmPlaybackStatus, setLastFmPlaybackStatus] = useState<string | null>(null);
   const [isLinkingLastFm, setIsLinkingLastFm] = useState(false);
   const [listenBrainzToken, setListenBrainzToken] = useState('');
   const [listenBrainzAccountLinked, setListenBrainzAccountLinked] = useState(false);
@@ -2053,6 +2054,7 @@ export default function SpiceApp() {
   const [isLoadingStream, setIsLoadingStream] = useState(false);
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [remotePlaybackClock, setRemotePlaybackClock] = useState(() => currentTimestampMs());
   const [volume, setVolume] = useState(70);
 
   // States synchronized to the Active Profile
@@ -2622,6 +2624,7 @@ export default function SpiceApp() {
     if (!node) return;
 
     node.autoplay = false;
+    node.dataset.spiceActive = String(slot === activeAudioSlotRef.current);
     audioTransitionGainsRef.current.set(node, 1);
     applyAudioElementVolume(node, volumeRef.current);
   }, [applyAudioElementVolume]);
@@ -3258,10 +3261,16 @@ export default function SpiceApp() {
       'sidebar-controls',
       ...(desktopUpdaterAvailable ? ['desktop-updates'] : []),
       ...(nativeShellAvailable ? ['native-shell'] : []),
+      ...(nativeShellAvailable ? ['discord-activity'] : []),
       'audio-streaming',
       'profile-sync',
       'player-layout',
-      'playback-profiles'
+      'playback-profiles',
+      'spice-connect',
+      'offline-runtime',
+      'feedback-support',
+      'storage-safety',
+      'system-diagnostics',
     ];
 
     let animationFrame = 0;
@@ -3640,24 +3649,60 @@ export default function SpiceApp() {
     return () => clearInterval(checkInterval);
   }, [initializeYtPlayer]);
 
-  // Track progress updates for Embed mode via standard interval
+  // Keep one authoritative playback clock for the UI, scrobbling, Media Session,
+  // and the native shell. HTMLMediaElement timeupdate can pause or become sparse
+  // in a backgrounded view, so sample the actual player while playback is active.
   useEffect(() => {
-    let interval: NodeJS.Timeout;
-    if (isPlaying && streamProtocol === 'embed' && isYouTubeTrack(currentTrack) && ytPlayerRef.current && typeof ytPlayerRef.current.getCurrentTime === 'function') {
-      interval = setInterval(() => {
-        try {
-          const currentTime = ytPlayerRef.current.getCurrentTime();
-          const durationTime = ytPlayerRef.current.getDuration();
-          progressRef.current = currentTime;
-          setProgress(currentTime);
-          if (durationTime > 0) {
-            durationRef.current = durationTime;
-            setDuration(durationTime);
+    if (!isPlaying || currentTrack.id === 'placeholder') return;
+
+    const samplePlaybackClock = () => {
+      let currentTime = progressRef.current;
+      let durationTime = durationRef.current;
+
+      try {
+        if (
+          streamProtocol === 'embed'
+          && isYouTubeTrack(currentTrack)
+          && ytPlayerRef.current
+          && typeof ytPlayerRef.current.getCurrentTime === 'function'
+        ) {
+          currentTime = Number(ytPlayerRef.current.getCurrentTime());
+          durationTime = Number(ytPlayerRef.current.getDuration());
+        } else {
+          const audio = audioRef.current;
+          if (audio) {
+            currentTime = Number(audio.currentTime);
+            durationTime = Number(audio.duration);
           }
-        } catch { }
-      }, 500);
-    }
-    return () => clearInterval(interval);
+        }
+      } catch {
+        return;
+      }
+
+      if (Number.isFinite(currentTime) && currentTime >= 0) {
+        progressRef.current = currentTime;
+        setProgress((previous) => Math.abs(previous - currentTime) >= 0.04 ? currentTime : previous);
+      }
+      if (Number.isFinite(durationTime) && durationTime > 0) {
+        durationRef.current = durationTime;
+        setDuration((previous) => Math.abs(previous - durationTime) >= 0.05 ? durationTime : previous);
+        if (typeof navigator.mediaSession?.setPositionState === 'function') {
+          try {
+            navigator.mediaSession.setPositionState({
+              duration: durationTime,
+              playbackRate: 1,
+              position: Math.min(Math.max(0, currentTime), durationTime),
+            });
+          } catch {
+            // Some Chromium builds reject position state while metadata changes.
+          }
+        }
+      }
+    };
+
+    samplePlaybackClock();
+    const interval = window.setInterval(samplePlaybackClock, 250);
+    return () => window.clearInterval(interval);
   }, [currentTrack.id, isPlaying, streamProtocol]);
 
   // Sync volume with Embed Player
@@ -3991,6 +4036,7 @@ export default function SpiceApp() {
     }
     crossfadeAnimationStarterRef.current = () => undefined;
     if (outgoing && outgoing !== incoming) {
+      outgoing.dataset.spiceActive = 'false';
       outgoing.pause();
       outgoing.removeAttribute('src');
       outgoing.load();
@@ -4003,6 +4049,7 @@ export default function SpiceApp() {
 
     activeAudioSlotRef.current = prepared.slot;
     audioRef.current = incoming;
+    incoming.dataset.spiceActive = 'true';
     setAudioTransitionGain(incoming, 1);
     currentTrackRef.current = prepared.track;
     queueIndexRef.current = prepared.queueIndex;
@@ -4619,6 +4666,114 @@ export default function SpiceApp() {
     listenBrainzToken.trim() || listenBrainzAccountLinked ? 'listenbrainz' : null,
   ].filter((provider): provider is ProfileListenProvider => provider !== null);
 
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !navigator.mediaSession) return;
+
+    if (currentTrack.id === 'placeholder') {
+      navigator.mediaSession.metadata = null;
+      navigator.mediaSession.playbackState = 'none';
+      return;
+    }
+
+    const rawArtwork = currentTrack.artworkUrl || currentTrack.album?.artworkUrl;
+    let artworkUrl = '';
+    if (rawArtwork) {
+      try {
+        artworkUrl = new URL(rawArtwork, window.location.origin).toString();
+      } catch {
+        artworkUrl = '';
+      }
+    }
+
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: currentTrack.title,
+        artist: profileArtistName(currentTrack),
+        album: currentTrack.album?.title || 'SPICE Music',
+        ...(artworkUrl ? { artwork: [{ src: artworkUrl }] } : {}),
+      });
+    } catch {
+      // Media Session is an enhancement; playback must not depend on it.
+    }
+  }, [currentTrackKey]);
+
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !navigator.mediaSession || currentTrack.id === 'placeholder') return;
+    navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
+  }, [currentTrackKey, isPlaying]);
+
+  useEffect(() => {
+    const nativeWindow = window as Window & {
+      __spiceGetPlaybackSnapshot?: () => Record<string, unknown>;
+    };
+    const getPlaybackSnapshot = () => {
+      if (currentTrack.id === 'placeholder') {
+        return {
+          sourceService: 'spice_crazy',
+          shellOnly: true,
+          paused: true,
+          currentTime: 0,
+          duration: 0,
+        };
+      }
+
+      let currentTime = progressRef.current;
+      let currentDuration = durationRef.current || (currentTrack.durationMs || 0) / 1000;
+      try {
+        if (
+          streamProtocol === 'embed'
+          && isYouTubeTrack(currentTrack)
+          && ytPlayerRef.current
+          && typeof ytPlayerRef.current.getCurrentTime === 'function'
+        ) {
+          currentTime = Number(ytPlayerRef.current.getCurrentTime());
+          currentDuration = Number(ytPlayerRef.current.getDuration()) || currentDuration;
+        } else if (audioRef.current) {
+          currentTime = Number(audioRef.current.currentTime);
+          currentDuration = Number(audioRef.current.duration) || currentDuration;
+        }
+      } catch {
+        // Ref-backed values below remain a consistent fallback.
+      }
+
+      const rawArtwork = currentTrack.artworkUrl || currentTrack.album?.artworkUrl || '';
+      let artworkUrl = rawArtwork;
+      if (rawArtwork) {
+        try {
+          artworkUrl = new URL(rawArtwork, window.location.origin).toString();
+        } catch { }
+      }
+
+      return {
+        sourceService: 'spice_crazy',
+        id: currentTrack.id,
+        sourceId: currentTrack.sourceId || 'youtube_music',
+        title: currentTrack.title,
+        artist: profileArtistName(currentTrack),
+        album: currentTrack.album?.title || '',
+        albumArt: artworkUrl,
+        duration: Number.isFinite(currentDuration) && currentDuration > 0 ? currentDuration : 0,
+        currentTime: Number.isFinite(currentTime) && currentTime >= 0 ? currentTime : 0,
+        paused: !isPlayingRef.current,
+        listenUrl: buildPublicSongShareUrl(currentTrack),
+        shuffle: isShuffleRef.current,
+        repeat: repeatModeRef.current,
+        likeStatus: likedTracks.has(currentTrack.id),
+      };
+    };
+
+    Object.defineProperty(nativeWindow, '__spiceGetPlaybackSnapshot', {
+      configurable: true,
+      value: getPlaybackSnapshot,
+      writable: true,
+    });
+    return () => {
+      if (nativeWindow.__spiceGetPlaybackSnapshot === getPlaybackSnapshot) {
+        Reflect.deleteProperty(nativeWindow, '__spiceGetPlaybackSnapshot');
+      }
+    };
+  }, [currentTrackKey, streamProtocol, likedTracks]);
+
   const setPlaybackPlaying = (nextPlaying: boolean) => {
     isPlayingRef.current = nextPlaying;
     setIsPlaying(nextPlaying);
@@ -4628,6 +4783,7 @@ export default function SpiceApp() {
     if (!track || track.id === 'placeholder' || track.id === 'spice-connect-placeholder') {
       scrobbleStateRef.current = null;
       setProfileSyncStatus('idle');
+      setLastFmPlaybackStatus(null);
       return;
     }
 
@@ -4636,6 +4792,7 @@ export default function SpiceApp() {
       Math.floor(currentTimestampMs() / 1000),
     );
     setProfileSyncStatus('idle');
+    setLastFmPlaybackStatus(null);
   };
 
   const clearPlaybackRetryTimer = () => {
@@ -4723,18 +4880,27 @@ export default function SpiceApp() {
     logDebug('player', `Audio track ended. repeatMode: ${currentRepeatMode}, protocol: ${currentStreamProtocol}`);
 
     const scrobbleState = scrobbleStateRef.current;
+    const endedDurationSeconds = durationRef.current > 0
+      ? durationRef.current
+      : (endedTrack.durationMs || 0) / 1000;
+    const endedScrobbleThreshold = profileScrobbleThresholdSeconds(endedDurationSeconds);
+    const endedWallClockSeconds = scrobbleState
+      ? Math.floor(currentTimestampMs() / 1000) - scrobbleState.startedAt
+      : 0;
     if (
       profileSyncEnabled
       && endedTrack.id !== 'placeholder'
       && scrobbleState
       && scrobbleState.trackKey === endedTrackKey
+      && endedScrobbleThreshold !== null
+      && endedWallClockSeconds >= endedScrobbleThreshold
     ) {
       requestProfileListen(
         'scrobble',
         scrobbleState,
         activeProfileListenProviders(),
         endedTrack,
-        durationRef.current,
+        endedDurationSeconds,
       );
     }
 
@@ -4947,11 +5113,11 @@ export default function SpiceApp() {
 
         const lastFmResult = results.lastfm;
         if (lastFmResult?.ok) {
-          setLastFmLinkStatus(type === 'playing_now'
-            ? `Now playing on Last.fm: ${track.title}.`
-            : `Scrobbled ${track.title} to Last.fm.`);
+          setLastFmPlaybackStatus(type === 'playing_now'
+            ? `Last.fm received now playing for ${track.title}. The permanent scrobble will be confirmed separately.`
+            : `Confirmed by Last.fm: ${track.title} was scrobbled.`);
         } else if (lastFmResult) {
-          setLastFmLinkStatus(`Last.fm ${type === 'playing_now' ? 'now-playing update' : 'scrobble'} failed: ${lastFmResult.error || 'Unknown provider error'}.`);
+          setLastFmPlaybackStatus(`Last.fm ${type === 'playing_now' ? 'now-playing update' : 'scrobble'} failed: ${lastFmResult.error || 'Unknown provider error'}.`);
         }
       })
       .catch((error) => {
@@ -4968,7 +5134,7 @@ export default function SpiceApp() {
         setProfileSyncStatus('error');
         logDebug('error', `Profile sync request failed: ${message}`);
         if (requestedProviders.includes('lastfm')) {
-          setLastFmLinkStatus(`Last.fm ${type === 'playing_now' ? 'now-playing update' : 'scrobble'} failed: ${message}.`);
+          setLastFmPlaybackStatus(`Last.fm ${type === 'playing_now' ? 'now-playing update' : 'scrobble'} failed: ${message}.`);
         }
       });
   }
@@ -5091,6 +5257,7 @@ export default function SpiceApp() {
     if (currentTrack.id === 'placeholder') {
       scrobbleStateRef.current = null;
       setProfileSyncStatus('idle');
+      setLastFmPlaybackStatus(null);
       return;
     }
 
@@ -5108,25 +5275,53 @@ export default function SpiceApp() {
     const providers = activeProfileListenProviders();
     if (providers.length === 0) return;
 
-    const scrobbleState = scrobbleStateRef.current;
-    if (!scrobbleState || scrobbleState.trackKey !== currentTrackKey) return;
+    const evaluateListenDelivery = () => {
+      const scrobbleState = scrobbleStateRef.current;
+      if (!scrobbleState || scrobbleState.trackKey !== currentTrackKey) return;
 
-    const progressSeconds = Math.max(0, progress);
-    if (progressSeconds >= 2) {
-      requestProfileListen('playing_now', scrobbleState, providers);
-    }
+      const progressSeconds = Math.max(0, progressRef.current);
+      if (progressSeconds >= 2) {
+        requestProfileListen('playing_now', scrobbleState, providers);
+      }
 
-    const durationSeconds = duration > 0
-      ? duration
-      : currentTrack.durationMs
-        ? currentTrack.durationMs / 1000
-        : 0;
-    const threshold = scrobbleThresholdSeconds(durationSeconds);
-    const wallClockElapsed = Math.floor(currentTimestampMs() / 1000) - scrobbleState.startedAt;
-    if (progressSeconds >= threshold && wallClockElapsed >= threshold) {
-      requestProfileListen('scrobble', scrobbleState, providers);
-    }
-  }, [profileSyncEnabled, cloudToken, lastFmSessionKey, lastFmAccountLinked, listenBrainzToken, listenBrainzAccountLinked, isPlaying, progress, duration, currentTrackKey]);
+      const durationSeconds = durationRef.current > 0
+        ? durationRef.current
+        : currentTrack.durationMs
+          ? currentTrack.durationMs / 1000
+          : 0;
+      const threshold = profileScrobbleThresholdSeconds(durationSeconds);
+      if (threshold === null) {
+        if (providers.includes('lastfm') && durationSeconds > 0 && durationSeconds <= 30) {
+          setLastFmPlaybackStatus('Last.fm requires tracks to be longer than 30 seconds, so this track will not be scrobbled.');
+        }
+        return;
+      }
+
+      const wallClockElapsed = Math.max(
+        0,
+        Math.floor(currentTimestampMs() / 1000) - scrobbleState.startedAt,
+      );
+      const secondsRemaining = Math.max(
+        0,
+        Math.ceil(Math.max(threshold - progressSeconds, threshold - wallClockElapsed)),
+      );
+
+      if (providers.includes('lastfm') && !scrobbleState.scrobble.lastfm.sent) {
+        const lastFmDelivery = scrobbleState.scrobble.lastfm;
+        setLastFmPlaybackStatus(lastFmDelivery.pending
+          ? `Sending the permanent Last.fm scrobble for ${currentTrack.title}...`
+          : `Last.fm scrobble in ${formatTime(secondsRemaining)} (${formatTime(progressSeconds)} of ${formatTime(durationSeconds)} played).`);
+      }
+
+      if (progressSeconds >= threshold && wallClockElapsed >= threshold) {
+        requestProfileListen('scrobble', scrobbleState, providers, currentTrack, durationSeconds);
+      }
+    };
+
+    evaluateListenDelivery();
+    const interval = window.setInterval(evaluateListenDelivery, 1000);
+    return () => window.clearInterval(interval);
+  }, [profileSyncEnabled, cloudToken, lastFmSessionKey, lastFmAccountLinked, listenBrainzToken, listenBrainzAccountLinked, isPlaying, currentTrackKey]);
 
   useEffect(() => {
     handleAudioEndedRef.current = handleAudioEnded;
@@ -7889,6 +8084,12 @@ export default function SpiceApp() {
   const remoteTargetDevices = remoteDevices.filter((device) => device.deviceId !== remoteDeviceId);
   const selectedRemoteDevice = remoteTargetDevices.find((device) => device.deviceId === selectedRemoteDeviceId) || null;
   const isControllingRemoteReceiver = Boolean(selectedRemoteDevice);
+  useEffect(() => {
+    setRemotePlaybackClock(currentTimestampMs());
+    if (!selectedRemoteDevice?.isPlaying) return;
+    const interval = window.setInterval(() => setRemotePlaybackClock(currentTimestampMs()), 250);
+    return () => window.clearInterval(interval);
+  }, [selectedRemoteDeviceId, selectedRemoteDevice?.currentTrack?.id, selectedRemoteDevice?.isPlaying]);
   const remoteReceiverPlaceholder: Track = {
     id: 'spice-connect-placeholder',
     title: selectedRemoteDevice ? 'No active track on receiver' : 'Select a track to play',
@@ -7908,7 +8109,7 @@ export default function SpiceApp() {
   const playerQueueIndex = isControllingRemoteReceiver ? (selectedRemoteDevice?.queueIndex || 0) : queueIndex;
   const playerIsPlaying = isControllingRemoteReceiver ? Boolean(selectedRemoteDevice?.isPlaying) : isPlaying;
   const playerProgress = isControllingRemoteReceiver
-    ? projectRemotePlaybackProgress(selectedRemoteDevice, currentTimestampMs())
+    ? projectRemotePlaybackProgress(selectedRemoteDevice, remotePlaybackClock)
     : progress;
   const playerDuration = isControllingRemoteReceiver ? (selectedRemoteDevice?.duration || 0) : duration;
   const playerVolume = isControllingRemoteReceiver ? (selectedRemoteDevice?.volume ?? 70) : volume;
@@ -9206,6 +9407,52 @@ const getMaskedEmail = (email: string) => {
     { id: 'remote-connect', label: 'Open Spice Connect', description: 'Pair and control another device', keywords: ['phone remote receiver'], run: () => openCommandPage('settings') },
   ];
 
+  const settingsNavigationGroups = [
+    {
+      label: 'Personalize',
+      items: [
+        { id: 'theme-accent', label: 'Theme Accent', icon: Icons.palette },
+        { id: 'visual-customization', label: 'Visual Layout', icon: Icons.monitor },
+        { id: 'profile-privacy', label: 'Profile Settings', icon: Icons.shield },
+        { id: 'sidebar-controls', label: 'Sidebar Panels', icon: Icons.grid },
+      ],
+    },
+    {
+      label: 'Desktop',
+      items: [
+        ...(desktopUpdaterAvailable ? [{ id: 'desktop-updates', label: 'Desktop Updates', icon: Icons.download }] : []),
+        ...(nativeShellAvailable ? [
+          { id: 'native-shell', label: 'Native Desktop', icon: Icons.monitor },
+          { id: 'discord-activity', label: 'Discord Activity', icon: Icons.account },
+        ] : []),
+      ],
+    },
+    {
+      label: 'Playback',
+      items: [
+        { id: 'audio-streaming', label: 'Audio & Quality', icon: Icons.volume },
+        { id: 'profile-sync', label: 'Listening Sync', icon: Icons.database },
+        { id: 'player-layout', label: 'Player Settings', icon: Icons.play },
+        { id: 'playback-profiles', label: 'Smart Behavior', icon: Icons.settings },
+      ],
+    },
+    {
+      label: 'Connect',
+      items: [
+        { id: 'spice-connect', label: 'Spice Connect', icon: Icons.monitor },
+      ],
+    },
+    {
+      label: 'Support',
+      items: [
+        { id: 'offline-runtime', label: 'Offline Runtime', icon: Icons.download },
+        { id: 'feedback-support', label: 'Feedback', icon: Icons.account },
+        { id: 'storage-safety', label: 'Storage & Safety', icon: Icons.shield },
+        { id: 'system-diagnostics', label: 'Diagnostics', icon: Icons.tool },
+      ],
+    },
+  ].filter((group) => group.items.length > 0);
+
   const runCommandQuickSearch = (query: string) => {
     if (!query) return;
     setSelectedPlaylist(null);
@@ -10312,16 +10559,6 @@ const getMaskedEmail = (email: string) => {
                   </div>
                 )}
               </div>
-              {isMounted && (cloudUser?.isAdmin || cloudUser?.accountRole === 'admin') && (
-                <a
-                  className="app-topbar__settings"
-                  href="/admin-dashboard"
-                  aria-label="Open admin dashboard"
-                  title="Admin dashboard"
-                >
-                  {Icons.shield}
-                </a>
-              )}
               <button
                 className={`app-topbar__settings ${currentPage === 'settings' && !selectedPlaylist ? 'active' : ''}`}
                 type="button"
@@ -12292,58 +12529,29 @@ const getMaskedEmail = (email: string) => {
                   
                   {/* Left Navigation Sidebar */}
                   <nav className="settings-page-nav" aria-label="Application settings sections">
-                    <div style={{ fontSize: '0.68rem', fontWeight: 800, textTransform: 'uppercase', color: 'var(--text-secondary)', padding: '0 8px 10px 8px', borderBottom: '1px solid var(--border-color)', marginBottom: '6px', letterSpacing: '0.05em' }}>
+                    <div className="settings-page-nav__header">
                       Sections
                     </div>
-                    {[
-                      { id: 'theme-accent', label: 'Theme Accent', icon: Icons.palette },
-                      { id: 'visual-customization', label: 'Visual Layout', icon: Icons.monitor },
-                      { id: 'profile-privacy', label: 'Profile Settings', icon: Icons.shield },
-                      { id: 'sidebar-controls', label: 'Sidebar Panels', icon: Icons.grid },
-                      ...(desktopUpdaterAvailable ? [{ id: 'desktop-updates', label: 'Desktop Updates', icon: Icons.download }] : []),
-                      ...(nativeShellAvailable ? [{ id: 'native-shell', label: 'Native Desktop', icon: Icons.monitor }] : []),
-                      { id: 'audio-streaming', label: 'Audio & Quality', icon: Icons.volume },
-                      { id: 'profile-sync', label: 'Cloud Sync', icon: Icons.account },
-                      { id: 'player-layout', label: 'Player Settings', icon: Icons.play },
-                      { id: 'playback-profiles', label: 'Smart Behavior', icon: Icons.settings }
-                    ].map((sec) => {
-                      const isCurrent = activeSettingsSection === sec.id;
-                      return (
-                        <button
-                          key={sec.id}
-                          onClick={() => scrollToSettingsSection(sec.id)}
-                          type="button"
-                          aria-current={isCurrent ? 'location' : undefined}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '10px',
-                            padding: '10px 12px',
-                            borderRadius: '8px',
-                            color: isCurrent ? 'var(--accent-pink)' : 'var(--text-secondary)',
-                            background: isCurrent ? 'rgba(var(--accent-pink-rgb, 124, 58, 237), 0.12)' : 'transparent',
-                            border: 'none',
-                            fontSize: '0.82rem',
-                            fontWeight: 600,
-                            cursor: 'pointer',
-                            textAlign: 'left',
-                            width: '100%',
-                            transition: 'all 0.15s ease'
-                          }}
-                          onMouseEnter={(e) => {
-                            if (!isCurrent) e.currentTarget.style.color = '#fff';
-                          }}
-                          onMouseLeave={(e) => {
-                            if (!isCurrent) e.currentTarget.style.color = 'var(--text-secondary)';
-                          }}
-                        >
-                          <span style={{ display: 'flex', alignItems: 'center', opacity: isCurrent ? 1 : 0.7 }}>
-                            {sec.icon}
-                          </span>
-                          <span>{sec.label}</span>
-                        </button>
-                      );
-                    })}
+                    {settingsNavigationGroups.map((group) => (
+                      <div className="settings-page-nav__group" key={group.label}>
+                        <div className="settings-page-nav__group-title">{group.label}</div>
+                        {group.items.map((section) => {
+                          const isCurrent = activeSettingsSection === section.id;
+                          return (
+                            <button
+                              key={section.id}
+                              className={`settings-page-nav__item ${isCurrent ? 'is-current' : ''}`}
+                              onClick={() => scrollToSettingsSection(section.id)}
+                              type="button"
+                              aria-current={isCurrent ? 'location' : undefined}
+                            >
+                              <span className="settings-page-nav__item-icon">{section.icon}</span>
+                              <span>{section.label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ))}
                   </nav>
 
                   {/* Right Content Column */}
@@ -12642,19 +12850,6 @@ const getMaskedEmail = (email: string) => {
                         <label className="native-shell-settings__toggle">
                           <input
                             type="checkbox"
-                            checked={nativeShellSettings.discordRpcEnabled}
-                            disabled={nativeShellBusy === 'discordRpcEnabled'}
-                            onChange={(event) => void updateNativeShellBoolean('discordRpcEnabled', event.target.checked)}
-                          />
-                          <span>
-                            <strong>Discord Rich Presence</strong>
-                            <small>Publish SPICE Native playback to Discord. The standard wrapper controls this from Desktop Settings.</small>
-                          </span>
-                        </label>
-
-                        <label className="native-shell-settings__toggle">
-                          <input
-                            type="checkbox"
                             checked={nativeShellSettings.alwaysOnTop}
                             disabled={nativeShellBusy === 'alwaysOnTop'}
                             onChange={(event) => void updateNativeShellBoolean('alwaysOnTop', event.target.checked)}
@@ -12738,6 +12933,49 @@ const getMaskedEmail = (email: string) => {
                       <p className="native-shell-settings__ownership-note">
                         Last.fm and ListenBrainz for SPICE playback remain in Listening Profile Sync below. YouTube Music and SoundCloud desktop scrobbling remains wrapper-only.
                       </p>
+                    </div>
+                  )}
+
+                  {nativeShellAvailable && nativeShellSettings && (
+                    <div id="discord-activity" className="native-shell-settings">
+                      <div className="native-shell-settings__heading">
+                        <div>
+                          <h3>{Icons.account} Discord Activity</h3>
+                          <p>
+                            Show the current song, artist, live elapsed time, cover artwork, and a public SPICE action on your Discord profile.
+                          </p>
+                        </div>
+                        <span className="native-shell-settings__badge">Native only</span>
+                      </div>
+
+                      <label className="native-shell-settings__toggle discord-activity-settings__toggle">
+                        <input
+                          type="checkbox"
+                          checked={nativeShellSettings.discordRpcEnabled}
+                          disabled={nativeShellBusy === 'discordRpcEnabled'}
+                          onChange={(event) => void updateNativeShellBoolean('discordRpcEnabled', event.target.checked)}
+                        />
+                        <span>
+                          <strong>Enable Discord Rich Presence</strong>
+                          <small>SPICE updates Discord on track changes, play/pause, repeats, and seeks while keeping Discord&apos;s activity rate limit.</small>
+                        </span>
+                      </label>
+
+                      <div className="discord-activity-settings__preview" aria-label="Discord activity preview">
+                        <img
+                          src={currentTrack.artworkUrl || currentTrack.album?.artworkUrl || '/icon.svg'}
+                          alt=""
+                        />
+                        <div>
+                          <strong>{currentTrack.id === 'placeholder' ? 'Nothing playing' : currentTrack.title}</strong>
+                          <span>{currentTrack.id === 'placeholder' ? 'SPICE Music' : `by ${profileArtistName(currentTrack)}`}</span>
+                          <small>{currentTrack.id === 'placeholder' ? 'Activity appears when playback starts' : 'Listen on SPICE · Live track time'}</small>
+                        </div>
+                      </div>
+
+                      {nativeShellMessage?.startsWith('Discord Rich Presence') && (
+                        <div className="native-shell-settings__message" role="status">{nativeShellMessage}</div>
+                      )}
                     </div>
                   )}
 
@@ -12867,6 +13105,23 @@ const getMaskedEmail = (email: string) => {
                         <p style={{ color: lastFmLinkStatus?.includes('failed') || lastFmLinkStatus?.includes('required') || lastFmLinkStatus?.includes('blocked') ? '#f87171' : 'var(--text-secondary)', fontSize: '0.74rem', lineHeight: 1.4, margin: 0 }}>
                           {lastFmLinkStatus || 'Click Set up Last.fm, approve the popup, and SPICE will finish the account link.'}
                         </p>
+                        {profileSyncEnabled && (lastFmSessionKey || lastFmAccountLinked) && currentTrack.id !== 'placeholder' && lastFmPlaybackStatus && (
+                          <p
+                            role="status"
+                            style={{
+                              margin: '12px 0 0',
+                              padding: '10px 12px',
+                              border: '1px solid rgba(var(--accent-pink-rgb, 124, 58, 237), 0.3)',
+                              borderRadius: '10px',
+                              color: profileSyncStatus === 'error' ? '#f87171' : 'var(--text-primary)',
+                              background: 'rgba(var(--accent-pink-rgb, 124, 58, 237), 0.08)',
+                              fontSize: '0.74rem',
+                              lineHeight: 1.45,
+                            }}
+                          >
+                            {lastFmPlaybackStatus}
+                          </p>
+                        )}
                       </div>
 
                       <div style={{ border: '1px solid var(--border-color)', borderRadius: '12px', padding: '16px', background: '#070707' }}>
@@ -13007,7 +13262,7 @@ const getMaskedEmail = (email: string) => {
                   </div>
 
                   {/* Spice Connect Settings */}
-                  <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
+                  <div id="spice-connect" style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
                     <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.monitor} Spice Connect Setup</h3>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0 0 20px 0', lineHeight: 1.4 }}>
                       Name this device and enable cross-device control only on devices you want to receive Spice Connect commands. Use the receiver selector in the player to decide whether the normal controls target this device or another signed-in device.
@@ -13161,7 +13416,7 @@ const getMaskedEmail = (email: string) => {
                     />
                   </div>
 
-                  <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
+                  <div id="offline-runtime" style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
                     <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif' }}>Offline Shell & Runtime Diagnostics</h3>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0 0 20px 0', lineHeight: 1.4 }}>
                       Keep the application shell available without a connection, inspect the local runtime, and rebuild stale caches safely.
@@ -13170,7 +13425,7 @@ const getMaskedEmail = (email: string) => {
                   </div>
 
                   {/* User Feedback & Suggestions */}
-                  <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
+                  <div id="feedback-support" style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
                     <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
                         <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
@@ -13267,7 +13522,7 @@ const getMaskedEmail = (email: string) => {
                   </div>
 
                   {/* Cache & Safety Controls */}
-                  <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
+                  <div id="storage-safety" style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
                     <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.shield} Caches & System Integrity</h3>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0 0 20px 0', lineHeight: 1.4 }}>
                       Reset local session states, clear playback history logs, or completely purge LocalStorage profile registries with a single command.
@@ -13316,7 +13571,7 @@ const getMaskedEmail = (email: string) => {
                   </div>
 
                   {/* System diagnostics & Monospace Live Log Terminal */}
-                  <div style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '40px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4)' }}>
+                  <div id="system-diagnostics" style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '40px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
                       <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 800, color: '#fff', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>
                         {Icons.tool} System Diagnostics & Live Terminal

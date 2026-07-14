@@ -1,4 +1,4 @@
-export const SPICE_MEDIA_CORE_VERSION = '1.0.138';
+export const SPICE_MEDIA_CORE_VERSION = '1.0.139';
 export const RELEASE_NOTIFICATION_STORAGE_KEY = 'spice_read_release_notifications';
 
 export interface ReleaseNotification {

@@ -3,11 +3,20 @@ const PAIRING_CODE_LENGTH = 8;
 
 export const IDLE_PLAYER_TRACK = {
   id: 'placeholder',
-  title: 'Start playing something',
+  title: 'Nothing playing',
   artists: [{ id: 'spice', name: 'SPICE Player' }],
   artworkUrl: '/icon.svg',
   durationMs: 0,
 };
+
+/**
+ * Last.fm only accepts tracks longer than 30 seconds. Eligible tracks are
+ * scrobbled after half their duration or four minutes, whichever comes first.
+ */
+export function profileScrobbleThresholdSeconds(durationSeconds: number) {
+  if (!Number.isFinite(durationSeconds) || durationSeconds <= 30) return null;
+  return Math.min(durationSeconds / 2, 240);
+}
 
 export function normalizePairingCodeInput(value: unknown) {
   if (typeof value !== 'string') return '';

@@ -67,6 +67,8 @@ test('Native desktop settings move into SPICE Music while the wrapper keeps its 
   assert.match(spiceApp, /nativeShellAvailable/);
   assert.match(spiceApp, /SPICE Native Desktop/);
   assert.match(spiceApp, /Discord Rich Presence/);
+  assert.match(spiceApp, /id="discord-activity"/);
+  assert.match(spiceApp, /Listen on SPICE · Live track time/);
   assert.match(spiceApp, /Always on Top/);
   assert.match(spiceApp, /if \(!active \|\| !settings\.nativeMode\) return/);
   assert.match(viewPreload, /if \(!IS_SPICE_LOCAL_RUNTIME \|\| window\.spiceNativeShell\) return/);
@@ -75,6 +77,37 @@ test('Native desktop settings move into SPICE Music while the wrapper keeps its 
   assert.match(main, /openSpiceSettingsInMainWindow\(\)\.catch/);
   assert.match(settings, /id="discord-toggle"/);
   assert.match(spiceApp, /action: 'back' \| 'settings'/);
+});
+
+test('SPICE settings group every section and keep the admin shortcut in Account only', () => {
+  const spiceApp = read('apps/backend/app/spice-app.tsx');
+
+  for (const group of ['Personalize', 'Desktop', 'Playback', 'Connect', 'Support']) {
+    assert.match(spiceApp, new RegExp(`label: ['"]${group}['"]`));
+  }
+  for (const sectionId of [
+    'spice-connect',
+    'offline-runtime',
+    'feedback-support',
+    'storage-safety',
+    'system-diagnostics',
+  ]) {
+    assert.match(spiceApp, new RegExp(`id=["']${sectionId}["']`));
+  }
+
+  assert.match(spiceApp, /href="\/admin-dashboard"/);
+  assert.doesNotMatch(spiceApp, /aria-label="Open admin dashboard"/);
+});
+
+test('SPICE exposes one authoritative playback clock to the native shell', () => {
+  const spiceApp = read('apps/backend/app/spice-app.tsx');
+  const main = read('main.js');
+
+  assert.match(spiceApp, /setInterval\(samplePlaybackClock, 250\)/);
+  assert.match(spiceApp, /__spiceGetPlaybackSnapshot/);
+  assert.match(spiceApp, /node\.dataset\.spiceActive/);
+  assert.match(main, /window\.__spiceGetPlaybackSnapshot\(\)/);
+  assert.match(main, /dataset\.spiceActive === 'true'/);
 });
 
 test('Native shell removes the wrapper settings gear from its title bar', () => {
