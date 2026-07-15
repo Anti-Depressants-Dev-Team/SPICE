@@ -13,6 +13,7 @@
     /\[(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?\]/g;
   const WORD_TIMESTAMP_PATTERN =
     /<(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?>/g;
+  const DEFAULT_LYRICS_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
   function timestampToSeconds(minutes, seconds, fraction = "0") {
     const milliseconds = Number(fraction.padEnd(3, "0").slice(0, 3));
@@ -178,10 +179,58 @@
     return (time - word.startTime) / duration;
   }
 
+  function normalizeIdentityPart(value) {
+    return String(value || "")
+      .trim()
+      .toLocaleLowerCase()
+      .replace(/\s+/g, " ");
+  }
+
+  function lyricsTrackKey(track, provider = "lrclib") {
+    const trackId = normalizeIdentityPart(track && track.id);
+    const sourceId = normalizeIdentityPart(track && track.sourceId);
+    const trackIdentity = trackId
+      ? `${sourceId || "unknown"}:${trackId}`
+      : [
+          track && track.title,
+          track && track.artist,
+          track && track.album,
+        ].map(normalizeIdentityPart).join("|");
+    return `${normalizeIdentityPart(provider) || "lrclib"}:${normalizeIdentityPart(trackIdentity)}`;
+  }
+
+  function normalizeLyricsOffset(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return 0;
+    return Math.round(Math.max(-5, Math.min(5, number)) * 100) / 100;
+  }
+
+  function createLyricsCacheEntry(payload, now = Date.now()) {
+    return {
+      payload: payload && typeof payload === "object" ? payload : {},
+      savedAt: Number.isFinite(Number(now)) ? Number(now) : Date.now(),
+    };
+  }
+
+  function readLyricsCacheEntry(value, now = Date.now(), ttlMs = DEFAULT_LYRICS_CACHE_TTL_MS) {
+    if (!value || typeof value !== "object") return null;
+    const savedAt = Number(value.savedAt);
+    const safeNow = Number(now);
+    const safeTtl = Math.max(0, Number(ttlMs) || 0);
+    if (!Number.isFinite(savedAt) || !Number.isFinite(safeNow) || savedAt > safeNow + 60000) return null;
+    if (safeNow - savedAt > safeTtl) return null;
+    return value.payload && typeof value.payload === "object" ? value.payload : null;
+  }
+
   return {
+    DEFAULT_LYRICS_CACHE_TTL_MS,
+    createLyricsCacheEntry,
     findActiveLine,
     getWordProgress,
     inferWordTimings,
+    lyricsTrackKey,
+    normalizeLyricsOffset,
     parseLrc,
+    readLyricsCacheEntry,
   };
 });

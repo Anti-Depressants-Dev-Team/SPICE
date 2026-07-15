@@ -208,6 +208,11 @@ private fun SpiceRoot(
             onSyncNow = viewModel::syncNow,
             onRefreshSpiceConnect = viewModel::refreshSpiceConnect,
             onPlaybackDeviceSelected = viewModel::selectPlaybackDevice,
+            onHandoffPlayback = viewModel::handoffPlaybackToSelectedDevice,
+            onSleepTimerMinutes = viewModel::setSleepTimerMinutes,
+            onSleepTimerEndTrack = viewModel::setSleepTimerEndOfTrack,
+            onSleepTimerEndQueue = viewModel::setSleepTimerEndOfQueue,
+            onSleepTimerCancel = viewModel::cancelSleepTimer,
             onTestEngine = {
                 ensureNotificationPermission()
                 viewModel.playEngineTest()

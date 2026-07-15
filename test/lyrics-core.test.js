@@ -2,10 +2,14 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
+  createLyricsCacheEntry,
   findActiveLine,
   getWordProgress,
   inferWordTimings,
+  lyricsTrackKey,
+  normalizeLyricsOffset,
   parseLrc,
+  readLyricsCacheEntry,
 } = require("../lyrics-core");
 
 test("parseLrc parses, sorts, and interpolates standard line-timed lyrics", () => {
@@ -63,4 +67,23 @@ test("getWordProgress clamps partial highlighting between zero and one", () => {
   assert.equal(getWordProgress(word, 3), 0);
   assert.equal(getWordProgress(word, 5), 0.5);
   assert.equal(getWordProgress(word, 7), 1);
+});
+
+test("lyrics cache keys isolate providers and normalize track metadata", () => {
+  const track = { title: "  Hello ", artist: "The  Artist", album: "One" };
+  assert.equal(lyricsTrackKey(track, "LRCLIB"), "lrclib:hello|the artist|one");
+  assert.notEqual(lyricsTrackKey(track, "lrclib"), lyricsTrackKey(track, "genius"));
+  assert.notEqual(
+    lyricsTrackKey({ id: "one", sourceId: "youtube_music" }),
+    lyricsTrackKey({ id: "two", sourceId: "youtube_music" }),
+  );
+});
+
+test("lyrics cache entries expire and timing offsets stay bounded", () => {
+  const entry = createLyricsCacheEntry({ syncedLyrics: "[00:01]Hi" }, 1000);
+  assert.deepEqual(readLyricsCacheEntry(entry, 1500, 1000), entry.payload);
+  assert.equal(readLyricsCacheEntry(entry, 2501, 1000), null);
+  assert.equal(normalizeLyricsOffset(8), 5);
+  assert.equal(normalizeLyricsOffset(-8), -5);
+  assert.equal(normalizeLyricsOffset(0.333), 0.33);
 });

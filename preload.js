@@ -36,6 +36,13 @@ contextBridge.exposeInMainWorld("api", {
     signOut: () => ipcRenderer.invoke("native-sign-out"),
   },
   getSettings: () => ipcRenderer.invoke("get-settings"),
+  setDesktopSleepTimer: (request) =>
+    ipcRenderer.invoke("set-desktop-sleep-timer", request),
+  onDesktopSleepTimerChanged: (callback) => {
+    const listener = (event, state) => callback(state);
+    ipcRenderer.on("desktop-sleep-timer-changed", listener);
+    return () => ipcRenderer.removeListener("desktop-sleep-timer-changed", listener);
+  },
   getAlwaysOnTop: () => ipcRenderer.invoke("get-always-on-top"),
   setAlwaysOnTop: (enabled) =>
     ipcRenderer.invoke("set-always-on-top", enabled === true),

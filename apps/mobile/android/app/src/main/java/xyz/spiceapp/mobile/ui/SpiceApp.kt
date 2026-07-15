@@ -59,6 +59,7 @@ import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material.icons.rounded.Stop
+import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -78,6 +79,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -124,6 +126,8 @@ import coil3.compose.AsyncImage
 import kotlinx.coroutines.delay
 import xyz.spiceapp.mobile.BuildConfig
 import xyz.spiceapp.mobile.SpiceUiState
+import xyz.spiceapp.mobile.MobileSleepTimerMode
+import xyz.spiceapp.mobile.formatMobileSleepTimer
 import xyz.spiceapp.mobile.formatSpiceConnectPairingCodeInput
 import xyz.spiceapp.mobile.isCompleteSpiceConnectPairingCode
 import xyz.spiceapp.mobile.normalizeSpiceConnectPairingCodeInput
@@ -208,6 +212,11 @@ fun SpiceApp(
     onSyncNow: () -> Unit,
     onRefreshSpiceConnect: () -> Unit,
     onPlaybackDeviceSelected: (String?) -> Unit,
+    onHandoffPlayback: () -> Unit,
+    onSleepTimerMinutes: (Int) -> Unit,
+    onSleepTimerEndTrack: () -> Unit,
+    onSleepTimerEndQueue: () -> Unit,
+    onSleepTimerCancel: () -> Unit,
     onTestEngine: () -> Unit,
     onDownloadTrack: (Track) -> Unit,
     onCancelDownload: () -> Unit,
@@ -365,6 +374,11 @@ fun SpiceApp(
             onCancelDownload = onCancelDownload,
             onRefreshDevices = onRefreshSpiceConnect,
             onDeviceSelected = onPlaybackDeviceSelected,
+            onHandoffPlayback = onHandoffPlayback,
+            onSleepTimerMinutes = onSleepTimerMinutes,
+            onSleepTimerEndTrack = onSleepTimerEndTrack,
+            onSleepTimerEndQueue = onSleepTimerEndQueue,
+            onSleepTimerCancel = onSleepTimerCancel,
         )
     }
 
@@ -2621,8 +2635,14 @@ private fun FullPlayer(
     onCancelDownload: () -> Unit,
     onRefreshDevices: () -> Unit,
     onDeviceSelected: (String?) -> Unit,
+    onHandoffPlayback: () -> Unit,
+    onSleepTimerMinutes: (Int) -> Unit,
+    onSleepTimerEndTrack: () -> Unit,
+    onSleepTimerEndQueue: () -> Unit,
+    onSleepTimerCancel: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var showSleepTimer by remember { mutableStateOf(false) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -2672,8 +2692,27 @@ private fun FullPlayer(
                 IconButton(onClick = onLyrics, modifier = Modifier.size(40.dp)) {
                     Icon(Icons.Rounded.MusicNote, "Lyrics")
                 }
+                IconButton(onClick = { showSleepTimer = true }, modifier = Modifier.size(40.dp)) {
+                    Icon(
+                        Icons.Rounded.Timer,
+                        "Sleep timer",
+                        tint = if (uiState.sleepTimer.mode != MobileSleepTimerMode.Off) MaterialTheme.colorScheme.primary else Color.White,
+                    )
+                }
                 IconButton(onClick = onLike) {
                     Icon(if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, "Like", tint = if (liked) MaterialTheme.colorScheme.primary else Color.White)
+                }
+            }
+            if (selectedRemoteDevice != null && uiState.currentTrack != null) {
+                OutlinedButton(
+                    onClick = onHandoffPlayback,
+                    modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                ) {
+                    Icon(Icons.Rounded.Devices, null)
+                    Text(
+                        "Move phone playback to ${selectedRemoteDevice.displayName}",
+                        modifier = Modifier.padding(start = 8.dp),
+                    )
                 }
             }
             if (downloading && !downloadProgress.isNullOrBlank()) {
@@ -2723,6 +2762,31 @@ private fun FullPlayer(
                 Text(if (remotePlayback) "Pause receiver" else "Stop", modifier = Modifier.padding(start = 6.dp))
             }
         }
+    }
+
+    if (showSleepTimer) {
+        AlertDialog(
+            onDismissRequest = { showSleepTimer = false },
+            title = { Text("Sleep Timer") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Active: ${formatMobileSleepTimer(uiState.sleepTimer)}", color = SpiceTextMuted)
+                    listOf(15, 30, 60, 90).forEach { minutes ->
+                        TextButton(onClick = { onSleepTimerMinutes(minutes); showSleepTimer = false }) {
+                            Text("Pause in $minutes minutes")
+                        }
+                    }
+                    TextButton(onClick = { onSleepTimerEndTrack(); showSleepTimer = false }) { Text("Pause at end of track") }
+                    TextButton(onClick = { onSleepTimerEndQueue(); showSleepTimer = false }) { Text("Pause at end of queue") }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { onSleepTimerCancel(); showSleepTimer = false }) { Text("Cancel timer") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSleepTimer = false }) { Text("Close") }
+            },
+        )
     }
 }
 

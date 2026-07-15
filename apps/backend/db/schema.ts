@@ -320,35 +320,43 @@ export const systemSettings = pgTable('system_settings', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
-export const listenTogetherSessions = pgTable('listen_together_sessions', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  hostUserId: uuid('host_user_id')
-    .notNull()
-    .references(() => users.id, { onDelete: 'cascade' }),
-  hostProfileId: text('host_profile_id').notNull().default('default'),
-  currentTrackJson: text('current_track_json'),
-  queueJson: text('queue_json').notNull().default('[]'),
-  queueIndex: integer('queue_index').notNull().default(0),
-  isPlaying: boolean('is_playing').notNull().default(false),
-  progressMs: integer('progress_ms').notNull().default(0),
-  durationMs: integer('duration_ms').notNull().default(0),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+export const listenTogetherSessions = pgTable(
+  'listen_together_sessions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    hostUserId: uuid('host_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    hostProfileId: text('host_profile_id').notNull().default('default'),
+    currentTrackJson: text('current_track_json'),
+    queueJson: text('queue_json').notNull().default('[]'),
+    queueIndex: integer('queue_index').notNull().default(0),
+    isPlaying: boolean('is_playing').notNull().default(false),
+    progressMs: integer('progress_ms').notNull().default(0),
+    durationMs: integer('duration_ms').notNull().default(0),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('listen_together_sessions_host_user_unique').on(t.hostUserId)],
+);
 
-export const listenTogetherInvites = pgTable('listen_together_invites', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  sessionId: uuid('session_id')
-    .notNull()
-    .references(() => listenTogetherSessions.id, { onDelete: 'cascade' }),
-  invitedUserId: uuid('invited_user_id')
-    .notNull()
-    .references(() => users.id, { onDelete: 'cascade' }),
-  invitedByUserId: uuid('invited_by_user_id')
-    .notNull()
-    .references(() => users.id, { onDelete: 'cascade' }),
-  status: text('status').notNull().default('pending'), // 'pending', 'accepted', 'rejected'
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-});
+export const listenTogetherInvites = pgTable(
+  'listen_together_invites',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    sessionId: uuid('session_id')
+      .notNull()
+      .references(() => listenTogetherSessions.id, { onDelete: 'cascade' }),
+    invitedUserId: uuid('invited_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    invitedByUserId: uuid('invited_by_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    status: text('status').notNull().default('pending'), // 'pending', 'accepted', 'rejected'
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('listen_together_invites_session_user_unique').on(t.sessionId, t.invitedUserId)],
+);
 
 export const feedbackSubmissions = pgTable(
   'feedback_submissions',

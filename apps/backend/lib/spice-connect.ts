@@ -8,7 +8,8 @@ export type SpiceConnectCommandType =
   | 'volume'
   | 'shuffle'
   | 'repeat'
-  | 'play_track';
+  | 'play_track'
+  | 'handoff';
 
 export type SpiceConnectRepeatMode = 'none' | 'all' | 'one';
 
@@ -165,6 +166,7 @@ const allowedCommands = new Set<SpiceConnectCommandType>([
   'shuffle',
   'repeat',
   'play_track',
+  'handoff',
 ]);
 
 export function normalizeSpiceConnectRepeatMode(

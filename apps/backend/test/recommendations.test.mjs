@@ -172,3 +172,20 @@ test('personalized shelves stay distinct from the mixed recommendation row', () 
   assert.ok(shelves.length > 0);
   assert.equal(shelves.flatMap((shelf) => shelf.tracks).some((item) => mixedIds.has(item.id)), false);
 });
+
+test('profile recommendation controls can restore familiar tracks and hide exact feedback', () => {
+  const profile = buildPrivateTasteProfile({ history: establishedTracks, likedTracks: [], playlists: [] });
+  const seed = buildRecommendationSeeds(profile, 1)[0];
+  const hidden = track('hidden', { sourceId: 'soundcloud' });
+  const ranked = rankRecommendedTracks([{ seed, tracks: [establishedTracks[0], hidden, track('fresh')] }], profile, {
+    limit: 8,
+    preferences: {
+      discoveryLevel: 0,
+      hiddenTrackKeys: ['soundcloud:hidden'],
+      snoozedArtists: [],
+    },
+  });
+
+  assert.equal(ranked.some((item) => item.id === establishedTracks[0].id), true);
+  assert.equal(ranked.some((item) => item.id === hidden.id), false);
+});

@@ -43,6 +43,7 @@ import {
 } from './playback-profiles';
 import { createCrossfadePlan, crossfadeGains, crossfadeStateAt } from './crossfade';
 import { buildSmartQueue, smartQueueArtistKeys, smartQueueTrackKey } from './smart-queue';
+import { buildHomeHistoryShelves } from './home-history';
 import {
   createThemeCssVariables,
   DEFAULT_PURPLE_PALETTE,
@@ -65,7 +66,36 @@ import {
   type RecommendationListenProgress,
   type RecommendationShelf,
 } from './recommendations';
-import { HistorySyncQueue } from './history-sync-queue';
+import {
+  DEFAULT_RECOMMENDATION_PREFERENCES,
+  hideRecommendedTrack,
+  normalizeRecommendationPreferences,
+  snoozeRecommendedArtist,
+  type RecommendationPreferences,
+} from './recommendation-preferences';
+import {
+  appendListeningEvent,
+  buildWeeklyListeningRecap,
+  normalizeListeningEvents,
+  type ListeningEvent,
+} from './listening-insights';
+import {
+  createDurationSleepTimer,
+  formatSleepTimer,
+  normalizeSleepTimer,
+  OFF_SLEEP_TIMER,
+  shouldStopForSleepTimer,
+  type SleepTimerState,
+} from './sleep-timer';
+import {
+  DurableSyncOutbox,
+  SyncOutboxPermanentError,
+  type SyncOutboxItem,
+} from './sync-outbox';
+import {
+  listenTogetherNeedsSeek,
+  listenTogetherTrackKey,
+} from './listen-together-core';
 import {
   isSpiceConnectCommandFresh,
   spiceConnectCommandPollDelay,
@@ -121,6 +151,21 @@ const LISTEN_TOGETHER_HOST_INVITE_POLL_INTERVAL_MS = 30 * 1000;
 const LISTEN_TOGETHER_SYNC_INTERVAL_MS = 5000;
 const UPDATE_RELOAD_REMOTE_SUPPRESS_MS = 30 * 1000;
 const UPDATE_RELOAD_REMOTE_SUPPRESS_KEY = 'spice_update_reload_remote_suppress_until';
+const SYNC_OUTBOX_STORAGE_KEY = 'spice_sync_outbox_v1';
+const LISTEN_TOGETHER_STATE_STORAGE_KEY = 'spice_listen_together_state_v2';
+
+const recommendationPreferencesStorageKey = (profileId: string) => `spice_recommendation_preferences:${profileId}`;
+const listeningEventsStorageKey = (profileId: string) => `spice_listening_events:${profileId}`;
+const sleepTimerStorageKey = (profileId: string) => `spice_sleep_timer:${profileId}`;
+
+const readStoredJson = (key: string): unknown => {
+  if (typeof window === 'undefined') return null;
+  try {
+    return JSON.parse(localStorage.getItem(key) || 'null');
+  } catch {
+    return null;
+  }
+};
 
 const isSpiceDocumentVisible = () => (
   typeof document === 'undefined' || document.visibilityState === 'visible'
@@ -1044,7 +1089,8 @@ type RemoteCommandType =
   | 'volume'
   | 'shuffle'
   | 'repeat'
-  | 'play_track';
+  | 'play_track'
+  | 'handoff';
 
 interface RemoteDevice {
   deviceId: string;
@@ -1082,6 +1128,9 @@ interface RemoteCommand {
     track?: Track;
     queue?: Track[];
     queueIndex?: number;
+    isPlaying?: boolean;
+    shuffleEnabled?: boolean;
+    repeatMode?: 'none' | 'all' | 'one';
   };
   createdAt: string;
 }
@@ -1105,10 +1154,7 @@ interface UserProfile {
   isPrivate?: boolean;
 }
 
-interface QueuedHistorySync {
-  history: Track[];
-  token: string;
-}
+type SyncOutboxPayload = Record<string, unknown>;
 
 interface ProfileSyncProviderResult {
   ok: boolean;
@@ -2037,6 +2083,34 @@ export default function SpiceApp() {
   const [activeSettingsSection, setActiveSettingsSection] = useState('theme-accent');
 
   const activeProfile = profiles.find(p => p.id === activeProfileId) || profiles[0] || initialDefaultProfile;
+  const [recommendationPreferences, setRecommendationPreferences] = useState<RecommendationPreferences>(() => (
+    normalizeRecommendationPreferences(readStoredJson(recommendationPreferencesStorageKey('default')))
+  ));
+  const [listeningEvents, setListeningEvents] = useState<ListeningEvent[]>(() => (
+    normalizeListeningEvents(readStoredJson(listeningEventsStorageKey('default')))
+  ));
+  const [sleepTimer, setSleepTimer] = useState<SleepTimerState>(() => (
+    normalizeSleepTimer(readStoredJson(sleepTimerStorageKey('default')))
+  ));
+  const [sleepTimerNow, setSleepTimerNow] = useState(() => Date.now());
+  const [syncOutboxItems, setSyncOutboxItems] = useState<SyncOutboxItem<SyncOutboxPayload>[]>([]);
+
+  const weeklyListeningRecap = useMemo(
+    () => buildWeeklyListeningRecap(listeningEvents),
+    [listeningEvents],
+  );
+
+  useEffect(() => {
+    setRecommendationPreferences(normalizeRecommendationPreferences(
+      readStoredJson(recommendationPreferencesStorageKey(activeProfileId)),
+    ));
+    setListeningEvents(normalizeListeningEvents(
+      readStoredJson(listeningEventsStorageKey(activeProfileId)),
+    ));
+    setSleepTimer(normalizeSleepTimer(
+      readStoredJson(sleepTimerStorageKey(activeProfileId)),
+    ));
+  }, [activeProfileId]);
 
   // Security Locking
   const [isLocked, setIsLocked] = useState<boolean>(() => {
@@ -2084,6 +2158,11 @@ export default function SpiceApp() {
   const [history, setHistory] = useState<Track[]>(activeProfile.history || []);
   const [queue, setQueue] = useState<Track[]>([IDLE_PLAYER_TRACK]);
   const [queueIndex, setQueueIndex] = useState(0);
+
+  const homeHistoryShelves = useMemo(
+    () => buildHomeHistoryShelves(history),
+    [history],
+  );
 
   const privateTasteProfile = useMemo(() => buildPrivateTasteProfile({
     history,
@@ -2138,8 +2217,10 @@ export default function SpiceApp() {
   const [pendingListenInvites, setPendingListenInvites] = useState<any[]>([]);
   const [listenTogetherDialogOpen, setListenTogetherDialogOpen] = useState(false);
   const [listenTogetherInviteUsername, setListenTogetherInviteUsername] = useState('');
+  const [listenTogetherJoinSessionId, setListenTogetherJoinSessionId] = useState('');
   const [listenTogetherInvitesList, setListenTogetherInvitesList] = useState<any[]>([]);
   const [isSendingListenTogetherInvite, setIsSendingListenTogetherInvite] = useState(false);
+  const [listenTogetherStatus, setListenTogetherStatus] = useState('Ready to start or join a session.');
 
   useEffect(() => {
     const handleDesktopNavigation = (event: Event) => {
@@ -2323,7 +2404,6 @@ export default function SpiceApp() {
 
   // Dynamic Home Page Queries
   const [homeTrending, setHomeTrending] = useState<Track[]>([]);
-  const [homeListenAgain, setHomeListenAgain] = useState<Track[]>([]);
   const [homeRecommended, setHomeRecommended] = useState<Track[]>([]);
   const [homeRecommendationShelves, setHomeRecommendationShelves] = useState<RecommendationShelf<Track>[]>([]);
   const [homeRecommendationSeed, setHomeRecommendationSeed] = useState<import('./recommendations').RecommendationSeed | null>(null);
@@ -2561,7 +2641,8 @@ export default function SpiceApp() {
   const playlistQueueOriginRef = useRef<string | null>(null);
   const relatedQueueInFlightRef = useRef<Map<string, Promise<Track[]>>>(new Map());
   const relatedQueueCacheRef = useRef<Map<string, Track[]>>(new Map());
-  const historySyncQueueRef = useRef<HistorySyncQueue<QueuedHistorySync> | null>(null);
+  const syncOutboxRef = useRef<DurableSyncOutbox<SyncOutboxPayload> | null>(null);
+  const sleepTimerRef = useRef(sleepTimer);
   const playbackRequestRef = useRef(0);
   const shouldAutoPlayRef = useRef(false);
   const clientBootedAtRef = useRef(0);
@@ -2597,35 +2678,63 @@ export default function SpiceApp() {
   const ensurePersonalizedUpNextRef = useRef<(track: Track) => Promise<Track[]>>(async () => []);
 
   useEffect(() => {
-    const queue = new HistorySyncQueue<QueuedHistorySync>(
-      async (profileId, snapshot) => {
-        const res = await spiceFetch('cloud', '/sync/history', {
+    const resolveProfileToken = (profileId: string) => {
+      if (profileId === activeProfileIdRef.current && cloudTokenRef.current) {
+        return cloudTokenRef.current;
+      }
+      try {
+        const storedProfiles = JSON.parse(localStorage.getItem('spice_profiles_list') || '[]') as UserProfile[];
+        return storedProfiles.find((profile) => profile.id === profileId)?.cloudToken || null;
+      } catch {
+        return null;
+      }
+    };
+    const routes: Record<string, string> = {
+      history: '/sync/history',
+      likes: '/sync/likes',
+      playlists: '/sync/playlists',
+      profiles: '/sync/profiles',
+    };
+    const outbox = new DurableSyncOutbox<SyncOutboxPayload>({
+      storage: localStorage,
+      storageKey: SYNC_OUTBOX_STORAGE_KEY,
+      onChange: setSyncOutboxItems,
+      onError: (syncError, item) => {
+        logDebug('error', `Auto-sync ${item.kind} failed: ${syncError instanceof Error ? syncError.message : String(syncError)}`);
+      },
+      send: async (item) => {
+        const token = resolveProfileToken(item.profileId);
+        if (!token) throw new Error('Waiting for this profile to reconnect to SPICE Cloud.');
+        const route = routes[item.kind];
+        if (!route) throw new SyncOutboxPermanentError(`Unsupported sync item: ${item.kind}`);
+        const res = await spiceFetch('cloud', route, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${snapshot.token}`,
+            'Authorization': `Bearer ${token}`,
           },
-          body: JSON.stringify({ history: snapshot.history, profileId }),
+          body: JSON.stringify(item.payload),
         });
         if (res.ok) {
-          logDebug('database', 'Listening history auto-saved to cloud database.');
+          logDebug('database', `${item.kind} auto-saved to cloud database.`);
           return;
         }
         const data = await res.json().catch(() => ({}));
-        const message = data.message || `${res.status} ${res.statusText}`;
-        if (res.status === 429 || res.status >= 500) {
-          throw new Error(`History sync failed: ${message}`);
+        const message = data.message || data.error || `${res.status} ${res.statusText}`;
+        if (res.status === 408 || res.status === 429 || res.status >= 500) {
+          throw new Error(`${item.kind} sync failed: ${message}`);
         }
-        logDebug('error', `Auto-sync history failed: ${message}`);
+        throw new SyncOutboxPermanentError(`${item.kind} sync needs attention: ${message}`);
       },
-      (error) => {
-        logDebug('error', `Auto-sync history failed: ${error instanceof Error ? error.message : String(error)}`);
-      },
-    );
-    historySyncQueueRef.current = queue;
+    });
+    syncOutboxRef.current = outbox;
+    void outbox.flushAll();
+    const retryWhenOnline = () => void outbox.flushAll();
+    window.addEventListener('online', retryWhenOnline);
     return () => {
-      queue.dispose();
-      if (historySyncQueueRef.current === queue) historySyncQueueRef.current = null;
+      window.removeEventListener('online', retryWhenOnline);
+      outbox.dispose();
+      if (syncOutboxRef.current === outbox) syncOutboxRef.current = null;
     };
   }, [logDebug]);
 
@@ -2705,31 +2814,12 @@ export default function SpiceApp() {
     cloudTokenRef.current = cloudToken;
     cloudUserRef.current = cloudUser;
     cloudUsernameRef.current = cloudUsername;
+    if (cloudToken) void syncOutboxRef.current?.flushAll();
   }, [activeProfileId, listenTogetherHostSessionId, cloudToken, cloudUser, cloudUsername]);
 
   const autoSyncProfiles = (updatedProfiles: UserProfile[]) => {
-    if (!cloudToken) return;
-    spiceFetch('cloud', '/sync/profiles', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${cloudToken}`
-      },
-      body: JSON.stringify({ profiles: updatedProfiles })
-    }).then(async res => {
-      if (res.ok) {
-        logDebug('database', 'Profiles configuration auto-saved to cloud database.');
-      } else {
-        const data = await res.json().catch(() => ({}));
-        if (data.error === 'profile_name_taken') {
-          showSpiceNotice(data.message || 'Profile name is already taken by another user.', 'warning');
-        } else {
-          logDebug('error', `Auto-sync profiles failed: ${data.message || res.statusText}`);
-        }
-      }
-    }).catch(err => {
-      logDebug('error', `Auto-sync profiles failed: ${err}`);
-    });
+    if (!cloudTokenRef.current) return;
+    syncOutboxRef.current?.enqueue(activeProfileIdRef.current, 'profiles', { profiles: updatedProfiles });
   };
 
   // ── Sync Active Profile back to Profiles DB Helper ──────────────
@@ -2774,46 +2864,26 @@ export default function SpiceApp() {
       profileId === activeProfileIdRef.current ? cloudTokenRef.current : null
     );
     if (!token) return;
-    historySyncQueueRef.current?.enqueue(profileId, { history: updatedHistory, token });
+    syncOutboxRef.current?.enqueue(profileId, 'history', { history: updatedHistory, profileId });
   };
 
   const autoSyncPlaylists = (updatedPlaylists: Playlist[]) => {
-    if (!cloudToken) return;
-    spiceFetch('cloud', '/sync/playlists', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${cloudToken}`
-      },
-      body: JSON.stringify({
-        playlists: ownedPlaylistsOnly(updatedPlaylists),
-        profileId: activeProfileId,
-        includeSnapshots: false,
-      })
-    }).then(res => {
-      if (res.ok) logDebug('database', 'Playlists configuration auto-saved to cloud database.');
-    }).catch(err => {
-      logDebug('error', `Auto-sync playlists failed: ${err}`);
+    if (!cloudTokenRef.current) return;
+    const profileId = activeProfileIdRef.current;
+    syncOutboxRef.current?.enqueue(profileId, 'playlists', {
+      playlists: ownedPlaylistsOnly(updatedPlaylists),
+      profileId,
+      includeSnapshots: false,
     });
   };
 
   const autoSyncLikes = (updatedLikes: string[], updatedDetails: Record<string, Track>) => {
-    if (!cloudToken) return;
-    spiceFetch('cloud', '/sync/likes', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${cloudToken}`
-      },
-      body: JSON.stringify({
-        likedTracks: updatedLikes,
-        likedTrackDetails: updatedDetails,
-        profileId: activeProfileId,
-      })
-    }).then(res => {
-      if (res.ok) logDebug('database', 'Liked tracks auto-saved to cloud database.');
-    }).catch(err => {
-      logDebug('error', `Auto-sync likes failed: ${err}`);
+    if (!cloudTokenRef.current) return;
+    const profileId = activeProfileIdRef.current;
+    syncOutboxRef.current?.enqueue(profileId, 'likes', {
+      likedTracks: updatedLikes,
+      likedTrackDetails: updatedDetails,
+      profileId,
     });
   };
 
@@ -4661,10 +4731,31 @@ export default function SpiceApp() {
     }
   };
 
+  const disconnectListenTogetherForIdentityChange = (token = cloudTokenRef.current) => {
+    if (token && listenTogetherSession) {
+      void spiceFetch('cloud', '/listen-together/session', {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => undefined);
+    } else if (token && listenTogetherHostSessionId) {
+      void spiceFetch('cloud', '/listen-together/invite', {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      }, { sessionId: listenTogetherHostSessionId }).catch(() => undefined);
+    }
+    setListenTogetherSession(null);
+    setListenTogetherHostSessionId(null);
+    setListenTogetherHostName(null);
+    setListenTogetherInvitesList([]);
+    setListenTogetherStatus('Ready to start or join a session.');
+    localStorage.removeItem(LISTEN_TOGETHER_STATE_STORAGE_KEY);
+  };
+
   const handleLogout = () => {
     remoteRequestGenerationRef.current += 1;
     const logoutProfileId = activeProfileIdRef.current;
-    historySyncQueueRef.current?.cancel(logoutProfileId);
+    disconnectListenTogetherForIdentityChange();
+    syncOutboxRef.current?.cancelProfile(logoutProfileId);
     localStorage.removeItem('spice_cloud_token');
     localStorage.removeItem('spice_cloud_user');
     localStorage.removeItem(remotePairingCredentialStorageKey(logoutProfileId));
@@ -4693,34 +4784,6 @@ export default function SpiceApp() {
     setAuthError(null);
     logDebug('auth', 'Logged out from Spice Cloud Account. Switched to offline database sandbox mode.');
   };
-
-  // ── Listen Again Calculation Hook ──────────────────────────────
-  useEffect(() => {
-    if (history && history.length > 0) {
-      const uniqueHistoryTracks: Track[] = [];
-      const ids = new Set<string>();
-      history.forEach(t => {
-        if (!ids.has(t.id)) {
-          ids.add(t.id);
-          uniqueHistoryTracks.push(t);
-        }
-      });
-
-      if (uniqueHistoryTracks.length < 5 && homeTrending.length > 0) {
-        const combined = [...uniqueHistoryTracks];
-        homeTrending.forEach(t => {
-          if (!ids.has(t.id) && combined.length < 8) {
-            combined.push(t);
-          }
-        });
-        setHomeListenAgain(combined);
-      } else {
-        setHomeListenAgain(uniqueHistoryTracks.slice(0, 8));
-      }
-    } else {
-      setHomeListenAgain([]);
-    }
-  }, [history, homeTrending]);
 
   // Sync on load or profile switch
   useEffect(() => {
@@ -4827,6 +4890,8 @@ export default function SpiceApp() {
         shuffle: isShuffleRef.current,
         repeat: repeatModeRef.current,
         likeStatus: likedTracks.has(currentTrack.id),
+        queueIndex: queueIndexRef.current,
+        queueLength: queueRef.current.length,
       };
     };
 
@@ -4945,6 +5010,30 @@ export default function SpiceApp() {
     updateActiveProfileData({ history: newHist });
   };
 
+  const persistSleepTimer = (nextTimer: SleepTimerState) => {
+    const normalized = normalizeSleepTimer(nextTimer);
+    sleepTimerRef.current = normalized;
+    setSleepTimer(normalized);
+    setSleepTimerNow(currentTimestampMs());
+    const key = sleepTimerStorageKey(activeProfileIdRef.current);
+    if (normalized.mode === 'off') localStorage.removeItem(key);
+    else localStorage.setItem(key, JSON.stringify(normalized));
+  };
+
+  const stopPlaybackForSleepTimer = () => {
+    cancelPreparedCrossfade();
+    clearPlaybackRetryTimer();
+    shouldAutoPlayRef.current = false;
+    isPlayingRef.current = false;
+    audioSlotRefs.current.forEach((audio) => audio?.pause());
+    if (ytPlayerRef.current && typeof ytPlayerRef.current.pauseVideo === 'function') {
+      ytPlayerRef.current.pauseVideo();
+    }
+    setPlaybackPlaying(false);
+    persistSleepTimer(OFF_SLEEP_TIMER);
+    showSpiceNotice('Sleep timer finished. Playback is paused.', 'info');
+  };
+
   const handleAudioEnded = (slot: 0 | 1 = activeAudioSlotRef.current) => {
     if (slot !== activeAudioSlotRef.current) {
       if (preparedCrossfadeRef.current?.slot === slot) {
@@ -4987,6 +5076,16 @@ export default function SpiceApp() {
         endedTrack,
         endedDurationSeconds,
       );
+    }
+
+    if (shouldStopForSleepTimer({
+      timer: sleepTimerRef.current,
+      event: 'track-ended',
+      trackKey: endedTrackKey,
+      isQueueTail: currentQueueIndex >= currentQueue.length - 1,
+    })) {
+      stopPlaybackForSleepTimer();
+      return;
     }
 
     if (preparedCrossfadeRef.current?.started && finalizePreparedCrossfade()) return;
@@ -5449,6 +5548,20 @@ export default function SpiceApp() {
         ...profileHistory.filter((item) => playbackTrackKey(item) !== currentTrackKey),
       ].slice(0, 50);
       const nextSongsPlayed = (profile.songsPlayed || 0) + 1;
+      const completedAt = Date.now();
+      setListeningEvents((previousEvents) => {
+        const nextEvents = appendListeningEvent(previousEvents, {
+          trackId: currentTrack.id,
+          sourceId: currentTrack.sourceId || 'youtube_music',
+          title: currentTrack.title,
+          artistNames: currentTrack.artists.map((artist) => artist.name),
+          listenedMs: Math.round(Math.max(threshold, progressRef.current) * 1000),
+          completedAt,
+          discovered: !existing,
+        }, completedAt);
+        localStorage.setItem(listeningEventsStorageKey(profile.id), JSON.stringify(nextEvents));
+        return nextEvents;
+      });
 
       activeProfileRef.current = {
         ...profile,
@@ -6392,11 +6505,44 @@ export default function SpiceApp() {
         }
         break;
       }
+      case 'handoff': {
+        const payloadTrack = command.payload?.track;
+        if (payloadTrack && typeof payloadTrack === 'object' && payloadTrack.id) {
+          const hydratedTrack = enrichTrackSnapshot(payloadTrack as Track);
+          const hydratedQueue = Array.isArray(command.payload?.queue)
+            ? enrichTrackSnapshots(command.payload.queue)
+            : [hydratedTrack];
+          const queueIndexHint = Number(command.payload?.queueIndex);
+          const targetProgress = Number(command.payload?.progress);
+          const targetVolume = Number(command.payload?.volume);
+          if (typeof command.payload?.shuffleEnabled === 'boolean') {
+            applyLocalShuffleMode(command.payload.shuffleEnabled);
+          }
+          if (isRepeatMode(command.payload?.repeatMode)) {
+            applyLocalRepeatMode(command.payload.repeatMode);
+          }
+          if (Number.isFinite(targetVolume)) {
+            const safeVolume = Math.max(0, Math.min(100, Math.round(targetVolume)));
+            volumeRef.current = safeVolume;
+            setVolume(safeVolume);
+          }
+          void playTrack(
+            hydratedTrack,
+            hydratedQueue.length > 0 ? hydratedQueue : [hydratedTrack],
+            Number.isInteger(queueIndexHint) ? queueIndexHint : undefined,
+          ).then(() => {
+            if (Number.isFinite(targetProgress) && targetProgress >= 0) seekToPosition(targetProgress);
+            if (command.payload?.isPlaying === false) pauseCurrentPlayback();
+            else resumeCurrentPlayback();
+          });
+        }
+        break;
+      }
     }
 
     setRemoteStatus(`Spice Connect command received: ${command.command}.`);
     console.info(`[Spice Connect] applied command ${command.id} (${command.command}) from ${command.sourceDeviceId}`);
-    scheduleRemoteDeviceSync(command.command === 'play_track' ? 900 : 300);
+    scheduleRemoteDeviceSync(command.command === 'handoff' ? 1400 : command.command === 'play_track' ? 900 : 300);
   };
 
   const pollRemoteCommands = async () => {
@@ -6454,11 +6600,11 @@ export default function SpiceApp() {
   const sendRemoteCommand = async (command: RemoteCommandType, payload: RemoteCommand['payload'] = {}) => {
     if (!remoteAuthToken) {
       setRemoteStatus('Sign in or pair this device to use Spice Connect.');
-      return;
+      return false;
     }
     if (!selectedRemoteDeviceId) {
       setRemoteStatus('Choose another Spice Connect device first.');
-      return;
+      return false;
     }
     const targetRemoteDevice = remoteDevices.find((device) => device.deviceId === selectedRemoteDeviceId);
     if (
@@ -6467,11 +6613,11 @@ export default function SpiceApp() {
     ) {
       setRemoteStatus(`${targetRemoteDevice.displayName} has not checked in recently. Refresh Spice Connect before controlling it.`);
       void loadRemoteDevices(true);
-      return;
+      return false;
     }
     if (command === 'play' && targetRemoteDevice && !targetRemoteDevice.currentTrack) {
       setRemoteStatus(`Choose a track for ${targetRemoteDevice.displayName} before pressing play.`);
-      return;
+      return false;
     }
 
     const requestGeneration = remoteRequestGenerationRef.current;
@@ -6490,10 +6636,10 @@ export default function SpiceApp() {
           payload,
         }),
       });
-      if (requestGeneration !== remoteRequestGenerationRef.current) return;
+      if (requestGeneration !== remoteRequestGenerationRef.current) return false;
       handleRemoteAuthorizationResponse(response, requestGeneration);
       const data = await response.json().catch(() => ({}));
-      if (requestGeneration !== remoteRequestGenerationRef.current) return;
+      if (requestGeneration !== remoteRequestGenerationRef.current) return false;
       if (!response.ok) {
         throw new Error(data.message || `Spice Connect command failed with status ${response.status}.`);
       }
@@ -6501,14 +6647,16 @@ export default function SpiceApp() {
       setRemoteStatus(`Sent ${command} through Spice Connect.`);
       console.info(`[Spice Connect] queued ${command} from ${remoteDeviceId} to ${selectedRemoteDeviceId}`);
       scheduleRemoteTargetRefresh();
+      return true;
     } catch (error) {
-      if (requestGeneration !== remoteRequestGenerationRef.current) return;
+      if (requestGeneration !== remoteRequestGenerationRef.current) return false;
       optimisticRemoteDeviceStateRef.current = null;
       const message = error instanceof Error ? error.message : 'Spice Connect command failed.';
       setRemoteStatus(message);
       logDebug('error', `Spice Connect command send failed: ${message}`);
       console.error(`[Spice Connect] command send failed from ${remoteDeviceId} to ${selectedRemoteDeviceId}: ${message}`);
       void loadRemoteDevices();
+      return false;
     }
   };
 
@@ -7200,13 +7348,16 @@ export default function SpiceApp() {
 
     const listenTogetherIntent = params.get('listenTogether');
     if (listenTogetherIntent) {
-      if (cloudToken) {
-        setListenTogetherHostSessionId(listenTogetherIntent);
-        setListenTogetherSession(null);
-        showSpiceNotice('Connecting to shared Listen Together session...', 'info');
-      } else {
-        showSpiceNotice('Please sign in to join the Listen Together session.', 'warning');
-      }
+      const sessionId = listenTogetherIntent.trim();
+      setListenTogetherHostSessionId(sessionId);
+      setListenTogetherSession(null);
+      setListenTogetherStatus('Connecting to the host now…');
+      localStorage.setItem(LISTEN_TOGETHER_STATE_STORAGE_KEY, JSON.stringify({
+        role: 'listener',
+        sessionId,
+        profileId: activeProfileIdRef.current,
+      }));
+      showSpiceNotice('Connecting to shared Listen Together session...', 'info');
       consumedIntent = true;
     } else if (songIntent) {
       const sharedTrack = decodeSongShareToken(songIntent);
@@ -7253,7 +7404,7 @@ export default function SpiceApp() {
     if (!consumedIntent) return;
 
     launchIntentHandledRef.current = true;
-    for (const key of ['page', 'auth', 'q', 'search', 'provider', 'song']) {
+    for (const key of ['page', 'auth', 'q', 'search', 'provider', 'song', 'listenTogether']) {
       params.delete(key);
     }
 
@@ -7288,6 +7439,48 @@ export default function SpiceApp() {
     setSidebarSettingsEnabled(enabled);
     localStorage.setItem('spice_sidebar_settings_enabled', String(enabled));
   };
+
+  const persistRecommendationPreferences = (nextValue: RecommendationPreferences) => {
+    const normalized = normalizeRecommendationPreferences(nextValue);
+    setRecommendationPreferences(normalized);
+    localStorage.setItem(
+      recommendationPreferencesStorageKey(activeProfileIdRef.current),
+      JSON.stringify(normalized),
+    );
+  };
+
+  const hideRecommendation = (track: Track) => {
+    persistRecommendationPreferences(hideRecommendedTrack(recommendationPreferences, track));
+    showSpiceNotice(`Hidden “${track.title}” from recommendations for this profile.`, 'success');
+  };
+
+  const snoozeRecommendationArtist = (track: Track) => {
+    const artist = track.artists[0];
+    if (!artist) return;
+    persistRecommendationPreferences(snoozeRecommendedArtist(recommendationPreferences, artist));
+    showSpiceNotice(`${artist.name} is snoozed from recommendations for 7 days.`, 'success');
+  };
+
+  const recommendationFeedbackControls = (track: Track) => (
+    <div style={{ display: 'flex', gap: '6px', marginTop: '7px' }}>
+      <button
+        type="button"
+        className="recommendation-feedback-button"
+        onClick={(event) => { event.stopPropagation(); hideRecommendation(track); }}
+        title="Do not recommend this track"
+      >
+        Hide
+      </button>
+      <button
+        type="button"
+        className="recommendation-feedback-button"
+        onClick={(event) => { event.stopPropagation(); snoozeRecommendationArtist(track); }}
+        title="Pause recommendations from this artist for 7 days"
+      >
+        Snooze artist
+      </button>
+    </div>
+  );
 
   useEffect(() => {
     if (currentPage !== 'home' && currentPage !== 'search') {
@@ -7325,11 +7518,16 @@ export default function SpiceApp() {
       return cached ? [{ seed, tracks: cached.tracks }] : [];
     });
     const commitRecommendations = (batches: { seed: import('./recommendations').RecommendationSeed; tracks: Track[] }[]) => {
-      const ranked = rankRecommendedTracks(batches, profile, { exclude, limit: 12 });
+      const ranked = rankRecommendedTracks(batches, profile, {
+        exclude,
+        limit: 12,
+        preferences: recommendationPreferences,
+      });
       const shelves = buildRecommendationShelves(batches, profile, {
         exclude: [...exclude, ...ranked],
         limitPerShelf: 8,
         minimumTracks: 3,
+        preferences: recommendationPreferences,
       });
       rememberTrackSnapshots([
         ...ranked,
@@ -7385,7 +7583,7 @@ export default function SpiceApp() {
       cancelled = true;
       clearTimeout(timeout);
     };
-  }, [currentPage, privateTasteProfile, currentTrackKey]);
+  }, [currentPage, privateTasteProfile, currentTrackKey, recommendationPreferences]);
 
   // Playlists Operations
   const persistCustomPlaylists = (updated: Playlist[], syncOwnedPlaylists = true) => {
@@ -7964,6 +8162,21 @@ export default function SpiceApp() {
     } catch { /* silent */ }
   }, [cloudToken]);
 
+  const joinListenTogetherSession = (rawSessionId: string) => {
+    const sessionId = rawSessionId.trim();
+    if (!sessionId) return;
+    setListenTogetherSession(null);
+    setListenTogetherHostSessionId(sessionId);
+    setListenTogetherHostName(null);
+    setListenTogetherStatus('Connecting to the host now…');
+    setListenTogetherJoinSessionId('');
+    localStorage.setItem(LISTEN_TOGETHER_STATE_STORAGE_KEY, JSON.stringify({
+      role: 'listener',
+      sessionId,
+      profileId: activeProfileIdRef.current,
+    }));
+  };
+
   const handleStartListenTogetherSession = async () => {
     if (!cloudToken) {
       showSpiceNotice('Please sign in to use Listen Together.', 'warning');
@@ -7984,6 +8197,12 @@ export default function SpiceApp() {
         setListenTogetherSession(data.session);
         setListenTogetherHostSessionId(null);
         setListenTogetherHostName(null);
+        setListenTogetherStatus('Live — playback and queue are being shared.');
+        localStorage.setItem(LISTEN_TOGETHER_STATE_STORAGE_KEY, JSON.stringify({
+          role: 'host',
+          sessionId: data.session.id,
+          profileId: activeProfileIdRef.current,
+        }));
         showSpiceNotice('Listen Together session started!', 'success');
         void fetchListenTogetherInvitesList(data.session.id);
       } else {
@@ -8006,6 +8225,8 @@ export default function SpiceApp() {
       if (res.ok) {
         setListenTogetherSession(null);
         setListenTogetherInvitesList([]);
+        setListenTogetherStatus('Session ended.');
+        localStorage.removeItem(LISTEN_TOGETHER_STATE_STORAGE_KEY);
         showSpiceNotice('Listen Together session ended.', 'success');
       }
     } catch {
@@ -8060,6 +8281,12 @@ export default function SpiceApp() {
         if (action === 'accept') {
           setListenTogetherHostSessionId(data.sessionId);
           setListenTogetherSession(null);
+          setListenTogetherStatus('Connecting to the host now…');
+          localStorage.setItem(LISTEN_TOGETHER_STATE_STORAGE_KEY, JSON.stringify({
+            role: 'listener',
+            sessionId: data.sessionId,
+            profileId: activeProfileIdRef.current,
+          }));
           showSpiceNotice('Joined Listen Together session!', 'success');
         } else {
           showSpiceNotice('Invitation declined.', 'success');
@@ -8084,6 +8311,8 @@ export default function SpiceApp() {
     }
     setListenTogetherHostSessionId(null);
     setListenTogetherHostName(null);
+    setListenTogetherStatus('You left the session.');
+    localStorage.removeItem(LISTEN_TOGETHER_STATE_STORAGE_KEY);
     showSpiceNotice('Left Listen Together session.', 'success');
   };
 
@@ -8115,6 +8344,12 @@ export default function SpiceApp() {
           setListenTogetherSession(data.session);
           setListenTogetherHostSessionId(null);
           setListenTogetherHostName(null);
+          setListenTogetherStatus('Live — playback and queue are being shared.');
+          localStorage.setItem(LISTEN_TOGETHER_STATE_STORAGE_KEY, JSON.stringify({
+            role: 'host',
+            sessionId: data.session.id,
+            profileId: activeProfileIdRef.current,
+          }));
           showSpiceNotice('Listen Together session started!', 'success');
 
           const inviteRes = await spiceFetch('cloud', '/listen-together/invite', {
@@ -8146,6 +8381,46 @@ export default function SpiceApp() {
     }
   };
 
+  useEffect(() => {
+    if (!isMounted || listenTogetherSession || listenTogetherHostSessionId) return;
+    let cancelled = false;
+    let storedState: { role?: string; sessionId?: string; profileId?: string } | null = null;
+    try {
+      storedState = JSON.parse(localStorage.getItem(LISTEN_TOGETHER_STATE_STORAGE_KEY) || 'null');
+    } catch {
+      localStorage.removeItem(LISTEN_TOGETHER_STATE_STORAGE_KEY);
+    }
+    if (storedState?.profileId && storedState.profileId !== activeProfileId) return;
+    if (storedState?.role === 'listener' && storedState.sessionId) {
+      setListenTogetherHostSessionId(storedState.sessionId);
+      setListenTogetherStatus('Reconnecting to the host…');
+      return;
+    }
+    if (!cloudToken) return;
+
+    const recoverHostedSession = async () => {
+      try {
+        const res = await spiceFetch('cloud', '/listen-together/session', {
+          headers: { Authorization: `Bearer ${cloudToken}` },
+        });
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        if (!data.session?.id || !data.isActive) return;
+        setListenTogetherSession(data.session);
+        setListenTogetherStatus('Reconnected — playback and queue are being shared.');
+        localStorage.setItem(LISTEN_TOGETHER_STATE_STORAGE_KEY, JSON.stringify({
+          role: 'host',
+          sessionId: data.session.id,
+          profileId: activeProfileId,
+        }));
+      } catch {
+        // Recovery is best-effort; the user can still start a new session.
+      }
+    };
+    void recoverHostedSession();
+    return () => { cancelled = true; };
+  }, [activeProfileId, cloudToken, isMounted, listenTogetherSession, listenTogetherHostSessionId]);
+
   // Poll for Listen Together Invites
   useEffect(() => {
     if (!cloudToken) {
@@ -8162,16 +8437,22 @@ export default function SpiceApp() {
   // Host Sync Loop
   useEffect(() => {
     if (!cloudToken || !listenTogetherSession) return;
+    let stopped = false;
+    let inviteTimeout: number | null = null;
+    let syncTimeout: number | null = null;
 
-    const inviteInterval = window.setInterval(() => {
-      void fetchListenTogetherInvitesList(listenTogetherSession.id);
-    }, LISTEN_TOGETHER_HOST_INVITE_POLL_INTERVAL_MS);
+    const refreshInvites = async () => {
+      await fetchListenTogetherInvitesList(listenTogetherSession.id);
+      if (!stopped) {
+        inviteTimeout = window.setTimeout(refreshInvites, LISTEN_TOGETHER_HOST_INVITE_POLL_INTERVAL_MS);
+      }
+    };
 
-    const syncInterval = window.setInterval(async () => {
+    const syncHostPlayback = async () => {
       const targetTrack = currentTrackRef.current;
       const currentQueue = queueRef.current || [];
       try {
-        await spiceFetch('cloud', '/listen-together/sync', {
+        const res = await spiceFetch('cloud', '/listen-together/sync', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -8183,16 +8464,36 @@ export default function SpiceApp() {
             queue: currentQueue.slice(0, 80),
             queueIndex: queueIndexRef.current,
             isPlaying: isPlayingRef.current,
+            shuffleEnabled: isShuffleRef.current,
+            repeatMode: repeatModeRef.current,
             progressMs: progressRef.current * 1000,
             durationMs: durationRef.current * 1000
           })
         });
-      } catch { /* silent */ }
-    }, LISTEN_TOGETHER_SYNC_INTERVAL_MS);
+        if (res.ok) {
+          setListenTogetherStatus('Live — playback and queue are being shared.');
+        } else if (res.status === 403 || res.status === 404) {
+          setListenTogetherSession(null);
+          localStorage.removeItem(LISTEN_TOGETHER_STATE_STORAGE_KEY);
+          showSpiceNotice('This Listen Together room is no longer available.', 'warning');
+          return;
+        } else {
+          setListenTogetherStatus('Connection interrupted. Retrying automatically…');
+        }
+      } catch {
+        setListenTogetherStatus('Offline. The room will reconnect automatically.');
+      } finally {
+        if (!stopped) syncTimeout = window.setTimeout(syncHostPlayback, LISTEN_TOGETHER_SYNC_INTERVAL_MS);
+      }
+    };
+
+    void refreshInvites();
+    void syncHostPlayback();
 
     return () => {
-      window.clearInterval(inviteInterval);
-      window.clearInterval(syncInterval);
+      stopped = true;
+      if (inviteTimeout !== null) window.clearTimeout(inviteTimeout);
+      if (syncTimeout !== null) window.clearTimeout(syncTimeout);
     };
   }, [cloudToken, listenTogetherSession, fetchListenTogetherInvitesList]);
 
@@ -8208,44 +8509,89 @@ export default function SpiceApp() {
     enrichTrackSnapshotRef.current = enrichTrackSnapshot;
   });
 
+  useEffect(() => {
+    const handleDesktopSleepTimerExpired = () => pauseCurrentPlaybackRef.current();
+    window.addEventListener('spice-desktop-sleep-timer-expired', handleDesktopSleepTimerExpired);
+    return () => window.removeEventListener('spice-desktop-sleep-timer-expired', handleDesktopSleepTimerExpired);
+  }, []);
+
+  useEffect(() => {
+    sleepTimerRef.current = sleepTimer;
+  }, [sleepTimer]);
+
+  useEffect(() => {
+    if (sleepTimer.mode !== 'duration') return;
+    const evaluateSleepTimer = () => {
+      const now = Date.now();
+      setSleepTimerNow(now);
+      if (shouldStopForSleepTimer({ timer: sleepTimerRef.current, now })) {
+        stopPlaybackForSleepTimer();
+      }
+    };
+    evaluateSleepTimer();
+    const interval = window.setInterval(evaluateSleepTimer, 1000);
+    return () => window.clearInterval(interval);
+  }, [sleepTimer.mode, sleepTimer.expiresAt]);
+
   // Listener Sync Loop
   useEffect(() => {
-    if (!cloudToken || !listenTogetherHostSessionId) return;
+    if (!listenTogetherHostSessionId) return;
+    let stopped = false;
+    let syncTimeout: number | null = null;
 
-    const syncInterval = window.setInterval(async () => {
+    const syncWithHost = async () => {
       try {
         const res = await spiceFetch('cloud', '/listen-together/sync', undefined, { sessionId: listenTogetherHostSessionId });
         if (!res.ok) {
           if (res.status === 404) {
             setListenTogetherHostSessionId(null);
             setListenTogetherHostName(null);
+            setListenTogetherStatus('The host ended this session.');
+            localStorage.removeItem(LISTEN_TOGETHER_STATE_STORAGE_KEY);
             showSpiceNotice('Listen Together session ended by host.', 'info');
+            return;
           }
+          setListenTogetherStatus('Connection interrupted. Retrying automatically…');
           return;
         }
         const data = await res.json();
         if (!data.isActive) {
           setListenTogetherHostSessionId(null);
           setListenTogetherHostName(null);
+          setListenTogetherStatus('The host is no longer active.');
+          localStorage.removeItem(LISTEN_TOGETHER_STATE_STORAGE_KEY);
           showSpiceNotice('Listen Together session is inactive.', 'info');
           return;
         }
 
         setListenTogetherHostName(data.hostName);
+        setListenTogetherStatus('In sync with the host.');
 
         const hostTrack = data.currentTrack;
         const hostIsPlaying = data.isPlaying;
-        const hostProgress = data.progressMs / 1000;
-        const hostQueue = data.queue || [];
+        const hostProgressMs = Number(data.targetProgressMs ?? data.progressMs ?? 0);
+        const hostQueue = Array.isArray(data.queue) ? data.queue : [];
+        const hydratedQueue = enrichTrackSnapshots(hostQueue.length > 0 ? hostQueue : (hostTrack ? [hostTrack] : []));
+        const hostQueueIndex = Math.max(0, Math.min(
+          hydratedQueue.length - 1,
+          Number.isInteger(data.queueIndex) ? data.queueIndex : 0,
+        ));
 
         const localTrack = currentTrackRef.current;
-        const localIsPlaying = isPlayingRef.current;
-        const localProgress = progressRef.current;
-
-        if (hostTrack && (!localTrack || localTrack.id !== hostTrack.id)) {
-          const hydratedQueue = hostQueue.length > 0 ? hostQueue : [hostTrack];
-          void playTrackRef.current(enrichTrackSnapshotRef.current(hostTrack), enrichTrackSnapshots(hydratedQueue), undefined, true);
-          return;
+        const hostTrackChanged = hostTrack && listenTogetherTrackKey(localTrack) !== listenTogetherTrackKey(hostTrack);
+        if (hostTrackChanged) {
+          await playTrackRef.current(
+            enrichTrackSnapshotRef.current(hostTrack),
+            hydratedQueue,
+            hostQueueIndex,
+            true,
+          );
+          if (stopped) return;
+        } else if (hostTrack && trackListFingerprint(queueRef.current) !== trackListFingerprint(hydratedQueue)) {
+          queueRef.current = hydratedQueue;
+          queueIndexRef.current = hostQueueIndex;
+          setQueue(hydratedQueue);
+          setQueueIndex(hostQueueIndex);
         }
 
         if (!hostTrack && localTrack && localTrack.id !== 'placeholder') {
@@ -8255,7 +8601,16 @@ export default function SpiceApp() {
 
         if (!hostTrack) return;
 
-        if (hostIsPlaying !== localIsPlaying) {
+        if (data.shuffleEnabled !== isShuffleRef.current) {
+          isShuffleRef.current = Boolean(data.shuffleEnabled);
+          setIsShuffle(Boolean(data.shuffleEnabled));
+        }
+        if (isRepeatMode(data.repeatMode) && data.repeatMode !== repeatModeRef.current) {
+          repeatModeRef.current = data.repeatMode;
+          setRepeatMode(data.repeatMode);
+        }
+
+        if (hostIsPlaying !== isPlayingRef.current) {
           if (hostIsPlaying) {
             resumeCurrentPlaybackRef.current();
           } else {
@@ -8263,15 +8618,23 @@ export default function SpiceApp() {
           }
         }
 
-        const progressDiff = Math.abs(hostProgress - localProgress);
-        if (progressDiff > 3 && hostProgress >= 0) {
-          seekToPositionRef.current(hostProgress);
+        if (hostProgressMs >= 0 && listenTogetherNeedsSeek(progressRef.current, hostProgressMs)) {
+          seekToPositionRef.current(hostProgressMs / 1000);
         }
-      } catch { /* silent */ }
-    }, LISTEN_TOGETHER_SYNC_INTERVAL_MS);
+      } catch {
+        setListenTogetherStatus('Offline. Reconnecting to the host automatically…');
+      } finally {
+        if (!stopped) syncTimeout = window.setTimeout(syncWithHost, LISTEN_TOGETHER_SYNC_INTERVAL_MS);
+      }
+    };
 
-    return () => window.clearInterval(syncInterval);
-  }, [cloudToken, listenTogetherHostSessionId]);
+    void syncWithHost();
+
+    return () => {
+      stopped = true;
+      if (syncTimeout !== null) window.clearTimeout(syncTimeout);
+    };
+  }, [listenTogetherHostSessionId]);
 
   useEffect(() => {
     if (cloudToken) {
@@ -8527,7 +8890,6 @@ export default function SpiceApp() {
     optimisticRemoteDeviceStateRef.current = null;
     setSelectedRemoteDeviceId(safeDeviceId);
     if (safeDeviceId) {
-      pauseCurrentPlayback();
       localStorage.setItem('spice_connect_receiver_id', safeDeviceId);
       const device = remoteTargetDevices.find((entry) => entry.deviceId === safeDeviceId);
       setRemoteStatus(`Player controls now target ${device?.displayName || 'selected Spice Connect device'}.`);
@@ -8580,6 +8942,41 @@ export default function SpiceApp() {
       progress: 0,
       duration: nextTrack.durationMs ? nextTrack.durationMs / 1000 : 0,
     });
+  };
+
+  const handoffPlaybackToSelectedDevice = async () => {
+    if (!selectedRemoteDevice || currentTrackRef.current.id === 'placeholder') {
+      setRemoteStatus('Start a track here, then choose an online device to move playback.');
+      return;
+    }
+    if (!canControlSelectedRemoteReceiver('handoff')) return;
+    const sourceTrack = currentTrackRef.current;
+    const sourceQueue = queueRef.current.length > 0 ? queueRef.current : [sourceTrack];
+    const sourceWasPlaying = isPlayingRef.current;
+    const sent = await sendRemoteCommand('handoff', {
+      track: sourceTrack,
+      queue: sourceQueue.slice(0, 80),
+      queueIndex: queueIndexRef.current,
+      progress: progressRef.current,
+      volume: Math.min(100, volumeRef.current),
+      isPlaying: sourceWasPlaying,
+      shuffleEnabled: isShuffleRef.current,
+      repeatMode: repeatModeRef.current,
+    });
+    if (!sent) return;
+    patchSelectedRemoteDevice({
+      currentTrack: sourceTrack,
+      queue: sourceQueue.slice(0, 80),
+      queueIndex: queueIndexRef.current,
+      progress: progressRef.current,
+      duration: durationRef.current,
+      volume: Math.min(100, volumeRef.current),
+      isPlaying: sourceWasPlaying,
+      shuffleEnabled: isShuffleRef.current,
+      repeatMode: repeatModeRef.current,
+    });
+    pauseCurrentPlayback();
+    setRemoteStatus(`Playback moved to ${selectedRemoteDevice.displayName} at ${formatTime(progressRef.current)}.`);
   };
 
   const startTrackOnActiveReceiver = (
@@ -8853,6 +9250,11 @@ export default function SpiceApp() {
     startTrackOnActiveReceiver(track);
   };
 
+  const getLikedTrackToggleHandler = (track: Track) => (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    toggleLike(track);
+  };
+
   const clearHistory = () => {
     requestSpiceConfirm({
       title: 'Clear Recently Played?',
@@ -8889,6 +9291,9 @@ const getMaskedEmail = (email: string) => {
 };
 
   const switchProfile = (profileId: string, profileOverride?: UserProfile) => {
+    if (profileId !== activeProfileIdRef.current) {
+      disconnectListenTogetherForIdentityChange();
+    }
     remoteRequestGenerationRef.current += 1;
     playbackRequestRef.current += 1;
     setEmailVerification(null);
@@ -9093,7 +9498,7 @@ const getMaskedEmail = (email: string) => {
       confirmLabel: 'Delete Profile',
       kind: 'danger',
       onConfirm: () => {
-        historySyncQueueRef.current?.cancel(profileId);
+        syncOutboxRef.current?.cancelProfile(profileId);
         localStorage.removeItem(remotePairingCredentialStorageKey(profileId));
         const updated = profiles.filter(p => p.id !== profileId);
         setProfiles(updated);
@@ -9339,7 +9744,7 @@ const getMaskedEmail = (email: string) => {
         if (!newPlaylists.some(p => p.title === pl.title && p.tracks.length === pl.tracks.length)) {
           newPlaylists.push({
             ...pl,
-            id: 'backup_' + Date.now() + '_' + randomSuffix()
+            id: `backup_${createPlaylistId()}`
           });
         }
       }
@@ -10067,6 +10472,10 @@ const getMaskedEmail = (email: string) => {
               </button>
             </div>
 
+            <div role="status" style={{ marginBottom: '18px', padding: '10px 12px', border: '1px solid var(--border-color)', borderRadius: '10px', color: 'var(--text-secondary)', background: 'var(--card-bg)', fontSize: '0.78rem' }}>
+              {listenTogetherStatus}
+            </div>
+
             {listenTogetherSession ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                 <div style={{ background: 'rgba(236,72,153,0.06)', border: '1px solid rgba(236,72,153,0.2)', padding: '16px', borderRadius: '16px', textAlign: 'center' }}>
@@ -10180,10 +10589,20 @@ const getMaskedEmail = (email: string) => {
                   🔑
                 </div>
                 <div>
-                  <h3 style={{ margin: '0 0 6px 0', fontSize: '1.15rem' }}>Cloud Account Required</h3>
+                  <h3 style={{ margin: '0 0 6px 0', fontSize: '1.15rem' }}>Join without signing in</h3>
                   <p style={{ margin: 0, fontSize: '0.86rem', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
-                    You need to be signed in to a cloud account to host or join shared Listen Together sessions.
+                    Shared room links work without an account. Sign in only when you want to host or send username invites.
                   </p>
+                </div>
+                <div style={{ display: 'flex', gap: '8px', width: '100%' }}>
+                  <input
+                    value={listenTogetherJoinSessionId}
+                    onChange={(event) => setListenTogetherJoinSessionId(event.target.value)}
+                    onKeyDown={(event) => event.key === 'Enter' && joinListenTogetherSession(listenTogetherJoinSessionId)}
+                    placeholder="Paste a session ID"
+                    style={{ minWidth: 0, flex: 1, padding: '10px 12px', border: '1px solid var(--border-color)', borderRadius: '10px', color: 'var(--text-primary)', background: 'var(--card-bg)' }}
+                  />
+                  <button type="button" className="btn btn--ghost" onClick={() => joinListenTogetherSession(listenTogetherJoinSessionId)}>Join</button>
                 </div>
                 <button
                   type="button"
@@ -10208,6 +10627,17 @@ const getMaskedEmail = (email: string) => {
                     Start a Listen Together session to broadcast your music to friends in real-time, or join a friend&apos;s active session.
                   </p>
                 </div>
+                <div style={{ display: 'flex', gap: '8px', width: '100%' }}>
+                  <input
+                    value={listenTogetherJoinSessionId}
+                    onChange={(event) => setListenTogetherJoinSessionId(event.target.value)}
+                    onKeyDown={(event) => event.key === 'Enter' && joinListenTogetherSession(listenTogetherJoinSessionId)}
+                    placeholder="Paste a session ID to join"
+                    style={{ minWidth: 0, flex: 1, padding: '10px 12px', border: '1px solid var(--border-color)', borderRadius: '10px', color: 'var(--text-primary)', background: 'var(--card-bg)' }}
+                  />
+                  <button type="button" className="btn btn--ghost" onClick={() => joinListenTogetherSession(listenTogetherJoinSessionId)}>Join</button>
+                </div>
+                <span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>or host your own room</span>
                 <button
                   type="button"
                   className="btn btn--primary"
@@ -11545,6 +11975,30 @@ const getMaskedEmail = (email: string) => {
                     </div>
                   </section>
 
+                  {weeklyListeningRecap.eventCount > 0 && (
+                    <section className="section weekly-recap animate-in" aria-label="Your listening week">
+                      <div className="section__header">
+                        <div>
+                          <h2 className="section__title">Your Listening Week</h2>
+                          <p className="taste-section-reason">
+                            Private, on-device recap for {activeProfile.displayName}. Nothing extra is uploaded.
+                          </p>
+                        </div>
+                        {weeklyListeningRecap.topArtists[0] && (
+                          <span className="taste-profile-badge">
+                            Top artist: {weeklyListeningRecap.topArtists[0].name}
+                          </span>
+                        )}
+                      </div>
+                      <div className="weekly-recap__grid">
+                        <div className="weekly-recap__metric"><strong>{weeklyListeningRecap.creditedMinutes}</strong><span>minutes</span></div>
+                        <div className="weekly-recap__metric"><strong>{weeklyListeningRecap.uniqueTrackCount}</strong><span>unique tracks</span></div>
+                        <div className="weekly-recap__metric"><strong>{weeklyListeningRecap.discoveryPercent}%</strong><span>discoveries</span></div>
+                        <div className="weekly-recap__metric"><strong>{weeklyListeningRecap.longestSessionMinutes}</strong><span>longest session, min</span></div>
+                      </div>
+                    </section>
+                  )}
+
                   {/* Your Playlists Carousel */}
                   {customPlaylists.length > 0 && (
                     <section className="section animate-in">
@@ -11578,7 +12032,7 @@ const getMaskedEmail = (email: string) => {
                   )}
 
                   {/* Recently Played */}
-                  {history.length > 0 && (
+                  {homeHistoryShelves.recentlyPlayed.length > 0 && (
                     <section className="section animate-in">
                       <div className="section__header">
                         <h2 className="section__title">Recently Played</h2>
@@ -11586,8 +12040,8 @@ const getMaskedEmail = (email: string) => {
                       </div>
                       <div className="carousel-wrapper">
                         <div className="carousel">
-                          {history.map((song) => (
-                            <div key={song.id} className="card card--round animate-in" onClick={() => startTrackOnActiveReceiver(song, history)}>
+                          {homeHistoryShelves.recentlyPlayed.map((song) => (
+                            <div key={playbackTrackKey(song)} className="card card--round animate-in" onClick={() => startTrackOnActiveReceiver(song, homeHistoryShelves.recentlyPlayed)}>
                               <div className="card__art-wrapper">
                                 <img className="card__art" src={song.artworkUrl || '/icon.svg'} alt={song.title} />
                                 <div className="card__play-overlay">{Icons.play}</div>
@@ -11601,16 +12055,16 @@ const getMaskedEmail = (email: string) => {
                     </section>
                   )}
 
-                  {/* Listen Again */}
-                  {homeListenAgain.length > 0 && (
+                  {/* Forgotten Favorites */}
+                  {homeHistoryShelves.forgottenFavorites.length > 0 && (
                     <section className="section animate-in">
                       <div className="section__header">
-                        <h2 className="section__title">Listen Again</h2>
+                        <h2 className="section__title">Forgotten Favorites</h2>
                       </div>
                       <div className="carousel-wrapper">
                         <div className="carousel">
-                          {homeListenAgain.map((song) => (
-                            <div key={song.id} className="card animate-in" onClick={() => startTrackOnActiveReceiver(song, homeListenAgain)}>
+                          {homeHistoryShelves.forgottenFavorites.map((song) => (
+                            <div key={playbackTrackKey(song)} className="card animate-in" onClick={() => startTrackOnActiveReceiver(song, homeHistoryShelves.forgottenFavorites)}>
                               <div className="card__art-wrapper">
                                 <img className="card__art" src={song.artworkUrl || '/icon.svg'} alt={song.title} />
                                 <div className="card__play-overlay">{Icons.play}</div>
@@ -11664,6 +12118,29 @@ const getMaskedEmail = (email: string) => {
                           <p className="taste-section-reason">
                             Balanced from this profile&apos;s meaningful plays, likes, artists, albums, and playlist themes.
                           </p>
+                          <div className="recommendation-discovery-control">
+                            <span>Familiar</span>
+                            <input
+                              type="range"
+                              min="0"
+                              max="100"
+                              step="5"
+                              value={recommendationPreferences.discoveryLevel}
+                              aria-label="Recommendation discovery level"
+                              onChange={(event) => persistRecommendationPreferences({
+                                ...recommendationPreferences,
+                                discoveryLevel: Number(event.target.value),
+                              })}
+                            />
+                            <span>Discover</span>
+                            <button
+                              type="button"
+                              className="recommendation-feedback-button"
+                              onClick={() => persistRecommendationPreferences(DEFAULT_RECOMMENDATION_PREFERENCES)}
+                            >
+                              Reset feedback
+                            </button>
+                          </div>
                         </div>
                         {homeRecommendationSeed && (
                           <button
@@ -11695,6 +12172,7 @@ const getMaskedEmail = (email: string) => {
                                 </div>
                                 <div className="card__title truncate">{song.title}</div>
                                 <div className="card__subtitle truncate">{song.artists.map(a => a.name).join(', ')}</div>
+                                {recommendationFeedbackControls(song)}
                               </div>
                             ))
                           )}
@@ -11725,6 +12203,7 @@ const getMaskedEmail = (email: string) => {
                               </div>
                               <div className="card__title truncate">{song.title}</div>
                               <div className="card__subtitle truncate">{song.artists.map(a => a.name).join(', ')}</div>
+                              {recommendationFeedbackControls(song)}
                             </div>
                           ))}
                         </div>
@@ -12161,10 +12640,7 @@ const getMaskedEmail = (email: string) => {
                               <button
                                 className="library-item__action"
                                 style={{ opacity: 1, color: 'var(--accent-pink)' }}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  toggleLike(song);
-                                }}
+                                onClick={getLikedTrackToggleHandler(song)}
                               >
                                 {Icons.heartFilled}
                               </button>
@@ -13435,6 +13911,35 @@ const getMaskedEmail = (email: string) => {
                         </select>
                       </div>
                     </div>
+
+                    <div className="sleep-timer-settings">
+                      <div>
+                        <strong>Sleep Timer</strong>
+                        <span>{formatSleepTimer(sleepTimer, sleepTimerNow)}</span>
+                      </div>
+                      <p>Pause after a duration, the current song, or the end of this queue. The timer survives a reload for this profile.</p>
+                      <div className="sleep-timer-settings__actions">
+                        {[15, 30, 60, 90].map((minutes) => (
+                          <button key={minutes} type="button" className="btn btn--ghost" onClick={() => persistSleepTimer(createDurationSleepTimer(minutes))}>
+                            {minutes} min
+                          </button>
+                        ))}
+                        <button
+                          type="button"
+                          className="btn btn--ghost"
+                          disabled={currentTrack.id === 'placeholder'}
+                          onClick={() => persistSleepTimer({ mode: 'end-track', armedTrackKey: playbackTrackKey(currentTrack) })}
+                        >
+                          End of track
+                        </button>
+                        <button type="button" className="btn btn--ghost" onClick={() => persistSleepTimer({ mode: 'end-queue' })}>
+                          End of queue
+                        </button>
+                        {sleepTimer.mode !== 'off' && (
+                          <button type="button" className="btn btn--danger" onClick={() => persistSleepTimer(OFF_SLEEP_TIMER)}>Cancel</button>
+                        )}
+                      </div>
+                    </div>
                   </div>
 
                   {/* Listening Profile Sync */}
@@ -13456,6 +13961,27 @@ const getMaskedEmail = (email: string) => {
                       }}>
                         {PROFILE_SYNC_STATUS_LABELS[profileSyncStatus]}
                       </span>
+                    </div>
+
+                    <div className={`sync-outbox-status ${syncOutboxItems.some((item) => item.status === 'attention') ? 'sync-outbox-status--attention' : ''}`}>
+                      <div>
+                        <strong>Cloud change outbox</strong>
+                        <span>
+                          {syncOutboxItems.length === 0
+                            ? 'All local changes delivered'
+                            : `${syncOutboxItems.length} latest change${syncOutboxItems.length === 1 ? '' : 's'} queued across profiles`}
+                        </span>
+                        {syncOutboxItems.filter((item) => item.status === 'attention').slice(0, 3).map((item) => (
+                          <small key={`${item.profileId}:${item.kind}`}>
+                            {item.kind} · {item.error || 'Cloud rejected this change.'}
+                          </small>
+                        ))}
+                      </div>
+                      {syncOutboxItems.some((item) => item.status === 'attention') && (
+                        <button type="button" className="btn btn--ghost" onClick={() => syncOutboxRef.current?.retryAttentionItems()}>
+                          Retry attention items
+                        </button>
+                      )}
                     </div>
 
                     <label style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '18px', color: '#fff', fontSize: '0.9rem', fontWeight: 700 }}>
@@ -13751,6 +14277,15 @@ const getMaskedEmail = (email: string) => {
 
                         {selectedRemoteDevice && (
                           <div style={{ display: 'grid', gap: '14px' }}>
+                            <button
+                              type="button"
+                              className="btn btn--primary"
+                              onClick={() => void handoffPlaybackToSelectedDevice()}
+                              disabled={currentTrack.id === 'placeholder'}
+                              title="Transfer the current track, queue, position, volume, shuffle, and repeat state"
+                            >
+                              Move this playback to {selectedRemoteDevice.displayName}
+                            </button>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.08)', background: '#0a0a0a' }}>
                               <img
                                 src={selectedRemoteDevice.currentTrack?.artworkUrl || '/icon.svg'}

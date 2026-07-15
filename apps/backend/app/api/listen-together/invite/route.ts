@@ -4,6 +4,7 @@ import { jsonResponse, optionsResponse } from '@/lib/cors';
 import { db } from '@/db';
 import { users, listenTogetherSessions, listenTogetherInvites, profiles } from '@/db/schema';
 import { eq, and, desc } from 'drizzle-orm';
+import { isListenTogetherSessionActive } from '@/app/listen-together-core';
 
 export const runtime = 'nodejs';
 
@@ -75,6 +76,7 @@ export async function GET(request: NextRequest) {
         hostUserUsername: users.username,
         hostProfileUsername: profiles.username,
         hostDisplayName: profiles.displayName,
+        sessionUpdatedAt: listenTogetherSessions.updatedAt,
       })
       .from(listenTogetherInvites)
       .innerJoin(listenTogetherSessions, eq(listenTogetherInvites.sessionId, listenTogetherSessions.id))
@@ -96,6 +98,7 @@ export async function GET(request: NextRequest) {
 
     const seenPending = new Set();
     const deduplicatedInvites = invites
+      .filter(row => isListenTogetherSessionActive(row.sessionUpdatedAt))
       .filter(row => !seenPending.has(row.inviteId) && seenPending.add(row.inviteId))
       .map(row => ({
         inviteId: row.inviteId,
@@ -150,6 +153,9 @@ export async function POST(request: NextRequest) {
     if (!userSession) {
       return jsonResponse({ error: 'unauthorized_session', message: 'You are not the host of this session.' }, { status: 403 });
     }
+    if (!isListenTogetherSessionActive(userSession.updatedAt)) {
+      return jsonResponse({ error: 'session_inactive', message: 'Restart playback sharing before sending an invite.' }, { status: 410 });
+    }
 
     // Find the target user via profiles username first, falling back to users table
     const targetProfileRecord = await db.query.profiles.findFirst({
@@ -168,34 +174,21 @@ export async function POST(request: NextRequest) {
       return jsonResponse({ error: 'cannot_invite_self', message: 'You cannot invite yourself.' }, { status: 400 });
     }
 
-    // Check if an invite already exists
-    const existingInvite = await db.query.listenTogetherInvites.findFirst({
-      where: and(
-        eq(listenTogetherInvites.sessionId, sessionId),
-        eq(listenTogetherInvites.invitedUserId, targetUser.id)
-      ),
-    });
-
-    if (existingInvite) {
-      if (existingInvite.status === 'pending') {
-        return jsonResponse({ success: true, message: 'Invite already sent.', invite: existingInvite });
-      }
-      // Reactivate it if rejected/accepted previously
-      const [updatedInvite] = await db.update(listenTogetherInvites)
-        .set({ status: 'pending', createdAt: new Date() })
-        .where(eq(listenTogetherInvites.id, existingInvite.id))
-        .returning();
-      return jsonResponse({ success: true, message: 'Invite sent.', invite: updatedInvite });
-    }
-
-    const [newInvite] = await db.insert(listenTogetherInvites).values({
+    const [invite] = await db.insert(listenTogetherInvites).values({
       sessionId,
       invitedUserId: targetUser.id,
       invitedByUserId: session.userId,
       status: 'pending',
+    }).onConflictDoUpdate({
+      target: [listenTogetherInvites.sessionId, listenTogetherInvites.invitedUserId],
+      set: {
+        invitedByUserId: session.userId,
+        status: 'pending',
+        createdAt: new Date(),
+      },
     }).returning();
 
-    return jsonResponse({ success: true, message: 'Invite sent successfully.', invite: newInvite });
+    return jsonResponse({ success: true, message: 'Invite sent successfully.', invite });
   } catch (error) {
     return jsonResponse({ error: 'send_invite_failed', message: error instanceof Error ? error.message : 'Failed to send invite.' }, { status: 500 });
   }
@@ -234,6 +227,12 @@ export async function PUT(request: NextRequest) {
     }
 
     if (action === 'accept') {
+      const hostedSession = await db.query.listenTogetherSessions.findFirst({
+        where: eq(listenTogetherSessions.id, invite.sessionId),
+      });
+      if (!hostedSession || !isListenTogetherSessionActive(hostedSession.updatedAt)) {
+        return jsonResponse({ error: 'session_inactive', message: 'This Listen Together session has ended.' }, { status: 410 });
+      }
       await db.update(listenTogetherInvites)
         .set({ status: 'accepted' })
         .where(eq(listenTogetherInvites.id, inviteId));
