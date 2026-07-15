@@ -1,6 +1,6 @@
 {
   "name": "spice",
-  "version": "1.4.39",
+  "version": "1.4.40",
   "description": "Unified Electron, web runtime, and Android music client.",
   "workspaces": [
     "apps/backend"
@@ -71,6 +71,7 @@
       "spice-local-runtime-manager.js",
       "runtime-archive.js",
       "desktop-helpers.js",
+      "desktop-sleep-timer.js",
       "index.html",
       "settings.html",
       "queue.html",
