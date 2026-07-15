@@ -16,6 +16,7 @@ const expectedRuntimeFiles = [
   "spice-local-runtime-manager.js",
   "runtime-archive.js",
   "desktop-helpers.js",
+  "desktop-sleep-timer.js",
   "index.html",
   "settings.html",
   "queue.html",
@@ -40,6 +41,53 @@ const uBlockResource = {
 test("wrapper packages only the explicit desktop runtime", () => {
   assert.deepEqual(wrapperConfig.files, expectedRuntimeFiles);
   assert.ok(!wrapperConfig.files.includes("**/*"));
+});
+
+test("wrapper packages every relative CommonJS dependency", () => {
+  const root = path.join(__dirname, "..");
+  const recursiveSuffix = "/**/*";
+  const isPackaged = (relativePath) => wrapperConfig.files.some((pattern) => {
+    if (pattern === relativePath) return true;
+    if (!pattern.endsWith(recursiveSuffix)) return false;
+    const directory = pattern.slice(0, -recursiveSuffix.length);
+    return relativePath === directory || relativePath.startsWith(`${directory}/`);
+  });
+  const missing = [];
+
+  for (const entry of wrapperConfig.files) {
+    if (!entry.endsWith(".js") || entry.includes("*")) continue;
+    const entryPath = path.join(root, ...entry.split("/"));
+    const source = fs.readFileSync(entryPath, "utf8");
+
+    for (const match of source.matchAll(/require\(\s*["'](\.[^"']+)["']\s*\)/g)) {
+      const request = match[1];
+      const basePath = path.resolve(path.dirname(entryPath), request);
+      const resolvedPath = [basePath, `${basePath}.js`, path.join(basePath, "index.js")]
+        .find((candidate) => fs.existsSync(candidate));
+
+      assert.ok(resolvedPath, `${entry} requires unresolved local module ${request}`);
+      const relativePath = path.relative(root, resolvedPath).split(path.sep).join("/");
+      if (!isPackaged(relativePath)) missing.push(`${entry} -> ${relativePath}`);
+    }
+  }
+
+  assert.deepEqual(missing, []);
+});
+
+test("desktop packages use the dark-purple single-note icon", () => {
+  const root = path.join(__dirname, "..");
+  const iconSource = fs.readFileSync(path.join(root, "desktop-icon.svg"), "utf8");
+  const iconPng = fs.readFileSync(path.join(root, "icon.png"));
+
+  assert.equal(wrapperConfig.win.icon, "icon.png");
+  assert.equal(wrapperConfig.mac.icon, "icon.png");
+  assert.equal(wrapperConfig.linux.icon, "icon.png");
+  assert.match(iconSource, /<path d="M252 118v210[^>]+fill="url\(#note\)"/);
+  assert.match(iconSource, /stop-color="#6d28d9"/i);
+  assert.match(iconSource, /stop-color="#4c1d95"/i);
+  assert.equal(iconPng.toString("ascii", 1, 4), "PNG");
+  assert.equal(iconPng.readUInt32BE(16), 512);
+  assert.equal(iconPng.readUInt32BE(20), 512);
 });
 
 test("wrapper and Native releases externalize the complete uBlock extension", () => {
