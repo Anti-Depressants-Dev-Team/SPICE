@@ -94,6 +94,28 @@ test('Spice Connect command normalization accepts remote track handoff payloads'
   });
 });
 
+test('Spice Connect accepts an atomic playback handoff snapshot', () => {
+  const input = normalizeSpiceConnectCommandInput({
+    sourceDeviceId: 'desktop',
+    targetDeviceId: 'phone',
+    command: 'handoff',
+    payload: {
+      track: { id: 'yt-1' },
+      queue: [{ id: 'yt-1' }],
+      queueIndex: 0,
+      progress: 42.5,
+      isPlaying: true,
+      volume: 67,
+      shuffleEnabled: true,
+      repeatMode: 'all',
+    },
+  });
+
+  assert.ok(!('error' in input));
+  assert.equal(input.command, 'handoff');
+  assert.equal(JSON.parse(input.payloadJson).progress, 42.5);
+});
+
 test('Spice Connect command normalization accepts idempotent shuffle and repeat payloads', () => {
   const shuffle = normalizeSpiceConnectCommandInput({
     sourceDeviceId: 'phone',

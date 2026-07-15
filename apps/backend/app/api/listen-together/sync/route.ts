@@ -4,6 +4,14 @@ import { jsonResponse, optionsResponse } from '@/lib/cors';
 import { db } from '@/db';
 import { users, listenTogetherSessions, profiles } from '@/db/schema';
 import { eq, and } from 'drizzle-orm';
+import {
+  isListenTogetherSessionActive,
+  normalizeListenTogetherHostState,
+  parseListenTogetherQueueState,
+  parseListenTogetherTrack,
+  projectListenTogetherProgressMs,
+  serializeListenTogetherQueueState,
+} from '@/app/listen-together-core';
 
 export const runtime = 'nodejs';
 
@@ -26,27 +34,22 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json().catch(() => ({}));
     const sessionId = typeof body.sessionId === 'string' ? body.sessionId.trim() : '';
-    const currentTrack = body.currentTrack;
-    const queue = body.queue;
-    const queueIndex = typeof body.queueIndex === 'number' ? body.queueIndex : 0;
-    const isPlaying = typeof body.isPlaying === 'boolean' ? body.isPlaying : false;
-    const progressMs = typeof body.progressMs === 'number' ? body.progressMs : 0;
-    const durationMs = typeof body.durationMs === 'number' ? body.durationMs : 0;
-
     if (!sessionId) {
       return jsonResponse({ error: 'invalid_request', message: 'Session ID is required.' }, { status: 400 });
     }
+    const hostState = normalizeListenTogetherHostState(body);
+    const updatedAt = new Date();
 
     // Atomically verify host ownership and update without fetching the session row.
     const updatedSessions = await db.update(listenTogetherSessions)
       .set({
-        currentTrackJson: currentTrack ? JSON.stringify(currentTrack) : null,
-        queueJson: queue ? JSON.stringify(queue) : '[]',
-        queueIndex,
-        isPlaying,
-        progressMs,
-        durationMs,
-        updatedAt: new Date(),
+        currentTrackJson: hostState.currentTrack ? JSON.stringify(hostState.currentTrack) : null,
+        queueJson: serializeListenTogetherQueueState(hostState),
+        queueIndex: hostState.queueIndex,
+        isPlaying: hostState.isPlaying,
+        progressMs: hostState.progressMs,
+        durationMs: hostState.durationMs,
+        updatedAt,
       })
       .where(and(
         eq(listenTogetherSessions.id, sessionId),
@@ -58,7 +61,7 @@ export async function POST(request: NextRequest) {
       return jsonResponse({ error: 'unauthorized_session', message: 'You are not the host of this session.' }, { status: 403 });
     }
 
-    return jsonResponse({ success: true });
+    return jsonResponse({ success: true, updatedAt: updatedAt.toISOString() });
   } catch (error) {
     return jsonResponse({ error: 'sync_failed', message: error instanceof Error ? error.message : 'Failed to update sync state.' }, { status: 500 });
   }
@@ -104,20 +107,33 @@ export async function GET(request: NextRequest) {
       return jsonResponse({ error: 'session_not_found', message: 'Session not found.' }, { status: 404 });
     }
 
-    // Check if the session is active (updated in the last 120 seconds)
-    const lastActiveSeconds = Math.round((Date.now() - new Date(session.updatedAt).getTime()) / 1000);
-    const isActive = lastActiveSeconds <= 120;
+    const serverTime = new Date();
+    const isActive = isListenTogetherSessionActive(session.updatedAt, serverTime);
+    const currentTrack = parseListenTogetherTrack(session.currentTrackJson);
+    const queueState = parseListenTogetherQueueState(session.queueJson);
+    const targetProgressMs = projectListenTogetherProgressMs({
+      progressMs: session.progressMs,
+      durationMs: session.durationMs,
+      isPlaying: Boolean(session.isPlaying && currentTrack),
+      updatedAt: session.updatedAt,
+      now: serverTime,
+    });
 
     return jsonResponse({
       isActive,
       sessionId: session.sessionId,
       hostName: session.hostDisplayName || session.hostProfileUsername || session.hostUserUsername || 'Host',
-      isPlaying: session.isPlaying,
+      isPlaying: Boolean(session.isPlaying && currentTrack),
       progressMs: session.progressMs,
+      targetProgressMs,
       durationMs: session.durationMs,
-      currentTrack: session.currentTrackJson ? JSON.parse(session.currentTrackJson) : null,
-      queue: session.queueJson ? JSON.parse(session.queueJson) : [],
+      currentTrack,
+      queue: queueState.queue,
       queueIndex: session.queueIndex,
+      shuffleEnabled: queueState.shuffleEnabled,
+      repeatMode: queueState.repeatMode,
+      updatedAt: session.updatedAt,
+      serverTime: serverTime.toISOString(),
     });
   } catch (error) {
     return jsonResponse({ error: 'sync_fetch_failed', message: error instanceof Error ? error.message : 'Failed to fetch sync state.' }, { status: 500 });

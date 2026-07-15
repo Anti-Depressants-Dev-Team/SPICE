@@ -1055,10 +1055,18 @@ internal fun parseRemoteCommands(payload: JSONObject): List<RemoteCommand> {
             val volume = commandPayload.optInt("volume", -1).takeIf {
                 commandPayload.has("volume") && it in 0..100
             }
-            val shuffleEnabled = commandPayload.optBoolean("enabled").takeIf { commandPayload.has("enabled") }
-            val repeatMode = parseRemoteRepeatMode(commandPayload.optString("mode")).takeIf {
-                commandPayload.has("mode")
+            val shuffleEnabled = when {
+                commandPayload.has("shuffleEnabled") -> commandPayload.optBoolean("shuffleEnabled")
+                commandPayload.has("enabled") -> commandPayload.optBoolean("enabled")
+                else -> null
             }
+            val repeatValue = when {
+                commandPayload.has("repeatMode") -> commandPayload.optString("repeatMode")
+                commandPayload.has("mode") -> commandPayload.optString("mode")
+                else -> null
+            }
+            val repeatMode = repeatValue?.let(::parseRemoteRepeatMode)
+            val shouldPlay = commandPayload.optBoolean("isPlaying").takeIf { commandPayload.has("isPlaying") }
             add(
                 RemoteCommand(
                     id = id,
@@ -1070,6 +1078,7 @@ internal fun parseRemoteCommands(payload: JSONObject): List<RemoteCommand> {
                     volume = volume,
                     shuffleEnabled = shuffleEnabled,
                     repeatMode = repeatMode,
+                    shouldPlay = shouldPlay,
                 ),
             )
         }

@@ -1,5 +1,17 @@
 # SPICE Walkthrough
 
+## v1.0.141
+
+- [Spice.Connect main] Add one-click playback handoff between desktop, browser, and Android receivers, carrying the exact track, queue, position, play state, volume, shuffle, and repeat mode before pausing the source device.
+- [Spice.Music main] Rebuild Listen Together around immediate serialized polling, provider-aware track identity, server-projected progress, queue index and playback-mode synchronization, anonymous share-link joins, persisted reconnect state, host recovery, visible connection status, and database-enforced single rooms and invites.
+- [Spice.Lyrics main] Cache lyrics per track and provider for seven days, add per-track ±0.5-second timing calibration and refresh controls, and repaint the floating lyrics window immediately with every built-in or custom desktop theme.
+- [Spice.Home main] Add profile-scoped familiar-to-discovery control, exact-track hiding, seven-day artist snoozing, private weekly listening recaps, Recently Played, and Forgotten Favorites without mixing one profile's feedback into another.
+- [Spice.Music main] Replace fire-and-forget history, likes, playlists, and profile writes with a durable profile-aware outbox that coalesces current snapshots, survives reloads and offline periods, retries transient failures, and surfaces permanent conflicts.
+- [Spice.Player main] Add persistent duration, end-of-track, and end-of-queue sleep timers to the web player and Android app, plus a shared Electron sleep-timer controller for embedded desktop services.
+- [Spice.Mobile main] Receive and send full Spice Connect handoffs, keep receiver selection separate from transfer, and expose native sleep-timer controls with duration and playback-boundary modes.
+- [Spice.Home main] Extract reusable Listen Together, recommendation-feedback, listening-insight, sleep-timer, sync-outbox, home-history, and desktop timer logic into independently tested modules.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.141`.
+
 ## v1.0.140
 
 - [Spice.Home main] Replace fixed Lofi and workout rows with a private, per-profile Recommended Next shelf that learns stable artists, producers, genres, moods, languages, and listening contexts without letting one song rewrite a feed.

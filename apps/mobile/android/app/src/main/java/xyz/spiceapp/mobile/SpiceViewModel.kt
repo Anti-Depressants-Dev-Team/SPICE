@@ -133,6 +133,7 @@ data class SpiceUiState(
     val selectedPlaybackDeviceId: String = "",
     val connectLoading: Boolean = false,
     val connectStatus: String = "",
+    val sleepTimer: MobileSleepTimerState = MobileSleepTimerState(),
     val appUpdate: AppUpdateUiState = AppUpdateUiState(),
     val message: String? = null,
 )
@@ -147,6 +148,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
     private val appUpdateDownloadManager = DurableAppUpdateDownloadManager(application)
     private val playerConnection = PlayerConnection(application) { handlePlaybackEnded() }
     private val connectPreferences = application.getSharedPreferences("spice_connect", Context.MODE_PRIVATE)
+    private val playbackPreferences = application.getSharedPreferences("spice_playback", Context.MODE_PRIVATE)
     private val remoteDeviceId = loadRemoteDeviceId()
     private val initialPairedCredential = pairedCredentialStore.load()
         ?.takeIf { it.deviceId == remoteDeviceId }
@@ -159,6 +161,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
     private var connectRefreshJob: Job? = null
     private var updateCheckJob: Job? = null
     private var updateDownloadJob: Job? = null
+    private var sleepTimerJob: Job? = null
     private var optimisticRemoteDeviceId: String? = null
     private var optimisticRemoteStateUntilElapsedMs: Long = 0L
     private var optimisticRemoteTrackChanged: Boolean = false
@@ -175,6 +178,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
             pairedDeviceCredential = initialPairedCredential,
             remoteDeviceId = remoteDeviceId,
             selectedPlaybackDeviceId = loadSelectedPlaybackDeviceId(),
+            sleepTimer = loadMobileSleepTimer(),
         ),
     )
     val uiState: StateFlow<SpiceUiState> = _uiState.asStateFlow()
@@ -192,6 +196,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
             startSpiceConnect()
         }
         if (!resumeDurableAppUpdateDownload()) checkForAppUpdate()
+        scheduleMobileSleepTimer(_uiState.value.sleepTimer)
     }
 
     fun checkForAppUpdate() {
@@ -1603,6 +1608,66 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
 
     fun retryHome() = loadHome()
 
+    fun setSleepTimerMinutes(minutes: Int) {
+        updateMobileSleepTimer(durationMobileSleepTimer(minutes))
+    }
+
+    fun setSleepTimerEndOfTrack() {
+        val track = activePlayerTrack()
+        if (track == null) {
+            _uiState.value = _uiState.value.copy(message = "Play a track before arming the sleep timer.")
+            return
+        }
+        updateMobileSleepTimer(MobileSleepTimerState(
+            mode = MobileSleepTimerMode.EndTrack,
+            armedTrackKey = track.queueKey(),
+        ))
+    }
+
+    fun setSleepTimerEndOfQueue() {
+        if (activePlayerTrack() == null) {
+            _uiState.value = _uiState.value.copy(message = "Start a queue before arming the sleep timer.")
+            return
+        }
+        updateMobileSleepTimer(MobileSleepTimerState(mode = MobileSleepTimerMode.EndQueue))
+    }
+
+    fun cancelSleepTimer() {
+        updateMobileSleepTimer(MobileSleepTimerState())
+    }
+
+    private fun updateMobileSleepTimer(value: MobileSleepTimerState, message: String? = null) {
+        val timer = normalizeMobileSleepTimer(value)
+        playbackPreferences.edit()
+            .putString(KEY_SLEEP_TIMER_MODE, timer.mode.name)
+            .putLong(KEY_SLEEP_TIMER_EXPIRES_AT, timer.expiresAtEpochMs)
+            .putString(KEY_SLEEP_TIMER_TRACK_KEY, timer.armedTrackKey)
+            .apply()
+        _uiState.value = _uiState.value.copy(sleepTimer = timer, message = message)
+        scheduleMobileSleepTimer(timer)
+    }
+
+    private fun scheduleMobileSleepTimer(timer: MobileSleepTimerState) {
+        sleepTimerJob?.cancel()
+        sleepTimerJob = null
+        if (timer.mode != MobileSleepTimerMode.Duration) return
+        sleepTimerJob = viewModelScope.launch {
+            delay((timer.expiresAtEpochMs - System.currentTimeMillis()).coerceAtLeast(0L))
+            if (!shouldStopForMobileSleepTimer(_uiState.value.sleepTimer)) return@launch
+            pausePlaybackForSleepTimer()
+            updateMobileSleepTimer(MobileSleepTimerState(), "Sleep timer finished. Playback paused.")
+        }
+    }
+
+    private fun pausePlaybackForSleepTimer() {
+        activeRemoteTargetId()?.let { targetDeviceId ->
+            patchRemoteDevice(targetDeviceId) { it.copy(isPlaying = false) }
+            sendRemoteCommand(targetDeviceId, "pause")
+            return
+        }
+        playerConnection.pause()
+    }
+
     private fun handlePlaybackEnded() {
         viewModelScope.launch {
             val state = _uiState.value
@@ -1610,6 +1675,18 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
                 state = state,
                 allowWrap = playerState.value.repeatMode == RepeatMode.All,
             )
+            val endedTrackKey = state.currentTrack?.queueKey().orEmpty()
+            if (shouldStopForMobileSleepTimer(
+                    timer = state.sleepTimer,
+                    trackEnded = true,
+                    trackKey = endedTrackKey,
+                    queueEnded = nextIndex == null,
+                )
+            ) {
+                pausePlaybackForSleepTimer()
+                updateMobileSleepTimer(MobileSleepTimerState(), "Sleep timer finished. Playback paused.")
+                return@launch
+            }
             if (nextIndex == null) {
                 _uiState.value = state.copy(message = "Queue finished.")
                 return@launch
@@ -1683,13 +1760,57 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        playerConnection.pause()
         clearOptimisticRemoteState()
         connectPreferences.edit().putString(KEY_SELECTED_PLAYBACK_DEVICE_ID, normalized).apply()
         _uiState.value = _uiState.value.copy(
             selectedPlaybackDeviceId = normalized,
             connectStatus = "Player controls now target ${target.displayName}.",
         )
+    }
+
+    fun handoffPlaybackToSelectedDevice() {
+        val state = _uiState.value
+        val target = selectedRemoteDevice()
+        val track = state.currentTrack
+        if (target == null || track == null) {
+            _uiState.value = state.copy(message = "Play something on this phone, then choose another online device.")
+            return
+        }
+        val player = playerState.value
+        val queue = normalizeQueue(state.playbackQueue, track).take(80)
+        val queueIndex = state.queueIndex.coerceIn(0, queue.lastIndex.coerceAtLeast(0))
+        patchRemoteDevice(target.deviceId) {
+            it.copy(
+                currentTrack = track,
+                queue = queue,
+                queueIndex = queueIndex,
+                isPlaying = player.isPlaying,
+                progressMs = player.positionMs,
+                durationMs = player.durationMs.takeIf { value -> value > 0 } ?: track.durationMs,
+                volume = player.volume,
+                shuffleEnabled = player.shuffleEnabled,
+                repeatMode = player.repeatMode,
+            )
+        }
+        sendRemoteCommand(
+            target.deviceId,
+            "handoff",
+            JSONObject()
+                .put("track", track.toRemoteTrackJson())
+                .put("queue", JSONArray(queue.map { it.toRemoteTrackJson() }))
+                .put("queueIndex", queueIndex)
+                .put("progress", player.positionMs / 1000.0)
+                .put("volume", player.volume.coerceIn(0, 100))
+                .put("isPlaying", player.isPlaying)
+                .put("shuffleEnabled", player.shuffleEnabled)
+                .put("repeatMode", player.repeatMode.remoteValue()),
+        ) {
+            playerConnection.pause()
+            _uiState.value = _uiState.value.copy(
+                connectStatus = "Playback moved to ${target.displayName}.",
+                message = "Playback moved to ${target.displayName}.",
+            )
+        }
     }
 
     fun refreshSpiceConnect() {
@@ -1724,6 +1845,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
         deviceId: String,
         command: String,
         payload: JSONObject = JSONObject(),
+        onSuccess: () -> Unit = {},
     ) {
         if (!hasRemoteAccess()) {
             _uiState.value = _uiState.value.copy(message = "Sign in or pair this phone to use Spice Connect.")
@@ -1745,8 +1867,9 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
             }.onSuccess {
+                onSuccess()
                 _uiState.value = _uiState.value.copy(
-                    connectStatus = "Sent $command through Spice Connect.",
+                    connectStatus = if (command == "handoff") _uiState.value.connectStatus else "Sent $command through Spice Connect.",
                 )
                 Log.i(SPICE_CONNECT_LOG_TAG, "Queued $command from $remoteDeviceId to $deviceId")
                 scheduleRemoteDeviceRefresh()
@@ -2185,6 +2308,19 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
                     val trackIndex = queue.indexOfFirst { it.queueKey() == track.queueKey() }.takeIf { it >= 0 }
                     playQueueIndex(queue, requestedIndex ?: trackIndex ?: 0)
                 }
+                "handoff" -> command.payloadTrack?.let { track ->
+                    val queue = normalizeQueue(command.payloadQueue, track)
+                    val requestedIndex = command.payloadQueueIndex.takeIf { it in queue.indices }
+                    val trackIndex = queue.indexOfFirst { it.queueKey() == track.queueKey() }.takeIf { it >= 0 }
+                    selectPlaybackDevice(null)
+                    command.volume?.let(playerConnection::setVolume)
+                    command.shuffleEnabled?.let(playerConnection::setShuffle)
+                    command.repeatMode?.let(playerConnection::setRepeatMode)
+                    playQueueIndex(queue, requestedIndex ?: trackIndex ?: 0)
+                    playJob?.join()
+                    command.seekPositionMs?.let(playerConnection::seekTo)
+                    if (command.shouldPlay == false) playerConnection.pause()
+                }
             }
             appliedRemoteCommandIds.markIfNew(command.id)
             persistAppliedRemoteCommandIds()
@@ -2239,6 +2375,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
             observedDevices
         }
         val selectedId = state.selectedPlaybackDeviceId
+        val previousSelectedDevice = state.remoteDevices.firstOrNull { it.deviceId == selectedId }
         val selectedStillExists = selectedId.isBlank() || reconciledDevices.any { it.deviceId == selectedId }
         if (!selectedStillExists) {
             clearOptimisticRemoteState(selectedId)
@@ -2251,6 +2388,41 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
             connectStatus = if (selectedStillExists) status else "Selected device went offline; using this phone.",
             message = if (selectedStillExists) state.message else "Selected Spice Connect device went offline. Playback controls are local again.",
         )
+        if (selectedStillExists && selectedId.isNotBlank()) {
+            evaluateRemoteSleepTimer(
+                previous = previousSelectedDevice,
+                current = reconciledDevices.firstOrNull { it.deviceId == selectedId },
+            )
+        }
+    }
+
+    private fun evaluateRemoteSleepTimer(previous: RemoteDevice?, current: RemoteDevice?) {
+        val previousTrack = previous?.currentTrack ?: return
+        if (current == null) return
+        val previousTrackKey = previousTrack.queueKey()
+        val currentTrackKey = current.currentTrack?.queueKey().orEmpty()
+        val durationMs = maxOf(previous.durationMs, current.durationMs)
+        val boundary = detectMobilePlaybackBoundary(
+            previousTrackKey = previousTrackKey,
+            currentTrackKey = currentTrackKey,
+            previousProgressMs = previous.progressMs,
+            currentProgressMs = current.progressMs,
+            previousPlaying = previous.isPlaying,
+            currentPlaying = current.isPlaying,
+            durationMs = durationMs,
+            queueAtTail = previous.queue.isEmpty() || previous.queueIndex >= previous.queue.lastIndex,
+        )
+        if (!boundary.trackEnded) return
+        if (!shouldStopForMobileSleepTimer(
+                timer = _uiState.value.sleepTimer,
+                trackEnded = true,
+                trackKey = previousTrackKey,
+                queueEnded = boundary.queueEnded,
+            )
+        ) return
+
+        pausePlaybackForSleepTimer()
+        updateMobileSleepTimer(MobileSleepTimerState(), "Sleep timer finished. Playback paused.")
     }
 
     private fun remoteSnapshotAcknowledgesOptimisticState(
@@ -2339,6 +2511,19 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun loadSelectedPlaybackDeviceId(): String =
         connectPreferences.getString(KEY_SELECTED_PLAYBACK_DEVICE_ID, "").orEmpty()
+
+    private fun loadMobileSleepTimer(): MobileSleepTimerState {
+        val mode = runCatching {
+            MobileSleepTimerMode.valueOf(
+                playbackPreferences.getString(KEY_SLEEP_TIMER_MODE, MobileSleepTimerMode.Off.name).orEmpty(),
+            )
+        }.getOrDefault(MobileSleepTimerMode.Off)
+        return normalizeMobileSleepTimer(MobileSleepTimerState(
+            mode = mode,
+            expiresAtEpochMs = playbackPreferences.getLong(KEY_SLEEP_TIMER_EXPIRES_AT, 0L),
+            armedTrackKey = playbackPreferences.getString(KEY_SLEEP_TIMER_TRACK_KEY, "").orEmpty(),
+        ))
+    }
 
     private fun loadAppliedRemoteCommandIds(): List<String> = runCatching {
         val payload = JSONArray(
@@ -2447,6 +2632,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
         connectRefreshJob?.cancel()
         updateCheckJob?.cancel()
         updateDownloadJob?.cancel()
+        sleepTimerJob?.cancel()
         appUpdateClient.cancelActiveRequest()
         playerConnection.release()
         super.onCleared()
@@ -2456,6 +2642,9 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
         const val KEY_REMOTE_DEVICE_ID = "remote_device_id"
         const val KEY_SELECTED_PLAYBACK_DEVICE_ID = "selected_playback_device_id"
         const val KEY_APPLIED_REMOTE_COMMAND_IDS = "applied_remote_command_ids"
+        const val KEY_SLEEP_TIMER_MODE = "sleep_timer_mode"
+        const val KEY_SLEEP_TIMER_EXPIRES_AT = "sleep_timer_expires_at"
+        const val KEY_SLEEP_TIMER_TRACK_KEY = "sleep_timer_track_key"
         const val MAX_APPLIED_REMOTE_COMMAND_IDS = 160
         const val APP_UPDATE_DOWNLOAD_POLL_INTERVAL_MS = 1_000L
         const val MAX_MISSING_APP_UPDATE_DOWNLOAD_CHECKS = 3

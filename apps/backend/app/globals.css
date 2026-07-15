@@ -5972,3 +5972,136 @@ h4 { font-size: 1rem; }
   background: transparent !important;
   box-shadow: none !important;
 }
+
+.weekly-recap {
+  padding: 18px;
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent-pink) 12%, var(--card-bg)), var(--card-bg));
+}
+
+.weekly-recap__grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.weekly-recap__metric {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-primary) 72%, transparent);
+}
+
+.weekly-recap__metric strong {
+  color: var(--text-primary);
+  font-size: 1.35rem;
+}
+
+.weekly-recap__metric span,
+.sleep-timer-settings p,
+.sync-outbox-status span {
+  color: var(--text-secondary);
+  font-size: 0.76rem;
+}
+
+.recommendation-discovery-control {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+}
+
+.recommendation-discovery-control input {
+  width: min(180px, 38vw);
+  accent-color: var(--accent-pink);
+}
+
+.recommendation-feedback-button {
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  padding: 4px 8px;
+  color: var(--text-secondary);
+  background: var(--card-bg);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.66rem;
+}
+
+.recommendation-feedback-button:hover {
+  color: var(--text-primary);
+  border-color: var(--accent-pink);
+}
+
+.sleep-timer-settings,
+.sync-outbox-status {
+  margin-top: 20px;
+  padding: 16px;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-primary) 78%, transparent);
+}
+
+.sleep-timer-settings > div:first-child,
+.sync-outbox-status,
+.sync-outbox-status > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sync-outbox-status small {
+  max-width: min(520px, 72vw);
+  overflow-wrap: anywhere;
+  color: var(--accent-pink);
+  font-size: 0.68rem;
+}
+
+.sleep-timer-settings strong,
+.sync-outbox-status strong {
+  color: var(--text-primary);
+}
+
+.sleep-timer-settings > div:first-child span {
+  color: var(--accent-pink);
+  font-weight: 700;
+}
+
+.sleep-timer-settings__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sync-outbox-status {
+  margin: 0 0 18px;
+}
+
+.sync-outbox-status > div {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.sync-outbox-status--attention {
+  border-color: color-mix(in srgb, var(--accent-pink) 55%, var(--border-color));
+}
+
+@media (max-width: 700px) {
+  .weekly-recap__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .sync-outbox-status {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

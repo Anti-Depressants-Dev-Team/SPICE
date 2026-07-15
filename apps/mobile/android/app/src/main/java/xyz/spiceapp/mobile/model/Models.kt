@@ -191,6 +191,7 @@ data class RemoteCommand(
     val volume: Int? = null,
     val shuffleEnabled: Boolean? = null,
     val repeatMode: RepeatMode? = null,
+    val shouldPlay: Boolean? = null,
 )
 
 enum class RepeatMode {

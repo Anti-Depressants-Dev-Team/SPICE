@@ -1,8 +1,18 @@
 // Lyrics rendering and playback synchronization for the floating lyrics window.
 
-const { findActiveLine, getWordProgress, parseLrc } = window.LyricsCore;
+const {
+    createLyricsCacheEntry,
+    findActiveLine,
+    getWordProgress,
+    lyricsTrackKey,
+    normalizeLyricsOffset,
+    parseLrc,
+    readLyricsCacheEntry
+} = window.LyricsCore;
 
 const SYNC_OFFSET_SECONDS = 0.08;
+const LYRICS_CACHE_PREFIX = 'spice_lyrics_cache_v1:';
+const LYRICS_OFFSET_PREFIX = 'spice_lyrics_offset_v1:';
 
 let currentTrack = null;
 let currentLyrics = [];
@@ -10,6 +20,8 @@ let isStaticMode = false;
 let activeLineIndex = -1;
 let lyricsRequestId = 0;
 let karaokeAnimationFrame = null;
+let currentLyricsKey = '';
+let currentSyncOffset = 0;
 let lastPlaybackProgress = {
     currentTime: 0,
     duration: 0,
@@ -24,6 +36,77 @@ const modeBtn = document.getElementById('mode-btn');
 const iconSync = document.getElementById('icon-sync');
 const iconStatic = document.getElementById('icon-static');
 const providerSelect = document.getElementById('provider-select');
+const offsetValueEl = document.getElementById('offset-value');
+const cacheStatusEl = document.getElementById('cache-status');
+
+function cacheStorageKey(key) {
+    return `${LYRICS_CACHE_PREFIX}${encodeURIComponent(key)}`;
+}
+
+function offsetStorageKey(key) {
+    return `${LYRICS_OFFSET_PREFIX}${encodeURIComponent(key)}`;
+}
+
+function readCachedLyrics(key) {
+    try {
+        const entry = JSON.parse(localStorage.getItem(cacheStorageKey(key)) || 'null');
+        return readLyricsCacheEntry(entry);
+    } catch {
+        localStorage.removeItem(cacheStorageKey(key));
+        return null;
+    }
+}
+
+function saveCachedLyrics(key, payload) {
+    try {
+        localStorage.setItem(cacheStorageKey(key), JSON.stringify(createLyricsCacheEntry(payload)));
+    } catch {
+        // Lyrics continue to work when storage is full or unavailable.
+    }
+}
+
+function loadLyricsOffset(key) {
+    currentSyncOffset = normalizeLyricsOffset(localStorage.getItem(offsetStorageKey(key)) || 0);
+    updateOffsetUI();
+}
+
+function saveLyricsOffset(value) {
+    currentSyncOffset = normalizeLyricsOffset(value);
+    if (currentLyricsKey) {
+        localStorage.setItem(offsetStorageKey(currentLyricsKey), String(currentSyncOffset));
+    }
+    updateOffsetUI();
+    syncLyrics(getEstimatedPlaybackTime());
+}
+
+function updateOffsetUI() {
+    const sign = currentSyncOffset > 0 ? '+' : '';
+    offsetValueEl.textContent = `Offset ${sign}${currentSyncOffset.toFixed(1)}s`;
+}
+
+function applyShellTheme(value) {
+    const accents = ['pink', 'blue', 'orange', 'green', 'gold', 'crimson', 'deeppurple'];
+    const surfaces = ['midnight', 'glass', 'solid', 'aurora'];
+    const theme = value && typeof value === 'object' ? value : {};
+    const root = document.documentElement;
+    root.dataset.spiceAccent = accents.includes(theme.accent) ? theme.accent : 'deeppurple';
+    root.dataset.spiceSurface = surfaces.includes(theme.surface) ? theme.surface : 'midnight';
+    const custom = theme.custom;
+    ['--accent', '--accent-hover', '--accent-secondary', '--accent-rgb', '--accent-gradient', '--shell-background', '--shell-surface', '--border-glass', '--bg-obsidian', '--card-bg']
+        .forEach((property) => root.style.removeProperty(property));
+    if (custom && typeof custom === 'object') {
+        root.style.setProperty('--accent', custom.primary);
+        root.style.setProperty('--accent-hover', custom.highlight);
+        root.style.setProperty('--accent-secondary', custom.secondary);
+        root.style.setProperty('--accent-rgb', custom.primaryRgb);
+        root.style.setProperty('--accent-gradient', `linear-gradient(135deg, ${custom.secondary}, ${custom.primary})`);
+        root.style.setProperty('--shell-background', custom.background);
+        root.style.setProperty('--shell-surface', custom.glass);
+        root.style.setProperty('--border-glass', custom.border);
+        root.style.setProperty('--bg-obsidian', custom.background);
+        root.style.setProperty('--card-bg', custom.surface);
+    }
+}
 
 function setLyricsMessage(message, className = 'no-lyrics') {
     const messageEl = document.createElement('div');
@@ -135,8 +218,15 @@ providerSelect.addEventListener('change', () => {
     }
 
     if (currentTrack) {
-        updateLyrics(currentTrack, true);
+        updateLyrics(currentTrack);
     }
+});
+
+document.getElementById('offset-minus').addEventListener('click', () => saveLyricsOffset(currentSyncOffset - 0.5));
+document.getElementById('offset-plus').addEventListener('click', () => saveLyricsOffset(currentSyncOffset + 0.5));
+document.getElementById('offset-reset').addEventListener('click', () => saveLyricsOffset(0));
+document.getElementById('refresh-lyrics').addEventListener('click', () => {
+    if (currentTrack) updateLyrics(currentTrack, true);
 });
 
 function updateModeUI() {
@@ -167,6 +257,8 @@ function updateModeUI() {
     }
 
     try {
+        const settings = await window.api.getSettings?.();
+        applyShellTheme(settings && settings.shellTheme);
         const track = await window.api.getNowPlaying();
         if (track) {
             updateLyrics(track);
@@ -177,6 +269,10 @@ function updateModeUI() {
         setLyricsMessage(`Error getting track: ${error.message}`, 'lyrics-error');
     }
 })();
+
+if (window.api && window.api.onShellThemeChanged) {
+    window.api.onShellThemeChanged(applyShellTheme);
+}
 
 if (window.api && window.api.onLyricsTrackUpdate) {
     window.api.onLyricsTrackUpdate((track) => {
@@ -194,18 +290,30 @@ async function updateLyrics(track, force = false) {
     if (!track) return;
 
     const provider = providerSelect.value;
-    if (!force && currentTrack && currentTrack.title === track.title && currentTrack.artist === track.artist) {
+    const nextLyricsKey = lyricsTrackKey(track, provider);
+    if (!force && currentLyricsKey === nextLyricsKey) {
         return;
     }
 
     const requestId = ++lyricsRequestId;
     currentTrack = track;
+    currentLyricsKey = nextLyricsKey;
+    loadLyricsOffset(nextLyricsKey);
     titleEl.textContent = track.title;
     artistEl.textContent = track.artist;
     setLyricsMessage(`Loading from ${provider}...`);
     currentLyrics = [];
     clearActiveLyrics();
     stopKaraokeAnimation();
+
+    if (!force) {
+        const cachedLyrics = readCachedLyrics(nextLyricsKey);
+        if (cachedLyrics) {
+            cacheStatusEl.textContent = 'Loaded from the on-device cache';
+            renderLyricsPayload(cachedLyrics, provider);
+            return;
+        }
+    }
 
     try {
         if (!window.api || !window.api.fetchLyrics) {
@@ -222,19 +330,26 @@ async function updateLyrics(track, force = false) {
         });
 
         if (requestId !== lyricsRequestId) return;
-
-        if (lyrics && lyrics.syncedLyrics) {
-            renderLyrics(lyrics.syncedLyrics);
-        } else if (lyrics && lyrics.plainLyrics) {
-            renderPlainLyrics(lyrics.plainLyrics);
-        } else {
-            setLyricsMessage(`No lyrics found on ${provider}`);
-        }
+        if (lyrics && (lyrics.syncedLyrics || lyrics.plainLyrics)) saveCachedLyrics(nextLyricsKey, lyrics);
+        cacheStatusEl.textContent = lyrics && (lyrics.syncedLyrics || lyrics.plainLyrics)
+            ? 'Fetched now and cached on this device'
+            : 'No lyrics cached for this track';
+        renderLyricsPayload(lyrics, provider);
     } catch (error) {
         if (requestId !== lyricsRequestId) return;
 
         console.error('Error fetching lyrics:', error);
         setLyricsMessage('Error loading lyrics');
+    }
+}
+
+function renderLyricsPayload(lyrics, provider) {
+    if (lyrics && lyrics.syncedLyrics) {
+        renderLyrics(lyrics.syncedLyrics);
+    } else if (lyrics && lyrics.plainLyrics) {
+        renderPlainLyrics(lyrics.plainLyrics);
+    } else {
+        setLyricsMessage(`No lyrics found on ${provider}`);
     }
 }
 
@@ -307,7 +422,7 @@ function seekToTimestamp(time) {
 function syncLyrics(time) {
     if (currentLyrics.length === 0 || isStaticMode) return;
 
-    const adjustedTime = Math.max(0, time + SYNC_OFFSET_SECONDS);
+    const adjustedTime = Math.max(0, time + SYNC_OFFSET_SECONDS + currentSyncOffset);
     const nextActiveLineIndex = findActiveLine(currentLyrics, adjustedTime);
 
     if (nextActiveLineIndex === -1) {

@@ -548,7 +548,21 @@ class SpiceApiParserTest {
                     {"id": "command-2", "command": "seek", "payload": {"progress": 42.25}},
                     {"id": "command-3", "command": "shuffle", "payload": {"enabled": true}},
                     {"id": "command-4", "command": "repeat", "payload": {"mode": "all"}},
-                    {"id": "command-5", "command": "volume", "payload": {"volume": 84}}
+                    {"id": "command-5", "command": "volume", "payload": {"volume": 84}},
+                    {
+                      "id": "command-6",
+                      "command": "handoff",
+                      "payload": {
+                        "track": {"id": "track-2", "title": "Voyager", "artist": "Daft Punk"},
+                        "queue": [{"id": "track-2", "title": "Voyager", "artist": "Daft Punk"}],
+                        "queueIndex": 0,
+                        "progress": 58.5,
+                        "volume": 71,
+                        "isPlaying": true,
+                        "shuffleEnabled": true,
+                        "repeatMode": "one"
+                      }
+                    }
                   ]
                 }
                 """.trimIndent(),
@@ -561,6 +575,10 @@ class SpiceApiParserTest {
         assertEquals(true, commands[2].shuffleEnabled)
         assertEquals(RepeatMode.All, commands[3].repeatMode)
         assertEquals(84, commands[4].volume)
+        assertEquals(58_500L, commands[5].seekPositionMs)
+        assertEquals(true, commands[5].shouldPlay)
+        assertEquals(true, commands[5].shuffleEnabled)
+        assertEquals(RepeatMode.One, commands[5].repeatMode)
         assertEquals("one", RepeatMode.One.toRemoteValue())
         assertEquals(RepeatMode.Off, parseRemoteRepeatMode("invalid"))
     }

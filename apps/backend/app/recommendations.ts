@@ -1,3 +1,10 @@
+import {
+  isRecommendationHidden,
+  normalizeRecommendationPreferences,
+  recommendationPreferenceScoreAdjustment,
+  type RecommendationPreferences,
+} from './recommendation-preferences.ts';
+
 export interface RecommendationArtist {
   id?: string;
   name: string;
@@ -820,9 +827,16 @@ export function rankRecommendedTracks<TTrack extends RecommendationTrack>(
     exclude?: RecommendationTrack[];
     limit?: number;
     includeKnown?: boolean;
+    preferences?: RecommendationPreferences;
+    now?: number;
   } = {},
 ): TTrack[] {
-  const excludedIds = new Set(options.includeKnown ? [] : profile.trackIds);
+  const preferences = options.preferences
+    ? normalizeRecommendationPreferences(options.preferences, options.now)
+    : null;
+  const includeKnown = options.includeKnown === true
+    || Boolean(preferences && preferences.discoveryLevel <= 25);
+  const excludedIds = new Set(includeKnown ? [] : profile.trackIds);
   const excludedTitles = new Set<string>();
   for (const track of options.exclude || []) {
     excludedIds.add(trackKey(track));
@@ -842,15 +856,23 @@ export function rankRecommendedTracks<TTrack extends RecommendationTrack>(
       if (!track?.id || track.id === 'placeholder' || track.previewOnly) return;
       const idKey = trackKey(track);
       const titleKey = trackTitleArtistKey(track);
+      if (preferences && isRecommendationHidden(track, preferences, options.now)) return;
       if (excludedIds.has(idKey) || excludedTitles.has(titleKey)) return;
 
       const providerOrderBonus = Math.max(0, 1.8 - index * 0.08);
       const seedScore = Math.log1p(Math.max(0, batch.seed.weight)) * 3.5;
-      const exploration = deterministicTieBreak(`${batch.seed.id}:${idKey}`) * 0.45;
+      const explorationScale = preferences
+        ? 0.15 + (preferences.discoveryLevel / 100) * 0.5
+        : 0.45;
+      const exploration = deterministicTieBreak(`${batch.seed.id}:${idKey}`) * explorationScale;
       const score = seedScore
         + providerOrderBonus
         + personalizationTrackScore(track, profile)
-        + exploration;
+        + exploration
+        + (preferences ? recommendationPreferenceScoreAdjustment({
+          knownTrack: profile.trackIds.has(idKey),
+          discoveryLevel: preferences.discoveryLevel,
+        }) : 0);
       const existing = scored.get(titleKey);
       if (!existing) {
         scored.set(titleKey, {
@@ -917,6 +939,8 @@ export function buildRecommendationShelves<TTrack extends RecommendationTrack>(
     exclude?: RecommendationTrack[];
     limitPerShelf?: number;
     minimumTracks?: number;
+    preferences?: RecommendationPreferences;
+    now?: number;
   } = {},
 ): RecommendationShelf<TTrack>[] {
   const usedTracks = [...(options.exclude ?? [])];
@@ -928,6 +952,8 @@ export function buildRecommendationShelves<TTrack extends RecommendationTrack>(
     const tracks = rankRecommendedTracks([batch], profile, {
       exclude: usedTracks,
       limit: limitPerShelf,
+      preferences: options.preferences,
+      now: options.now,
     });
     if (tracks.length < minimumTracks) continue;
     shelves.push({ seed: batch.seed, tracks });

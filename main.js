@@ -18,6 +18,10 @@ const {
   getNavigationHistory,
   navigateHistory,
 } = require("./desktop-helpers");
+const {
+  DesktopSleepTimer,
+  detectDesktopPlaybackBoundary,
+} = require("./desktop-sleep-timer");
 
 // Simple File Logger for Production Debugging - INITIALIZE FIRST
 const logFile = path.join(app.getPath("userData"), "debug.log");
@@ -92,6 +96,7 @@ let updateInstallCleanupCompleted = false;
 let downloadedUpdateInfo = null;
 let updateInstallPromptActive = false;
 let skipDownloadedUpdateOnClose = false;
+let desktopSleepTimer = null;
 
 const SPICE_LOCAL_RUNTIME_PLATFORM = process.platform === "linux" ? "linux" : "windows";
 const APP_NATIVE_MODE =
@@ -151,6 +156,15 @@ function broadcastShellTheme() {
   }
   if (toolbarSettingsWindow && !toolbarSettingsWindow.isDestroyed()) {
     sendShellTheme(toolbarSettingsWindow.webContents);
+  }
+}
+
+function broadcastDesktopSleepTimer() {
+  const state = desktopSleepTimer ? desktopSleepTimer.snapshot() : { mode: "off" };
+  for (const target of [mainWindow, settingsWindow, lyricsWindow]) {
+    if (target && !target.isDestroyed()) {
+      target.webContents.send("desktop-sleep-timer-changed", state);
+    }
   }
 }
 
@@ -836,6 +850,8 @@ function clearPlaybackSurfaces(rawData = {}, options = {}) {
   lastPolledTrackKey = null;
   lastScrobbledTrackKey = null;
   lastPolledTime = 0;
+  lastDesktopPlaybackSnapshot = null;
+  desktopQueueAtTail = false;
   lastInlineLyricsKey = null;
   if (options.resetScrobbler) {
     resetActiveScrobbleState();
@@ -1181,6 +1197,27 @@ function seekPlayback(time) {
     .catch((error) => {
       console.error("[Player] Failed to seek playback:", error);
     });
+}
+
+function pausePlaybackForDesktopSleepTimer() {
+  const targetView = getActiveBackendView();
+  if (!targetView || targetView.webContents.isDestroyed()) return;
+  targetView.webContents.executeJavaScript(`
+    (() => {
+      let paused = false;
+      document.querySelectorAll('audio, video').forEach((media) => {
+        if (!media.paused) {
+          media.pause();
+          paused = true;
+        }
+      });
+      window.dispatchEvent(new CustomEvent('spice-desktop-sleep-timer-expired'));
+      return paused;
+    })();
+  `).catch((error) => {
+    console.error("[Sleep Timer] Failed to pause active playback:", error);
+  });
+  miniPlayerServer.updateState({ paused: true });
 }
 
 // Handle VK player commands from the app-frame player bar
@@ -1617,6 +1654,8 @@ let trackPollingInterval = null;
 let lastPolledTrackKey = null;
 let lastScrobbledTrackKey = null;
 let lastPolledTime = 0;
+let lastDesktopPlaybackSnapshot = null;
+let desktopQueueAtTail = false;
 
 let queuePollingInterval = null;
 
@@ -1644,6 +1683,10 @@ function startQueuePolling() {
         })();
       `);
       if (queueData) {
+        if (queueData.length > 0) {
+          const selectedIndex = queueData.findIndex((item) => item.selected === true);
+          desktopQueueAtTail = selectedIndex >= 0 && selectedIndex === queueData.length - 1;
+        }
         miniPlayerServer.updateState({ queue: queueData });
         if (queueWindow && !queueWindow.isDestroyed()) {
           queueWindow.webContents.send("queue-update", queueData);
@@ -1698,6 +1741,8 @@ function startTrackPolling() {
                                         shuffle: snapshot.shuffle === true,
                                         repeat: snapshot.repeat || 'off',
                                         likeStatus: snapshot.likeStatus === true,
+                                        queueIndex: Number.isInteger(snapshot.queueIndex) ? snapshot.queueIndex : -1,
+                                        queueLength: Number.isInteger(snapshot.queueLength) ? snapshot.queueLength : 0,
                                         repeatDebug: 'spice-playback-snapshot'
                                     };
                                 }
@@ -2281,6 +2326,25 @@ function startTrackPolling() {
         const trackKey = track.artist + " - " + track.title;
         const currentTime = track.currentTime || 0;
 
+        if (Number.isInteger(rawData.queueLength) && rawData.queueLength > 0) {
+          desktopQueueAtTail = Number(rawData.queueIndex) >= rawData.queueLength - 1;
+        }
+        const desktopPlaybackSnapshot = {
+          trackKey,
+          currentTime,
+          duration: Number(track.duration) || 0,
+          paused: track.paused === true,
+          queueAtTail: desktopQueueAtTail,
+        };
+        const playbackBoundary = detectDesktopPlaybackBoundary(
+          lastDesktopPlaybackSnapshot,
+          desktopPlaybackSnapshot,
+        );
+        lastDesktopPlaybackSnapshot = desktopPlaybackSnapshot;
+        if (playbackBoundary.trackEnded && desktopSleepTimer) {
+          desktopSleepTimer.handleTrackEnd({ queueEnded: playbackBoundary.queueEnded });
+        }
+
         // Always update lastTrack for progress tracking
         lastTrack = track;
 
@@ -2419,6 +2483,8 @@ function stopTrackPolling() {
   }
   lastPolledTrackKey = null;
   lastScrobbledTrackKey = null;
+  lastDesktopPlaybackSnapshot = null;
+  desktopQueueAtTail = false;
 }
 // ============== END TRACK POLLING ==============
 
@@ -3030,6 +3096,14 @@ app.whenReady().then(async () => {
   }
 
   initStore();
+  desktopSleepTimer = new DesktopSleepTimer({
+    initialState: store ? store.get("desktopSleepTimer", { mode: "off" }) : { mode: "off" },
+    onExpire: pausePlaybackForDesktopSleepTimer,
+    onChange: (state) => {
+      if (store) store.set("desktopSleepTimer", state);
+      broadcastDesktopSleepTimer();
+    },
+  });
 
   // NUCLEAR OPTION: Clear Cache on Startup
   if (session.defaultSession) {
@@ -3931,7 +4005,18 @@ app.whenReady().then(async () => {
       topBarSearchEnabled: store
         ? store.get("topBarSearchEnabled", false)
         : false,
+      desktopSleepTimer: desktopSleepTimer
+        ? desktopSleepTimer.snapshot()
+        : { mode: "off" },
     };
+  });
+
+  ipcMain.handle("set-desktop-sleep-timer", (event, request = {}) => {
+    if (!desktopSleepTimer) return { mode: "off" };
+    if (request.mode === "duration") return desktopSleepTimer.setDuration(request.minutes);
+    if (request.mode === "end-track") return desktopSleepTimer.setEndOfTrack();
+    if (request.mode === "end-queue") return desktopSleepTimer.setEndOfQueue();
+    return desktopSleepTimer.cancel();
   });
 
   ipcMain.handle("get-topbar-search", () => {
@@ -4542,9 +4627,12 @@ app.whenReady().then(async () => {
     }
   });
 
-  ipcMain.on("scrobble-track-end", () => {
+  ipcMain.on("scrobble-track-end", (event, details = {}) => {
     if (scrobbler) {
       scrobbler.onTrackEnd();
+    }
+    if (desktopSleepTimer) {
+      desktopSleepTimer.handleTrackEnd({ queueEnded: details.queueEnded === true });
     }
   });
 
