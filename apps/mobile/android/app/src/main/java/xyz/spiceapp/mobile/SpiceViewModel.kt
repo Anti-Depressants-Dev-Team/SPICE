@@ -21,6 +21,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -29,6 +31,7 @@ import xyz.spiceapp.mobile.data.PairedCredentialStore
 import xyz.spiceapp.mobile.data.SessionStore
 import xyz.spiceapp.mobile.data.SpiceApi
 import xyz.spiceapp.mobile.data.SpiceApiException
+import xyz.spiceapp.mobile.data.ResolvedPlayback
 import xyz.spiceapp.mobile.data.toRemoteTrackJson
 import xyz.spiceapp.mobile.data.download.MediaDownloadClient
 import xyz.spiceapp.mobile.data.update.AppUpdateClient
@@ -88,6 +91,8 @@ data class SpiceUiState(
     val downloads: List<DownloadedTrack> = emptyList(),
     val libraryTab: LibraryTab = LibraryTab.Playlists,
     val quality: StreamQuality = StreamQuality.Standard,
+    val crossfadeDurationMs: Long = 0L,
+    val smartQueueEnabled: Boolean = true,
     val accentTheme: AccentTheme = AccentTheme.MidnightVelvet,
     val accountSession: AccountSession? = null,
     val pairedDeviceCredential: PairedDeviceCredential? = null,
@@ -162,6 +167,13 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
     private var updateCheckJob: Job? = null
     private var updateDownloadJob: Job? = null
     private var sleepTimerJob: Job? = null
+    private var autoHistorySyncJob: Job? = null
+    private var autoTasteSyncJob: Job? = null
+    private var homeLoadJob: Job? = null
+    private var transitionPreparationJob: Job? = null
+    private var playbackTransitionJob: Job? = null
+    private var preparedTransition: PreparedMobileTransition? = null
+    private val cloudLibrarySyncMutex = Mutex()
     private var optimisticRemoteDeviceId: String? = null
     private var optimisticRemoteStateUntilElapsedMs: Long = 0L
     private var optimisticRemoteTrackChanged: Boolean = false
@@ -173,6 +185,8 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
     private val _uiState = MutableStateFlow(
         SpiceUiState(
             quality = libraryRepository.quality(),
+            crossfadeDurationMs = libraryRepository.crossfadeDurationMs(),
+            smartQueueEnabled = libraryRepository.smartQueueEnabled(),
             accentTheme = libraryRepository.accentTheme(),
             accountSession = sessionStore.load(),
             pairedDeviceCredential = initialPairedCredential,
@@ -185,9 +199,9 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
     val playerState: StateFlow<PlayerUiState> = playerConnection.state
 
     init {
-        migrateLegacyLibrary()
         observeLibrary()
-        loadHome()
+        initializeLibraryAndHome()
+        observePlaybackTransitions()
         _uiState.value.accountSession?.let { session ->
             loadProfileSummary(session)
             loadPendingAccountInvites(session)
@@ -475,6 +489,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun playQueueIndex(queue: List<Track>, index: Int) {
         val track = queue.getOrNull(index) ?: return
+        cancelMobilePlaybackTransition()
         playJob?.cancel()
         _uiState.value = _uiState.value.copy(
             resolvingTrackId = track.id,
@@ -486,20 +501,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
         playJob = viewModelScope.launch {
             try {
                 val playback = api.resolvePlayable(track, _uiState.value.quality)
-                libraryRepository.addToHistory(playback.track)
-                _uiState.value = _uiState.value.copy(
-                    resolvingTrackId = null,
-                    currentTrack = playback.track,
-                    playbackQueue = queue.replaceAt(index, playback.track),
-                    queueIndex = index,
-                    message = if (playback.usedFallback) {
-                        "Playing full SoundCloud source: ${playback.track.title}"
-                    } else {
-                        null
-                    },
-                )
-                playerConnection.clearError()
-                playerConnection.play(playback.track, playback.stream.url)
+                commitResolvedPlayback(queue, index, playback)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
@@ -509,6 +511,28 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
         }
+    }
+
+    private suspend fun commitResolvedPlayback(
+        queue: List<Track>,
+        index: Int,
+        playback: ResolvedPlayback,
+    ) {
+        _uiState.value = _uiState.value.copy(
+            resolvingTrackId = null,
+            currentTrack = playback.track,
+            playbackQueue = queue.replaceAt(index, playback.track),
+            queueIndex = index,
+            message = if (playback.usedFallback) {
+                "Playing full SoundCloud source: ${playback.track.title}"
+            } else {
+                null
+            },
+        )
+        playerConnection.clearError()
+        playerConnection.play(playback.track, playback.stream.url)
+        libraryRepository.addToHistory(playback.track)
+        scheduleHistorySync()
     }
 
 
@@ -618,6 +642,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun stopPlayback() {
+        cancelMobilePlaybackTransition()
         activeRemoteTargetId()?.let { targetDeviceId ->
             patchRemoteDevice(targetDeviceId) { it.copy(isPlaying = false) }
             sendRemoteCommand(targetDeviceId, "pause")
@@ -766,6 +791,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
     fun toggleLike(track: Track) {
         viewModelScope.launch {
             libraryRepository.toggleLike(track)
+            scheduleTasteSync()
         }
     }
 
@@ -903,6 +929,18 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
     fun setQuality(quality: StreamQuality) {
         libraryRepository.setQuality(quality)
         _uiState.value = _uiState.value.copy(quality = quality)
+    }
+
+    fun setCrossfadeDurationMs(durationMs: Long) {
+        val normalized = normalizeMobileCrossfadeDurationMs(durationMs)
+        libraryRepository.setCrossfadeDurationMs(normalized)
+        _uiState.value = _uiState.value.copy(crossfadeDurationMs = normalized)
+        if (normalized == 0L) cancelMobilePlaybackTransition()
+    }
+
+    fun setSmartQueueEnabled(enabled: Boolean) {
+        libraryRepository.setSmartQueueEnabled(enabled)
+        _uiState.value = _uiState.value.copy(smartQueueEnabled = enabled)
     }
 
     fun setAuthMode(mode: AuthMode) {
@@ -1216,6 +1254,8 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
 
     fun signOut() {
         sessionStore.clear()
+        autoHistorySyncJob?.cancel()
+        autoTasteSyncJob?.cancel()
         connectJob?.cancel()
         connectRefreshJob?.cancel()
         clearOptimisticRemoteState()
@@ -1660,6 +1700,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun pausePlaybackForSleepTimer() {
+        cancelMobilePlaybackTransition()
         activeRemoteTargetId()?.let { targetDeviceId ->
             patchRemoteDevice(targetDeviceId) { it.copy(isPlaying = false) }
             sendRemoteCommand(targetDeviceId, "pause")
@@ -1668,8 +1709,145 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
         playerConnection.pause()
     }
 
+    private fun observePlaybackTransitions() {
+        viewModelScope.launch {
+            playerConnection.state.collect(::evaluateMobilePlaybackTransition)
+        }
+    }
+
+    private fun evaluateMobilePlaybackTransition(player: PlayerUiState) {
+        val state = _uiState.value
+        val current = state.currentTrack
+        val outgoingKey = current?.queueKey().orEmpty()
+        val durationMs = player.durationMs
+        val configuredDurationMs = state.crossfadeDurationMs
+        val nextIndex = when {
+            player.shuffleEnabled || player.repeatMode == RepeatMode.One -> null
+            state.queueIndex + 1 in state.playbackQueue.indices -> state.queueIndex + 1
+            player.repeatMode == RepeatMode.All && state.playbackQueue.size > 1 -> 0
+            else -> null
+        }
+        val sleepTimerBlocksTransition = when (state.sleepTimer.mode) {
+            MobileSleepTimerMode.EndTrack -> state.sleepTimer.armedTrackKey == outgoingKey
+            MobileSleepTimerMode.EndQueue -> nextIndex == null
+            else -> false
+        }
+
+        if (
+            activeRemoteTargetId() != null ||
+            !player.isPlaying ||
+            current == null ||
+            nextIndex == null ||
+            configuredDurationMs <= 0L ||
+            sleepTimerBlocksTransition
+        ) {
+            if (preparedTransition?.outgoingTrackKey != outgoingKey) {
+                transitionPreparationJob?.cancel()
+                transitionPreparationJob = null
+                preparedTransition = null
+            }
+            return
+        }
+
+        val nextTrack = state.playbackQueue.getOrNull(nextIndex) ?: return
+        val prepared = preparedTransition
+        if (
+            prepared != null &&
+            (prepared.outgoingTrackKey != outgoingKey || prepared.nextTrackKey != nextTrack.queueKey())
+        ) {
+            preparedTransition = null
+        }
+
+        if (
+            preparedTransition == null &&
+            transitionPreparationJob?.isActive != true &&
+            shouldPrepareMobileTransition(
+                positionMs = player.positionMs,
+                durationMs = durationMs,
+                crossfadeDurationMs = configuredDurationMs,
+                hasNextTrack = true,
+            )
+        ) {
+            val queueSnapshot = state.playbackQueue
+            transitionPreparationJob = viewModelScope.launch {
+                runCatching { api.resolvePlayable(nextTrack, _uiState.value.quality) }
+                    .onSuccess { playback ->
+                        val latest = _uiState.value
+                        if (
+                            latest.currentTrack?.queueKey() == outgoingKey &&
+                            latest.playbackQueue.getOrNull(nextIndex)?.queueKey() == nextTrack.queueKey()
+                        ) {
+                            preparedTransition = PreparedMobileTransition(
+                                outgoingTrackKey = outgoingKey,
+                                nextTrackKey = nextTrack.queueKey(),
+                                queue = queueSnapshot,
+                                nextIndex = nextIndex,
+                                playback = playback,
+                            )
+                        }
+                    }
+                transitionPreparationJob = null
+            }
+        }
+
+        val ready = preparedTransition ?: return
+        if (
+            playbackTransitionJob?.isActive != true &&
+            shouldStartMobileTransition(
+                positionMs = player.positionMs,
+                durationMs = durationMs,
+                crossfadeDurationMs = configuredDurationMs,
+                prepared = true,
+            )
+        ) {
+            startMobilePlaybackTransition(ready, configuredDurationMs)
+        }
+    }
+
+    private fun startMobilePlaybackTransition(
+        prepared: PreparedMobileTransition,
+        durationMs: Long,
+    ) {
+        transitionPreparationJob?.cancel()
+        transitionPreparationJob = null
+        playbackTransitionJob = viewModelScope.launch {
+            val safeDurationMs = normalizeMobileCrossfadeDurationMs(durationMs)
+            val steps = mobileTransitionStepCount(safeDurationMs)
+            var switched = false
+            try {
+                for (step in 0..steps) {
+                    if (_uiState.value.currentTrack?.queueKey() != prepared.outgoingTrackKey && !switched) {
+                        return@launch
+                    }
+                    val elapsedMs = safeDurationMs * step / steps
+                    if (!switched && elapsedMs * 2 >= safeDurationMs) {
+                        switched = true
+                        preparedTransition = null
+                        commitResolvedPlayback(prepared.queue, prepared.nextIndex, prepared.playback)
+                    }
+                    playerConnection.setTransitionGain(mobileTransitionGain(elapsedMs, safeDurationMs))
+                    if (step < steps) delay((safeDurationMs / steps).coerceAtLeast(25L))
+                }
+            } finally {
+                playerConnection.setTransitionGain(1f)
+                preparedTransition = null
+                playbackTransitionJob = null
+            }
+        }
+    }
+
+    private fun cancelMobilePlaybackTransition() {
+        transitionPreparationJob?.cancel()
+        transitionPreparationJob = null
+        playbackTransitionJob?.cancel()
+        playbackTransitionJob = null
+        preparedTransition = null
+        playerConnection.setTransitionGain(1f)
+    }
+
     private fun handlePlaybackEnded() {
         viewModelScope.launch {
+            if (playbackTransitionJob?.isActive == true) return@launch
             val state = _uiState.value
             val nextIndex = nextQueueIndex(
                 state = state,
@@ -1688,6 +1866,17 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
             if (nextIndex == null) {
+                if (state.smartQueueEnabled) {
+                    val continuation = mobileSmartQueueCandidates(
+                        sections = state.homeSections,
+                        currentQueue = state.playbackQueue,
+                    )
+                    if (continuation.isNotEmpty()) {
+                        val continuedQueue = state.playbackQueue + continuation
+                        playQueueIndex(continuedQueue, state.playbackQueue.size)
+                        return@launch
+                    }
+                }
                 _uiState.value = state.copy(message = "Queue finished.")
                 return@launch
             }
@@ -1985,9 +2174,44 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
         refreshSpiceConnect()
     }
 
-    private fun migrateLegacyLibrary() {
+    private fun initializeLibraryAndHome() {
         viewModelScope.launch {
             libraryRepository.migrateLegacySnapshotsIfNeeded()
+            val session = _uiState.value.accountSession
+            if (session != null) {
+                runCatching { refreshCloudTaste(session) }
+                    .onSuccess { summary ->
+                        _uiState.value = _uiState.value.copy(lastSync = summary)
+                    }
+            }
+            loadHome()
+        }
+    }
+
+    private fun scheduleHistorySync() {
+        val session = _uiState.value.accountSession ?: return
+        autoHistorySyncJob?.cancel()
+        autoHistorySyncJob = viewModelScope.launch {
+            delay(AUTO_HISTORY_SYNC_DEBOUNCE_MS)
+            if (libraryRepository.pendingHistoryTrackIds().isEmpty()) return@launch
+            runCatching { syncCloudHistory(session) }
+                .onSuccess { summary ->
+                    _uiState.value = _uiState.value.copy(lastSync = summary)
+                }
+        }
+    }
+
+    private fun scheduleTasteSync() {
+        val session = _uiState.value.accountSession ?: return
+        autoTasteSyncJob?.cancel()
+        autoTasteSyncJob = viewModelScope.launch {
+            delay(AUTO_TASTE_SYNC_DEBOUNCE_MS)
+            if (libraryRepository.pendingLikedTrackIds().isEmpty()) return@launch
+            runCatching { refreshCloudTaste(session) }
+                .onSuccess { summary ->
+                    _uiState.value = _uiState.value.copy(lastSync = summary)
+                    loadHome()
+                }
         }
     }
 
@@ -2015,6 +2239,8 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
     private fun syncLibrary(session: AccountSession) {
         if (_uiState.value.syncLoading) return
 
+        autoHistorySyncJob?.cancel()
+        autoTasteSyncJob?.cancel()
         _uiState.value = _uiState.value.copy(syncLoading = true, message = null)
         viewModelScope.launch {
             runCatching {
@@ -2025,6 +2251,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
                     lastSync = summary,
                     message = "Synced ${summary.likedCount} liked tracks, ${summary.historyCount} history items, and ${summary.playlistCount} playlists.",
                 )
+                loadHome()
             }.onFailure { error ->
                 _uiState.value = _uiState.value.copy(
                     syncLoading = false,
@@ -2439,19 +2666,87 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
             progressDifference <= SPICE_CONNECT_PROGRESS_REPORT_BUCKET_MS * 2
     }
 
-    private suspend fun refreshCloudLibrary(session: AccountSession): CloudLibraryRefresh {
-        val localLiked = libraryRepository.likedSnapshot()
-        val localHistory = libraryRepository.historySnapshot()
-        val localPlaylists = libraryRepository.playlistSnapshot()
-        val summary = api.syncLibrary(session.token, localLiked, localHistory, localPlaylists)
-        val remoteLiked = api.fetchLikedTracks(session.token)
-        val remoteHistory = api.fetchHistoryTracks(session.token)
-        val remotePlaylists = api.fetchPlaylists(session.token)
-        libraryRepository.replaceLikedTracks(remoteLiked)
-        libraryRepository.replaceHistoryTracks(remoteHistory)
-        libraryRepository.replacePlaylists(remotePlaylists)
-        return CloudLibraryRefresh(summary, remotePlaylists)
-    }
+    private suspend fun refreshCloudLibrary(session: AccountSession): CloudLibraryRefresh =
+        cloudLibrarySyncMutex.withLock {
+            val likesSyncRevision = libraryRepository.likesSyncRevision()
+            val historySyncRevision = libraryRepository.historySyncRevision()
+            val localLiked = libraryRepository.likedSnapshot()
+            val localHistory = libraryRepository.historySnapshot()
+            val localPlaylists = libraryRepository.playlistSnapshot()
+            val pendingLikedTrackIds = libraryRepository.pendingLikedTrackIds()
+            val pendingHistoryTrackIds = libraryRepository.pendingHistoryTrackIds()
+            val result = api.syncLibrary(
+                token = session.token,
+                liked = localLiked,
+                history = localHistory,
+                playlists = localPlaylists,
+                pendingLikedTrackIds = pendingLikedTrackIds,
+                initialLikesReconciliation = libraryRepository.needsInitialLikesReconciliation(),
+                pendingHistoryTrackIds = pendingHistoryTrackIds,
+                initialHistoryReconciliation = libraryRepository.needsInitialHistoryReconciliation(),
+            )
+            val syncedLikes = libraryRepository.replaceSyncedLikedTracks(
+                result.likedTracks,
+                likesSyncRevision,
+            )
+            val syncedHistory = libraryRepository.replaceSyncedHistoryTracks(
+                result.historyTracks,
+                historySyncRevision,
+            )
+            libraryRepository.replacePlaylists(result.playlists)
+            CloudLibraryRefresh(
+                result.summary.copy(likedCount = syncedLikes.size, historyCount = syncedHistory.size),
+                result.playlists,
+            )
+        }
+
+    private suspend fun refreshCloudTaste(session: AccountSession): LibrarySyncSummary =
+        cloudLibrarySyncMutex.withLock {
+            val likesSyncRevision = libraryRepository.likesSyncRevision()
+            val historySyncRevision = libraryRepository.historySyncRevision()
+            val pendingLikedTrackIds = libraryRepository.pendingLikedTrackIds()
+            val pendingHistoryTrackIds = libraryRepository.pendingHistoryTrackIds()
+            val result = api.syncTaste(
+                token = session.token,
+                liked = libraryRepository.likedSnapshot(),
+                history = libraryRepository.historySnapshot(),
+                pendingLikedTrackIds = pendingLikedTrackIds,
+                initialLikesReconciliation = libraryRepository.needsInitialLikesReconciliation(),
+                pendingHistoryTrackIds = pendingHistoryTrackIds,
+                initialHistoryReconciliation = libraryRepository.needsInitialHistoryReconciliation(),
+            )
+            val syncedLikes = libraryRepository.replaceSyncedLikedTracks(
+                result.likedTracks,
+                likesSyncRevision,
+            )
+            val syncedHistory = libraryRepository.replaceSyncedHistoryTracks(
+                result.historyTracks,
+                historySyncRevision,
+            )
+            result.summary.copy(
+                likedCount = syncedLikes.size,
+                historyCount = syncedHistory.size,
+                playlistCount = libraryRepository.playlistSnapshot().size,
+            )
+        }
+
+    private suspend fun syncCloudHistory(session: AccountSession): LibrarySyncSummary =
+        cloudLibrarySyncMutex.withLock {
+            val historySyncRevision = libraryRepository.historySyncRevision()
+            val pendingHistoryTrackIds = libraryRepository.pendingHistoryTrackIds()
+            val history = api.syncHistory(
+                token = session.token,
+                history = libraryRepository.historySnapshot(),
+                pendingHistoryTrackIds = pendingHistoryTrackIds,
+                initialHistoryReconciliation = libraryRepository.needsInitialHistoryReconciliation(),
+            )
+            val syncedHistory = libraryRepository.replaceSyncedHistoryTracks(history, historySyncRevision)
+            LibrarySyncSummary(
+                likedCount = libraryRepository.likedSnapshot().size,
+                historyCount = syncedHistory.size,
+                playlistCount = libraryRepository.playlistSnapshot().size,
+            )
+        }
 
     private fun findSyncedPlaylist(local: Playlist, remotePlaylists: List<Playlist>): Playlist? {
         val localTrackIds = local.tracks.map { it.id }
@@ -2472,20 +2767,44 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun loadHome() {
+        homeLoadJob?.cancel()
         _uiState.value = _uiState.value.copy(homeLoading = true, message = null)
-        viewModelScope.launch {
+        homeLoadJob = viewModelScope.launch {
             runCatching {
-                coroutineScope {
-                    listOf(
-                        "Quick Picks" to "Top Hits 2026",
-                        "Lofi & Chill" to "Chill Study Lofi Beats",
-                        "Workout Energy" to "Workout Gym Power",
-                    ).map { (title, query) ->
-                        async { FeedSection(title, api.search(query, 10)) }
-                    }.awaitAll()
+                val history = libraryRepository.historySnapshot()
+                val liked = libraryRepository.likedSnapshot()
+                val seeds = buildMobileRecommendationSeeds(history, liked)
+                val recommendationBatches = coroutineScope {
+                    seeds.map { seed ->
+                        async {
+                            runCatching {
+                                MobileRecommendationBatch(seed, api.search(seed.query, 14))
+                            }.getOrNull()
+                        }
+                    }.awaitAll().filterNotNull()
                 }
+                val personalized = mobileRecommendationSections(recommendationBatches, history, liked)
+                val fallbackQueries = buildList {
+                    add("Quick Picks" to "Top Hits 2026")
+                    if (personalized.isEmpty()) {
+                        add("Lofi & Chill" to "Chill Study Lofi Beats")
+                        add("Workout Energy" to "Workout Gym Power")
+                    }
+                }
+                val fallback = coroutineScope {
+                    fallbackQueries.map { (title, query) ->
+                        async {
+                            runCatching { FeedSection(title, api.search(query, 10)) }.getOrNull()
+                        }
+                    }.awaitAll().filterNotNull()
+                }
+                (personalized + fallback).filter { it.tracks.isNotEmpty() }
             }.onSuccess { sections ->
-                _uiState.value = _uiState.value.copy(homeSections = sections, homeLoading = false)
+                _uiState.value = _uiState.value.copy(
+                    homeSections = sections,
+                    homeLoading = false,
+                    message = if (sections.isEmpty()) "Home feed is unavailable right now." else _uiState.value.message,
+                )
             }.onFailure { error ->
                 _uiState.value = _uiState.value.copy(
                     homeLoading = false,
@@ -2633,6 +2952,11 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
         updateCheckJob?.cancel()
         updateDownloadJob?.cancel()
         sleepTimerJob?.cancel()
+        autoHistorySyncJob?.cancel()
+        homeLoadJob?.cancel()
+        transitionPreparationJob?.cancel()
+        playbackTransitionJob?.cancel()
+        autoTasteSyncJob?.cancel()
         appUpdateClient.cancelActiveRequest()
         playerConnection.release()
         super.onCleared()
@@ -2648,6 +2972,8 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
         const val MAX_APPLIED_REMOTE_COMMAND_IDS = 160
         const val APP_UPDATE_DOWNLOAD_POLL_INTERVAL_MS = 1_000L
         const val MAX_MISSING_APP_UPDATE_DOWNLOAD_CHECKS = 3
+        const val AUTO_HISTORY_SYNC_DEBOUNCE_MS = 90_000L
+        const val AUTO_TASTE_SYNC_DEBOUNCE_MS = 30_000L
     }
 }
 
@@ -2661,6 +2987,14 @@ private data class LibrarySnapshot(
 private data class CloudLibraryRefresh(
     val summary: LibrarySyncSummary,
     val playlists: List<Playlist>,
+)
+
+private data class PreparedMobileTransition(
+    val outgoingTrackKey: String,
+    val nextTrackKey: String,
+    val queue: List<Track>,
+    val nextIndex: Int,
+    val playback: ResolvedPlayback,
 )
 
 private data class SharePlaylistResult(

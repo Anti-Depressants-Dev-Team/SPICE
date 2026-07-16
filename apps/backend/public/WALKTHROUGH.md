@@ -1,5 +1,13 @@
 # SPICE Walkthrough
 
+## v1.0.144
+
+- [Spice.Mobile main] Build Recommended Next and Because you played shelves from synced likes and recent listening, label the familiar history shelf Recently Played, and continue finished queues with a locally ranked smart queue.
+- [Spice.Mobile main] Pull desktop taste on launch and debounce mobile history uploads through dataset-scoped bundled sync so cross-device recommendations stay current without playlist reads, redundant Vercel invocations, or unchanged Neon writes.
+- [Spice.Mobile main] Add mobile Playback settings for stream quality, smart queue, smooth crossfade transitions, and duration, end-of-track, or end-of-queue sleep timers.
+- [Spice.Mobile main] Keep complete Android release notes inside a bounded scrollable update panel and reduce the music-note mark and Library navigation icon proportions.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.144`.
+
 ## v1.0.143
 
 - [Spice.Account main] Keep local-only profiles out of listener search and cloud profile hydration, and bind Native account sessions to the exact local profile that owns them.

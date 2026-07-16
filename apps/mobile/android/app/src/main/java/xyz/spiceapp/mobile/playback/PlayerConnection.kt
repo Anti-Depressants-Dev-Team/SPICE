@@ -63,6 +63,8 @@ class PlayerConnection(
     private var handledEndedForItem = false
     private var repeatMode = RepeatMode.Off
     private var sourceRetryCount = 0
+    private var userVolume = 1f
+    private var transitionGain = 1f
 
     private val listener = object : Player.Listener {
         override fun onEvents(player: Player, events: Player.Events) {
@@ -97,6 +99,8 @@ class PlayerConnection(
                 runCatching { controllerFuture.get() }
                     .onSuccess { connectedController ->
                         controller = connectedController
+                        userVolume = connectedController.volume.coerceIn(0f, 1f)
+                        transitionGain = 1f
                         connectedController.addListener(listener)
                         publishState(connectedController)
                         pendingAction?.invoke(connectedController)
@@ -131,6 +135,7 @@ class PlayerConnection(
             handledEndedForItem = false
             sourceRetryCount = 0
             activeController.setMediaItem(mediaItem)
+            applyEffectiveVolume(activeController)
             activeController.prepare()
             activeController.play()
             publishState(activeController)
@@ -168,7 +173,16 @@ class PlayerConnection(
 
     fun setVolume(volume: Int) {
         runWithController { activeController ->
-            activeController.volume = volume.coerceIn(0, 100) / 100f
+            userVolume = volume.coerceIn(0, 100) / 100f
+            applyEffectiveVolume(activeController)
+            publishState(activeController)
+        }
+    }
+
+    fun setTransitionGain(gain: Float) {
+        transitionGain = gain.coerceIn(0f, 1f)
+        runWithController { activeController ->
+            applyEffectiveVolume(activeController)
             publishState(activeController)
         }
     }
@@ -208,6 +222,8 @@ class PlayerConnection(
 
     fun stop() {
         runWithController { activeController ->
+            transitionGain = 1f
+            applyEffectiveVolume(activeController)
             activeController.stop()
             activeController.clearMediaItems()
             publishState(activeController)
@@ -242,7 +258,7 @@ class PlayerConnection(
             isBuffering = player.playbackState == Player.STATE_BUFFERING,
             positionMs = player.currentPosition.coerceAtLeast(0),
             durationMs = player.duration.takeUnless { it == C.TIME_UNSET }?.coerceAtLeast(0) ?: 0,
-            volume = (player.volume * 100).roundToInt().coerceIn(0, 100),
+            volume = (userVolume * 100).roundToInt().coerceIn(0, 100),
             shuffleEnabled = player.shuffleModeEnabled,
             repeatMode = repeatMode,
             error = _state.value.error,
@@ -262,6 +278,10 @@ class PlayerConnection(
                 delay(500)
             }
         }
+    }
+
+    private fun applyEffectiveVolume(player: Player) {
+        player.volume = (userVolume * transitionGain).coerceIn(0f, 1f)
     }
 
     private fun shouldRetrySource(error: PlaybackException): Boolean =
