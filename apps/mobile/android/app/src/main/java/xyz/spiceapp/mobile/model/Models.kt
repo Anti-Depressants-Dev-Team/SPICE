@@ -159,6 +159,13 @@ data class LibrarySyncSummary(
     val playlistCount: Int,
 )
 
+data class LibrarySyncResult(
+    val summary: LibrarySyncSummary,
+    val likedTracks: List<Track>,
+    val historyTracks: List<Track>,
+    val playlists: List<Playlist>,
+)
+
 data class LyricsPayload(
     val plainLyrics: String = "",
     val syncedLyrics: String = "",

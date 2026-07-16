@@ -4,6 +4,8 @@ import android.os.SystemClock
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -150,6 +153,7 @@ import xyz.spiceapp.mobile.model.RemoteDevice
 import xyz.spiceapp.mobile.model.RepeatMode
 import xyz.spiceapp.mobile.model.SharedPlaylistTrack
 import xyz.spiceapp.mobile.model.SharedPlaylistTracks
+import xyz.spiceapp.mobile.model.StreamQuality
 import xyz.spiceapp.mobile.model.Track
 import xyz.spiceapp.mobile.playback.PlayerUiState
 
@@ -171,6 +175,9 @@ fun SpiceApp(
     onStopPlayback: () -> Unit,
     onToggleLike: (Track) -> Unit,
     onAccentSelected: (AccentTheme) -> Unit,
+    onQualitySelected: (StreamQuality) -> Unit,
+    onCrossfadeDurationSelected: (Long) -> Unit,
+    onSmartQueueEnabled: (Boolean) -> Unit,
     onLibraryTabSelected: (LibraryTab) -> Unit,
     onCreatePlaylist: () -> Unit,
     onAddCurrentTrackToPlaylist: (String) -> Unit,
@@ -338,6 +345,13 @@ fun SpiceApp(
                 onDisconnectPairedDevice = onDisconnectPairedDevice,
                 onSignOut = onSignOut,
                 onAccentSelected = onAccentSelected,
+                onQualitySelected = onQualitySelected,
+                onCrossfadeDurationSelected = onCrossfadeDurationSelected,
+                onSmartQueueEnabled = onSmartQueueEnabled,
+                onSleepTimerMinutes = onSleepTimerMinutes,
+                onSleepTimerEndTrack = onSleepTimerEndTrack,
+                onSleepTimerEndQueue = onSleepTimerEndQueue,
+                onSleepTimerCancel = onSleepTimerCancel,
                 onOpenProfileEditor = onOpenProfileEditor,
                 onSyncNow = onSyncNow,
                 onRefreshPendingInvites = onRefreshPendingInvites,
@@ -521,14 +535,26 @@ private fun AppUpdateDialog(
                     Text(error, color = MaterialTheme.colorScheme.error, fontSize = 13.sp)
                 }
                 update.releaseNotes
-                    .lineSequence()
-                    .map(String::trim)
-                    .filter(String::isNotEmpty)
-                    .take(4)
-                    .joinToString("\n")
+                    .trim()
                     .takeIf(String::isNotEmpty)
                     ?.let { notes ->
-                        Text(notes, color = SpiceTextMuted, fontSize = 12.sp, maxLines = 6)
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color.Black.copy(alpha = 0.18f),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                notes,
+                                color = SpiceTextMuted,
+                                fontSize = 12.sp,
+                                lineHeight = 18.sp,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 190.dp)
+                                    .verticalScroll(rememberScrollState())
+                                    .padding(10.dp),
+                            )
+                        }
                     }
             }
         },
@@ -978,7 +1004,7 @@ private fun HomeScreen(
         }
 
         if (uiState.historyTracks.isNotEmpty()) {
-            item { TrackSection(FeedSection("Listen Again", uiState.historyTracks.take(10)), onTrackSelected) }
+            item { TrackSection(FeedSection("Recently Played", uiState.historyTracks.take(10)), onTrackSelected) }
         }
 
         if (uiState.homeLoading) {
@@ -1492,6 +1518,13 @@ private fun SettingsScreen(
     onDisconnectPairedDevice: () -> Unit,
     onSignOut: () -> Unit,
     onAccentSelected: (AccentTheme) -> Unit,
+    onQualitySelected: (StreamQuality) -> Unit,
+    onCrossfadeDurationSelected: (Long) -> Unit,
+    onSmartQueueEnabled: (Boolean) -> Unit,
+    onSleepTimerMinutes: (Int) -> Unit,
+    onSleepTimerEndTrack: () -> Unit,
+    onSleepTimerEndQueue: () -> Unit,
+    onSleepTimerCancel: () -> Unit,
     onOpenProfileEditor: () -> Unit,
     onSyncNow: () -> Unit,
     onRefreshPendingInvites: () -> Unit,
@@ -1574,8 +1607,134 @@ private fun SettingsScreen(
                     }
                 }
             }
+            SettingsTab.Playback -> item {
+                PlaybackSettingsSection(
+                    uiState = uiState,
+                    onQualitySelected = onQualitySelected,
+                    onCrossfadeDurationSelected = onCrossfadeDurationSelected,
+                    onSmartQueueEnabled = onSmartQueueEnabled,
+                    onSleepTimerMinutes = onSleepTimerMinutes,
+                    onSleepTimerEndTrack = onSleepTimerEndTrack,
+                    onSleepTimerEndQueue = onSleepTimerEndQueue,
+                    onSleepTimerCancel = onSleepTimerCancel,
+                )
+            }
             SettingsTab.Terms -> item { TermsSection() }
             SettingsTab.Licenses -> item { LicenseSection() }
+        }
+    }
+}
+
+@Composable
+private fun PlaybackSettingsSection(
+    uiState: SpiceUiState,
+    onQualitySelected: (StreamQuality) -> Unit,
+    onCrossfadeDurationSelected: (Long) -> Unit,
+    onSmartQueueEnabled: (Boolean) -> Unit,
+    onSleepTimerMinutes: (Int) -> Unit,
+    onSleepTimerEndTrack: () -> Unit,
+    onSleepTimerEndQueue: () -> Unit,
+    onSleepTimerCancel: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Icon(Icons.Rounded.Album, null)
+            Text("Playback", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        }
+        Text(
+            "Mobile-safe versions of SPICE's desktop playback controls. These settings stay on this phone and apply immediately.",
+            color = SpiceTextMuted,
+            fontSize = 13.sp,
+        )
+
+        Card(colors = CardDefaults.cardColors(containerColor = SpiceSurfaceHigh)) {
+            Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Audio quality", fontWeight = FontWeight.Bold)
+                Text("Choose the best available stream or reduce mobile data use.", color = SpiceTextMuted, fontSize = 12.sp)
+                StreamQuality.entries.forEach { quality ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable { onQualitySelected(quality) },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = uiState.quality == quality, onClick = { onQualitySelected(quality) })
+                        Column {
+                            Text(quality.label, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                when (quality) {
+                                    StreamQuality.High -> "Best available bitrate"
+                                    StreamQuality.Standard -> "Balanced quality and reliability"
+                                    StreamQuality.DataSaver -> "Lowest available bitrate"
+                                },
+                                color = SpiceTextMuted,
+                                fontSize = 12.sp,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        Card(colors = CardDefaults.cardColors(containerColor = SpiceSurfaceHigh)) {
+            Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Smart queue", fontWeight = FontWeight.Bold)
+                        Text(
+                            "Keep playing your Recommended Next mix after the current queue ends.",
+                            color = SpiceTextMuted,
+                            fontSize = 12.sp,
+                        )
+                    }
+                    Switch(checked = uiState.smartQueueEnabled, onCheckedChange = onSmartQueueEnabled)
+                }
+                HorizontalDivider()
+                Text("Crossfade transition", fontWeight = FontWeight.Bold)
+                Text(
+                    "Smoothly fades between resolved tracks. Shuffle, repeat-one, remote playback, and sleep-timer boundaries stay exact.",
+                    color = SpiceTextMuted,
+                    fontSize = 12.sp,
+                )
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(listOf(0L, 3_000L, 5_000L, 8_000L, 12_000L)) { durationMs ->
+                        val selected = uiState.crossfadeDurationMs == durationMs
+                        AssistChip(
+                            onClick = { onCrossfadeDurationSelected(durationMs) },
+                            label = { Text(if (durationMs == 0L) "Off" else "${durationMs / 1_000}s") },
+                            leadingIcon = if (selected) ({ Icon(Icons.Rounded.Check, null, Modifier.size(16.dp)) }) else null,
+                        )
+                    }
+                }
+            }
+        }
+
+        Card(colors = CardDefaults.cardColors(containerColor = SpiceSurfaceHigh)) {
+            Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Rounded.Timer, null)
+                    Column {
+                        Text("Sleep timer", fontWeight = FontWeight.Bold)
+                        Text(formatMobileSleepTimer(uiState.sleepTimer), color = SpiceTextMuted, fontSize = 12.sp)
+                    }
+                }
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(listOf(15, 30, 60, 90)) { minutes ->
+                        AssistChip(onClick = { onSleepTimerMinutes(minutes) }, label = { Text("$minutes min") })
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(onClick = onSleepTimerEndTrack, modifier = Modifier.weight(1f)) {
+                        Text("End of track", maxLines = 1)
+                    }
+                    OutlinedButton(onClick = onSleepTimerEndQueue, modifier = Modifier.weight(1f)) {
+                        Text("End of queue", maxLines = 1)
+                    }
+                }
+                if (uiState.sleepTimer.mode != MobileSleepTimerMode.Off) {
+                    TextButton(onClick = onSleepTimerCancel, modifier = Modifier.fillMaxWidth()) {
+                        Text("Cancel sleep timer")
+                    }
+                }
+            }
         }
     }
 }
@@ -2602,7 +2761,13 @@ private fun SpiceNavigation(selected: AppScreen, onSelected: (AppScreen) -> Unit
             NavigationBarItem(
                 selected = selected == screen,
                 onClick = { onSelected(screen) },
-                icon = { Icon(icon, screen.label) },
+                icon = {
+                    Icon(
+                        icon,
+                        screen.label,
+                        modifier = Modifier.size(if (screen == AppScreen.Library) 21.dp else 24.dp),
+                    )
+                },
             )
         }
     }
@@ -2892,6 +3057,7 @@ private fun trackSubtitle(track: Track): String {
 
 private enum class SettingsTab(val label: String) {
     General("General"),
+    Playback("Playback"),
     Terms("Terms"),
     Licenses("Licenses"),
 }

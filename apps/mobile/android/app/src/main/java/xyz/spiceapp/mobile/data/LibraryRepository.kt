@@ -2,6 +2,8 @@ package xyz.spiceapp.mobile.data
 
 import android.content.Context
 import androidx.room.withTransaction
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import org.json.JSONArray
@@ -27,6 +29,8 @@ class LibraryRepository(context: Context) {
     private val database = SpiceDatabase.get(context)
     private val dao = database.libraryDao()
     private val preferences = context.getSharedPreferences("spice_native_library", Context.MODE_PRIVATE)
+    private val likesMutex = Mutex()
+    private val historyMutex = Mutex()
 
     val likedTracks: Flow<List<Track>> = dao.observeLikedTracks().map { tracks ->
         tracks.map { it.toTrack() }
@@ -42,9 +46,13 @@ class LibraryRepository(context: Context) {
         rows.map(::downloadRowToModel)
     }
 
-    suspend fun likedSnapshot(): List<Track> = dao.likedTracks().map { it.toTrack() }
+    suspend fun likedSnapshot(): List<Track> = likesMutex.withLock {
+        dao.likedTracks().map { it.toTrack() }
+    }
 
-    suspend fun historySnapshot(): List<Track> = dao.historyTracks().map { it.toTrack() }
+    suspend fun historySnapshot(): List<Track> = historyMutex.withLock {
+        dao.historyTracks().map { it.toTrack() }
+    }
 
     suspend fun playlistSnapshot(): List<Playlist> = playlistRowsToPlaylists(dao.playlistRows())
 
@@ -72,16 +80,41 @@ class LibraryRepository(context: Context) {
         preferences.edit().putBoolean(KEY_ROOM_MIGRATED_V1, true).apply()
     }
 
-    suspend fun addToHistory(track: Track) {
+    suspend fun addToHistory(track: Track) = historyMutex.withLock {
         val now = System.currentTimeMillis()
         database.withTransaction {
             dao.upsertTrack(track.toEntity(now))
             dao.upsertHistoryTrack(HistoryTrackEntity(track.id, now))
             dao.trimHistory()
         }
+        val pendingIds = pendingHistoryTrackIds().toMutableSet().apply { add(track.id) }
+        preferences.edit()
+            .putString(KEY_PENDING_HISTORY_IDS, JSONArray(pendingIds.toList()).toString())
+            .putLong(KEY_HISTORY_SYNC_REVISION, historySyncRevision() + 1L)
+            .apply()
     }
 
-    suspend fun replaceLikedTracks(tracks: List<Track>) {
+    suspend fun replaceLikedTracks(tracks: List<Track>) = likesMutex.withLock {
+        replaceLikedTracksLocked(tracks)
+    }
+
+    suspend fun replaceSyncedLikedTracks(tracks: List<Track>, syncRevision: Long): List<Track> =
+        likesMutex.withLock {
+            val reconciled = if (likesSyncRevision() == syncRevision) {
+                tracks
+            } else {
+                mergeSyncLikes(
+                    remote = tracks,
+                    local = dao.likedTracks().map { it.toTrack() },
+                    pendingLocalTrackIds = pendingLikedTrackIds(),
+                )
+            }
+            replaceLikedTracksLocked(reconciled)
+            markLikesSyncedLocked(syncRevision)
+            reconciled
+        }
+
+    private suspend fun replaceLikedTracksLocked(tracks: List<Track>) {
         val now = System.currentTimeMillis()
         database.withTransaction {
             dao.clearLikedTracks()
@@ -93,7 +126,27 @@ class LibraryRepository(context: Context) {
         }
     }
 
-    suspend fun replaceHistoryTracks(tracks: List<Track>) {
+    suspend fun replaceHistoryTracks(tracks: List<Track>) = historyMutex.withLock {
+        replaceHistoryTracksLocked(tracks)
+    }
+
+    suspend fun replaceSyncedHistoryTracks(tracks: List<Track>, syncRevision: Long): List<Track> =
+        historyMutex.withLock {
+            val reconciled = if (historySyncRevision() == syncRevision) {
+                tracks
+            } else {
+                mergeSyncHistory(
+                    remote = tracks,
+                    local = dao.historyTracks().map { it.toTrack() },
+                    pendingLocalTrackIds = pendingHistoryTrackIds(),
+                )
+            }
+            replaceHistoryTracksLocked(reconciled)
+            markHistorySyncedLocked(syncRevision)
+            reconciled
+        }
+
+    private suspend fun replaceHistoryTracksLocked(tracks: List<Track>) {
         val now = System.currentTimeMillis()
         database.withTransaction {
             dao.clearHistoryTracks()
@@ -182,9 +235,9 @@ class LibraryRepository(context: Context) {
         }
     }
 
-    suspend fun toggleLike(track: Track): Boolean {
+    suspend fun toggleLike(track: Track): Boolean = likesMutex.withLock {
         val now = System.currentTimeMillis()
-        return database.withTransaction {
+        val liked = database.withTransaction {
             val isLiked = dao.isLiked(track.id)
             dao.upsertTrack(track.toEntity(now))
             if (isLiked) {
@@ -195,6 +248,12 @@ class LibraryRepository(context: Context) {
                 true
             }
         }
+        val pendingIds = pendingLikedTrackIds().toMutableSet().apply { add(track.id) }
+        preferences.edit()
+            .putString(KEY_PENDING_LIKED_IDS, JSONArray(pendingIds.toList()).toString())
+            .putLong(KEY_LIKES_SYNC_REVISION, likesSyncRevision() + 1L)
+            .apply()
+        liked
     }
 
     fun quality(): StreamQuality = runCatching {
@@ -203,6 +262,71 @@ class LibraryRepository(context: Context) {
 
     fun setQuality(quality: StreamQuality) {
         preferences.edit().putString(KEY_QUALITY, quality.name).apply()
+    }
+
+    fun crossfadeDurationMs(): Long =
+        preferences.getLong(KEY_CROSSFADE_DURATION_MS, 0L).coerceIn(0L, MAX_CROSSFADE_DURATION_MS)
+
+    fun setCrossfadeDurationMs(durationMs: Long) {
+        preferences.edit()
+            .putLong(KEY_CROSSFADE_DURATION_MS, durationMs.coerceIn(0L, MAX_CROSSFADE_DURATION_MS))
+            .apply()
+    }
+
+    fun smartQueueEnabled(): Boolean = preferences.getBoolean(KEY_SMART_QUEUE_ENABLED, true)
+
+    fun setSmartQueueEnabled(enabled: Boolean) {
+        preferences.edit().putBoolean(KEY_SMART_QUEUE_ENABLED, enabled).apply()
+    }
+
+    fun pendingHistoryTrackIds(): Set<String> = runCatching {
+        val array = JSONArray(preferences.getString(KEY_PENDING_HISTORY_IDS, "[]"))
+        buildSet {
+            for (index in 0 until array.length()) {
+                array.optString(index).trim().takeIf(String::isNotEmpty)?.let(::add)
+            }
+        }
+    }.getOrDefault(emptySet())
+
+    fun pendingLikedTrackIds(): Set<String> = runCatching {
+        val array = JSONArray(preferences.getString(KEY_PENDING_LIKED_IDS, "[]"))
+        buildSet {
+            for (index in 0 until array.length()) {
+                array.optString(index).trim().takeIf(String::isNotEmpty)?.let(::add)
+            }
+        }
+    }.getOrDefault(emptySet())
+
+    fun needsInitialLikesReconciliation(): Boolean =
+        !preferences.getBoolean(KEY_LIKES_SYNC_INITIALIZED, false)
+
+    fun likesSyncRevision(): Long = preferences.getLong(KEY_LIKES_SYNC_REVISION, 0L)
+
+    private fun markLikesSyncedLocked(syncRevision: Long) {
+        preferences.edit()
+            .putBoolean(KEY_LIKES_SYNC_INITIALIZED, true)
+            .apply {
+                if (likesSyncRevision() == syncRevision) {
+                    remove(KEY_PENDING_LIKED_IDS)
+                }
+            }
+            .apply()
+    }
+
+    fun needsInitialHistoryReconciliation(): Boolean =
+        !preferences.getBoolean(KEY_HISTORY_SYNC_INITIALIZED, false)
+
+    fun historySyncRevision(): Long = preferences.getLong(KEY_HISTORY_SYNC_REVISION, 0L)
+
+    private fun markHistorySyncedLocked(syncRevision: Long) {
+        preferences.edit()
+            .putBoolean(KEY_HISTORY_SYNC_INITIALIZED, true)
+            .apply {
+                if (historySyncRevision() == syncRevision) {
+                    remove(KEY_PENDING_HISTORY_IDS)
+                }
+            }
+            .apply()
     }
 
     fun accentTheme(): AccentTheme = runCatching {
@@ -317,6 +441,15 @@ class LibraryRepository(context: Context) {
         const val KEY_LEGACY_LIKED = "liked"
         const val KEY_ACCENT_THEME = "accent_theme"
         const val KEY_QUALITY = "quality"
+        const val KEY_CROSSFADE_DURATION_MS = "crossfade_duration_ms"
+        const val KEY_SMART_QUEUE_ENABLED = "smart_queue_enabled"
+        const val KEY_PENDING_LIKED_IDS = "pending_liked_ids"
+        const val KEY_LIKES_SYNC_INITIALIZED = "likes_sync_initialized"
+        const val KEY_LIKES_SYNC_REVISION = "likes_sync_revision"
+        const val KEY_PENDING_HISTORY_IDS = "pending_history_ids"
+        const val KEY_HISTORY_SYNC_INITIALIZED = "history_sync_initialized"
+        const val KEY_HISTORY_SYNC_REVISION = "history_sync_revision"
         const val KEY_ROOM_MIGRATED_V1 = "room_migrated_v1"
+        const val MAX_CROSSFADE_DURATION_MS = 12_000L
     }
 }

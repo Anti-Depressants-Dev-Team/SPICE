@@ -13,6 +13,7 @@ import xyz.spiceapp.mobile.data.provider.SoundCloudDirectClient
 import xyz.spiceapp.mobile.model.AccountSession
 import xyz.spiceapp.mobile.model.EmailVerificationChallenge
 import xyz.spiceapp.mobile.model.LibrarySyncSummary
+import xyz.spiceapp.mobile.model.LibrarySyncResult
 import xyz.spiceapp.mobile.model.PairedDeviceCredential
 import xyz.spiceapp.mobile.model.PendingPlaylistInvite
 import xyz.spiceapp.mobile.model.Playlist
@@ -117,49 +118,160 @@ class SpiceApi(
         history: List<Track>,
         playlists: List<Playlist>,
         profileId: String = "default",
-    ): LibrarySyncSummary {
-        val remoteLiked = fetchLikedTracks(token, profileId)
-        val remoteHistory = fetchHistoryTracks(token, profileId)
-        val remotePlaylists = fetchPlaylists(token, profileId)
-        val mergedLiked = mergeSyncTracks(remoteLiked, liked)
-        val mergedHistory = mergeSyncTracks(remoteHistory, history).take(50)
+        pendingLikedTrackIds: Set<String> = emptySet(),
+        initialLikesReconciliation: Boolean = false,
+        pendingHistoryTrackIds: Set<String> = emptySet(),
+        initialHistoryReconciliation: Boolean = false,
+    ): LibrarySyncResult {
+        val remote = fetchLibrary(token, profileId)
+        val remoteLiked = remote.likedTracks
+        val remoteHistory = remote.historyTracks
+        val remotePlaylists = remote.playlists
+        val mergedLiked = mergeSyncLikes(
+            remote = remoteLiked,
+            local = liked,
+            pendingLocalTrackIds = pendingLikedTrackIds,
+            initialReconciliation = initialLikesReconciliation,
+        )
+        val mergedHistory = mergeSyncHistory(
+            remote = remoteHistory,
+            local = history,
+            pendingLocalTrackIds = pendingHistoryTrackIds,
+            initialReconciliation = initialHistoryReconciliation,
+        ).take(50)
         val mergedPlaylists = mergeSyncPlaylists(remotePlaylists, playlists)
 
-        pushLikedTracks(token, mergedLiked, profileId)
-        pushHistoryTracks(token, mergedHistory, profileId)
-        pushPlaylists(token, mergedPlaylists, profileId)
+        val changedLikes = !syncTracksMatch(remoteLiked, mergedLiked)
+        val changedHistory = !syncTracksMatch(remoteHistory, mergedHistory)
+        val changedPlaylists = !syncPlaylistsMatch(remotePlaylists, mergedPlaylists)
+        if (changedLikes || changedHistory || changedPlaylists) {
+            val body = JSONObject().put("profileId", profileId)
+            if (changedLikes) {
+                val details = JSONObject()
+                mergedLiked.forEach { track -> details.put(track.id, track.toSnapshotJson()) }
+                body
+                    .put("likedTracks", JSONArray(mergedLiked.map { it.id }))
+                    .put("likedTrackDetails", details)
+            }
+            if (changedHistory) {
+                body.put("history", JSONArray(mergedHistory.map { it.toSnapshotJson() }))
+            }
+            if (changedPlaylists) {
+                body.put("playlists", JSONArray(mergedPlaylists.map { it.toSnapshotJson() }))
+            }
+            withContext(Dispatchers.IO) {
+                postJson("/api/sync/library", body, token)
+            }
+        }
 
-        return LibrarySyncSummary(
-            likedCount = mergedLiked.size,
-            historyCount = mergedHistory.size,
-            playlistCount = mergedPlaylists.size,
+        return LibrarySyncResult(
+            summary = LibrarySyncSummary(
+                likedCount = mergedLiked.size,
+                historyCount = mergedHistory.size,
+                playlistCount = mergedPlaylists.size,
+            ),
+            likedTracks = mergedLiked,
+            historyTracks = mergedHistory,
+            playlists = mergedPlaylists,
+        )
+    }
+
+    suspend fun syncTaste(
+        token: String,
+        liked: List<Track>,
+        history: List<Track>,
+        profileId: String = "default",
+        pendingLikedTrackIds: Set<String> = emptySet(),
+        initialLikesReconciliation: Boolean = false,
+        pendingHistoryTrackIds: Set<String> = emptySet(),
+        initialHistoryReconciliation: Boolean = false,
+    ): LibrarySyncResult {
+        val remote = fetchLibrary(token, profileId, includePlaylists = false)
+        val mergedLiked = mergeSyncLikes(
+            remote = remote.likedTracks,
+            local = liked,
+            pendingLocalTrackIds = pendingLikedTrackIds,
+            initialReconciliation = initialLikesReconciliation,
+        )
+        val mergedHistory = mergeSyncHistory(
+            remote = remote.historyTracks,
+            local = history,
+            pendingLocalTrackIds = pendingHistoryTrackIds,
+            initialReconciliation = initialHistoryReconciliation,
+        ).take(50)
+        val changedLikes = !syncTracksMatch(remote.likedTracks, mergedLiked)
+        val changedHistory = !syncTracksMatch(remote.historyTracks, mergedHistory)
+        if (changedLikes || changedHistory) {
+            val body = JSONObject().put("profileId", profileId)
+            if (changedLikes) {
+                val details = JSONObject()
+                mergedLiked.forEach { track -> details.put(track.id, track.toSnapshotJson()) }
+                body
+                    .put("likedTracks", JSONArray(mergedLiked.map { it.id }))
+                    .put("likedTrackDetails", details)
+            }
+            if (changedHistory) {
+                body.put("history", JSONArray(mergedHistory.map { it.toSnapshotJson() }))
+            }
+            withContext(Dispatchers.IO) {
+                postJson("/api/sync/library", body, token)
+            }
+        }
+
+        return LibrarySyncResult(
+            summary = LibrarySyncSummary(mergedLiked.size, mergedHistory.size, 0),
+            likedTracks = mergedLiked,
+            historyTracks = mergedHistory,
+            playlists = emptyList(),
+        )
+    }
+
+    suspend fun syncHistory(
+        token: String,
+        history: List<Track>,
+        profileId: String = "default",
+        pendingHistoryTrackIds: Set<String> = emptySet(),
+        initialHistoryReconciliation: Boolean = false,
+    ): List<Track> {
+        val remote = fetchHistoryTracks(token, profileId)
+        val merged = mergeSyncHistory(
+            remote = remote,
+            local = history,
+            pendingLocalTrackIds = pendingHistoryTrackIds,
+            initialReconciliation = initialHistoryReconciliation,
+        ).take(50)
+        if (!syncTracksMatch(remote, merged)) {
+            pushHistoryTracks(token, merged, profileId)
+        }
+        return merged
+    }
+
+    suspend fun fetchLibrary(
+        token: String,
+        profileId: String = "default",
+        includePlaylists: Boolean = true,
+    ): LibrarySyncResult = withContext(Dispatchers.IO) {
+        val datasets = if (includePlaylists) "" else "&datasets=likes,history"
+        val payload = getJson("/api/sync/library?profileId=" + encodeQuery(profileId) + datasets, token)
+        val liked = parseLikedTracks(payload)
+        val history = parseHistoryTracks(payload)
+        val playlists = if (includePlaylists) parsePlaylists(payload) else emptyList()
+        LibrarySyncResult(
+            summary = LibrarySyncSummary(liked.size, history.size, playlists.size),
+            likedTracks = liked,
+            historyTracks = history,
+            playlists = playlists,
         )
     }
 
     suspend fun fetchLikedTracks(token: String, profileId: String = "default"): List<Track> = withContext(Dispatchers.IO) {
         val payload = getJson("/api/sync/likes?profileId=" + encodeQuery(profileId), token)
-        val ids = payload.optJSONArray("likedTracks") ?: JSONArray()
-        val details = payload.optJSONObject("likedTrackDetails") ?: JSONObject()
-
-        buildList {
-            for (index in 0 until ids.length()) {
-                val id = ids.optString(index).trim()
-                if (id.isEmpty()) continue
-                add(parseTrackSnapshot(details.optJSONObject(id), fallbackId = id))
-            }
-        }
+        parseLikedTracks(payload)
     }
 
     suspend fun fetchHistoryTracks(token: String, profileId: String = "default"): List<Track> = withContext(Dispatchers.IO) {
         val payload = getJson("/api/sync/history?profileId=" + encodeQuery(profileId), token)
-        val history = payload.optJSONArray("history") ?: JSONArray()
-
-        buildList {
-            for (index in 0 until history.length()) {
-                val item = history.optJSONObject(index) ?: continue
-                add(parseTrackSnapshot(item))
-            }
-        }
+        parseHistoryTracks(payload)
     }
 
     suspend fun pushLikedTracks(token: String, liked: List<Track>, profileId: String = "default") = withContext(Dispatchers.IO) {
@@ -1137,6 +1249,28 @@ internal fun parsePlaylists(payload: JSONObject): List<Playlist> {
     }
 }
 
+internal fun parseLikedTracks(payload: JSONObject): List<Track> {
+    val ids = payload.optJSONArray("likedTracks") ?: JSONArray()
+    val details = payload.optJSONObject("likedTrackDetails") ?: JSONObject()
+    return buildList {
+        for (index in 0 until ids.length()) {
+            val id = ids.optString(index).trim()
+            if (id.isEmpty()) continue
+            add(parseTrackSnapshot(details.optJSONObject(id), fallbackId = id))
+        }
+    }
+}
+
+internal fun parseHistoryTracks(payload: JSONObject): List<Track> {
+    val history = payload.optJSONArray("history") ?: JSONArray()
+    return buildList {
+        for (index in 0 until history.length()) {
+            val item = history.optJSONObject(index) ?: continue
+            add(parseTrackSnapshot(item))
+        }
+    }
+}
+
 internal fun parsePlaylist(item: JSONObject): Playlist? {
     val id = item.optString("id").trim()
     val title = item.optString("title").trim()
@@ -1327,6 +1461,65 @@ internal fun mergeSyncTracks(remote: List<Track>, local: List<Track>): List<Trac
     }
     return merged.values.toList()
 }
+
+internal fun mergeSyncLikes(
+    remote: List<Track>,
+    local: List<Track>,
+    pendingLocalTrackIds: Set<String> = emptySet(),
+    initialReconciliation: Boolean = false,
+): List<Track> {
+    val merged = linkedMapOf<String, Track>()
+    remote.forEach { track ->
+        track.id.trim().takeIf(String::isNotEmpty)?.let { id -> merged[id] = track }
+    }
+    if (initialReconciliation) {
+        local.forEach { track ->
+            val id = track.id.trim()
+            if (id.isEmpty()) return@forEach
+            merged[id] = merged[id]?.let { mergeTrackSnapshots(it, track) } ?: track
+        }
+    }
+    val localById = local.associateBy { it.id.trim() }
+    pendingLocalTrackIds.forEach { pendingId ->
+        val localTrack = localById[pendingId]
+        if (localTrack == null) {
+            merged.remove(pendingId)
+        } else {
+            merged[pendingId] = merged[pendingId]
+                ?.let { mergeTrackSnapshots(it, localTrack) }
+                ?: localTrack
+        }
+    }
+    return merged.values.toList()
+}
+
+internal fun mergeSyncHistory(
+    remote: List<Track>,
+    local: List<Track>,
+    pendingLocalTrackIds: Set<String> = emptySet(),
+    initialReconciliation: Boolean = false,
+): List<Track> {
+    val localPending = local.filter { it.id in pendingLocalTrackIds }
+    val ordered = when {
+        localPending.isNotEmpty() -> localPending + remote + local
+        initialReconciliation -> remote + local
+        else -> remote
+    }
+    val merged = linkedMapOf<String, Track>()
+    ordered.forEach { incoming ->
+        val id = incoming.id.trim()
+        if (id.isEmpty()) return@forEach
+        val existing = merged[id]
+        merged[id] = if (existing == null) incoming else mergeTrackSnapshots(existing, incoming)
+    }
+    return merged.values.take(50)
+}
+
+internal fun syncTracksMatch(first: List<Track>, second: List<Track>): Boolean =
+    first.size == second.size && first.indices.all { index -> first[index] == second[index] }
+
+internal fun syncPlaylistsMatch(first: List<Playlist>, second: List<Playlist>): Boolean =
+    first.size == second.size && first.indices.all { index -> first[index] == second[index] }
 
 internal fun mergeSyncPlaylists(remote: List<Playlist>, local: List<Playlist>): List<Playlist> {
     val merged = linkedMapOf<String, Playlist>()
