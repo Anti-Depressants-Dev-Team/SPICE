@@ -44,6 +44,14 @@ import {
 import { createCrossfadePlan, crossfadeGains, crossfadeStateAt } from './crossfade';
 import { buildSmartQueue, smartQueueArtistKeys, smartQueueTrackKey } from './smart-queue';
 import {
+  adaptiveTrackWeights,
+  classifyAdaptiveListen,
+  normalizeAdaptiveTrackPriorityState,
+  recordAdaptiveListenOutcome,
+  shouldTreatAdaptiveSeekAsSkip,
+  type AdaptiveTrackPriorityState,
+} from './adaptive-track-priority';
+import {
   alignShuffleHistory,
   nextShuffleTrack,
   previousShuffleTrack,
@@ -86,14 +94,6 @@ import {
   normalizeListeningEvents,
   type ListeningEvent,
 } from './listening-insights';
-import {
-  createDurationSleepTimer,
-  formatSleepTimer,
-  normalizeSleepTimer,
-  OFF_SLEEP_TIMER,
-  shouldStopForSleepTimer,
-  type SleepTimerState,
-} from './sleep-timer';
 import {
   DurableSyncOutbox,
   SyncOutboxPermanentError,
@@ -170,7 +170,7 @@ const LISTEN_TOGETHER_STATE_STORAGE_KEY = 'spice_listen_together_state_v2';
 
 const recommendationPreferencesStorageKey = (profileId: string) => `spice_recommendation_preferences:${profileId}`;
 const listeningEventsStorageKey = (profileId: string) => `spice_listening_events:${profileId}`;
-const sleepTimerStorageKey = (profileId: string) => `spice_sleep_timer:${profileId}`;
+const adaptiveTrackPriorityStorageKey = (profileId: string) => `spice_adaptive_track_priority_v1:${profileId}`;
 
 const readStoredJson = (key: string): unknown => {
   if (typeof window === 'undefined') return null;
@@ -2111,10 +2111,14 @@ export default function SpiceApp() {
   const [listeningEvents, setListeningEvents] = useState<ListeningEvent[]>(() => (
     normalizeListeningEvents(readStoredJson(listeningEventsStorageKey('default')))
   ));
-  const [sleepTimer, setSleepTimer] = useState<SleepTimerState>(() => (
-    normalizeSleepTimer(readStoredJson(sleepTimerStorageKey('default')))
-  ));
-  const [sleepTimerNow, setSleepTimerNow] = useState(() => Date.now());
+  const adaptiveTrackPriorityRef = useRef<AdaptiveTrackPriorityState>(
+    normalizeAdaptiveTrackPriorityState(readStoredJson(adaptiveTrackPriorityStorageKey('default'))),
+  );
+  const adaptiveListenCycleRef = useRef<{
+    trackKey: string;
+    completionDisqualified: boolean;
+  } | null>(null);
+  const adaptivePlaybackStartedRef = useRef<(track: Track) => void>(() => undefined);
   const [syncOutboxItems, setSyncOutboxItems] = useState<SyncOutboxItem<SyncOutboxPayload>[]>([]);
 
   const weeklyListeningRecap = useMemo(
@@ -2129,9 +2133,10 @@ export default function SpiceApp() {
     setListeningEvents(normalizeListeningEvents(
       readStoredJson(listeningEventsStorageKey(activeProfileId)),
     ));
-    setSleepTimer(normalizeSleepTimer(
-      readStoredJson(sleepTimerStorageKey(activeProfileId)),
-    ));
+    adaptiveTrackPriorityRef.current = normalizeAdaptiveTrackPriorityState(
+      readStoredJson(adaptiveTrackPriorityStorageKey(activeProfileId)),
+    );
+    adaptiveListenCycleRef.current = null;
   }, [activeProfileId]);
 
   // Security Locking
@@ -2668,7 +2673,6 @@ export default function SpiceApp() {
   const relatedQueueInFlightRef = useRef<Map<string, Promise<Track[]>>>(new Map());
   const relatedQueueCacheRef = useRef<Map<string, Track[]>>(new Map());
   const syncOutboxRef = useRef<DurableSyncOutbox<SyncOutboxPayload> | null>(null);
-  const sleepTimerRef = useRef(sleepTimer);
   const playbackRequestRef = useRef(0);
   const shouldAutoPlayRef = useRef(false);
   const clientBootedAtRef = useRef(0);
@@ -2689,7 +2693,10 @@ export default function SpiceApp() {
   const optimisticRemoteDeviceStateRef = useRef<OptimisticRemoteDeviceState | null>(null);
   const remoteRequestGenerationRef = useRef(0);
 
-  const handleAudioEndedRef = useRef<() => void>(() => { });
+  const handleAudioEndedRef = useRef<(
+    slot?: 0 | 1,
+    audio?: HTMLAudioElement | null,
+  ) => void>(() => { });
   const handleAudioErrorRef = useRef<() => void>(() => { });
   const playTrackRef = useRef<(
     track: Track,
@@ -3670,6 +3677,16 @@ export default function SpiceApp() {
                 setIsLoadingStream(false);
                 return;
               }
+              const playingVideoId = typeof event.target?.getVideoData === 'function'
+                ? event.target.getVideoData()?.video_id
+                : '';
+              if (
+                streamProtocolRef.current !== 'embed'
+                || !isYouTubeTrack(currentTrackRef.current)
+                || !playingVideoId
+                || playingVideoId !== currentTrackRef.current.id
+              ) return;
+              adaptivePlaybackStartedRef.current(currentTrackRef.current);
               isPlayingRef.current = true;
               setIsPlaying(true);
               isLoadingStreamRef.current = false;
@@ -3684,6 +3701,15 @@ export default function SpiceApp() {
               logDebug('stream', 'YouTube Embed State: AUDIO TRACK CUED (5)');
             } else if (state === 0) { // Ended
               logDebug('stream', 'YouTube Embed State: PLAYBACK COMPLETED (0)');
+              const endedVideoId = typeof event.target?.getVideoData === 'function'
+                ? event.target.getVideoData()?.video_id
+                : '';
+              if (
+                streamProtocolRef.current !== 'embed'
+                || !isYouTubeTrack(currentTrackRef.current)
+                || !endedVideoId
+                || endedVideoId !== currentTrackRef.current.id
+              ) return;
               handleAudioEndedRef.current?.();
             }
           },
@@ -3934,6 +3960,7 @@ export default function SpiceApp() {
       }
       incoming?.pause();
       incoming?.removeAttribute('src');
+      if (incoming) delete incoming.dataset.spiceTrackKey;
       incoming?.load();
       if (incoming) audioTransitionGainsRef.current.set(incoming, 1);
       if (audioRef.current) audioTransitionGainsRef.current.set(audioRef.current, 1);
@@ -3963,6 +3990,7 @@ export default function SpiceApp() {
       if (incoming) {
         incoming.pause();
         incoming.removeAttribute('src');
+        delete incoming.dataset.spiceTrackKey;
         incoming.load();
         setAudioTransitionGain(incoming, 1);
       }
@@ -3988,6 +4016,48 @@ export default function SpiceApp() {
   // provenance, so use the explicit origin recorded when playback starts.
   const isIntentionalPlaylistQueue = () => playlistQueueOriginRef.current !== null;
 
+  const adaptiveWeightsForQueue = (tracks: Track[]) => adaptiveTrackWeights(
+    adaptiveTrackPriorityRef.current,
+    shuffleQueueKeys(tracks),
+  );
+
+  const beginAdaptiveListenCycle = (track: Track) => {
+    const trackKey = playbackTrackKey(track);
+    if (adaptiveListenCycleRef.current?.trackKey === trackKey) return;
+    adaptiveListenCycleRef.current = track.id === 'placeholder' || !trackKey
+      ? null
+      : { trackKey, completionDisqualified: false };
+  };
+
+  useEffect(() => {
+    adaptivePlaybackStartedRef.current = beginAdaptiveListenCycle;
+  });
+
+  const finishAdaptiveListenCycle = (completedNaturally: boolean) => {
+    const cycle = adaptiveListenCycleRef.current;
+    if (!cycle) return;
+    adaptiveListenCycleRef.current = null;
+
+    const outcome = classifyAdaptiveListen({
+      completedNaturally: completedNaturally && !cycle.completionDisqualified,
+    });
+    const nextState = recordAdaptiveListenOutcome(
+      adaptiveTrackPriorityRef.current,
+      cycle.trackKey,
+      outcome,
+      currentTimestampMs(),
+    );
+    adaptiveTrackPriorityRef.current = nextState;
+    try {
+      localStorage.setItem(
+        adaptiveTrackPriorityStorageKey(activeProfileIdRef.current),
+        JSON.stringify(nextState),
+      );
+    } catch {
+      // Playback must continue even if local preference storage is unavailable.
+    }
+  };
+
   const nextCrossfadeTarget = (): {
     track: Track;
     queueIndex: number;
@@ -4005,6 +4075,7 @@ export default function SpiceApp() {
         {
           random: getSecureRandom,
           wrap: repeatModeRef.current === 'all',
+          weights: adaptiveWeightsForQueue(currentQueue),
         },
       );
       if (next.index === null) return null;
@@ -4064,6 +4135,7 @@ export default function SpiceApp() {
       }
       prepared.streamUrl = resolvedUrl;
       setAudioTransitionGain(incoming, 0);
+      incoming.dataset.spiceTrackKey = playbackTrackKey(target.track);
       incoming.src = resolvedUrl;
       incoming.load();
       prepared.ready = incoming.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA;
@@ -4162,6 +4234,14 @@ export default function SpiceApp() {
       crossfadeDurationMs: profile.crossfade.durationMs,
     });
     const state = crossfadeStateAt(plan, currentTime * 1000);
+    if (
+      preparedCrossfadeRef.current?.started
+      && state.phase !== 'fading'
+      && state.phase !== 'complete'
+    ) {
+      cancelPreparedCrossfade();
+      return;
+    }
     if (state.shouldPreload && !preparedCrossfadeRef.current) {
       void prepareCrossfade();
     }
@@ -4191,6 +4271,24 @@ export default function SpiceApp() {
       durationRef.current = audio.duration;
       setDuration(audio.duration);
     }
+  };
+
+  const handleAudioPlaying = (slot: 0 | 1, audio: HTMLAudioElement) => {
+    if (
+      slot !== activeAudioSlotRef.current
+      || audioRef.current !== audio
+      || audio.paused
+      || !shouldAutoPlayRef.current
+      || audio.dataset.spiceTrackKey !== playbackTrackKey(currentTrackRef.current)
+    ) return;
+    const activeStreamUrl = streamUrlRef.current;
+    if (!activeStreamUrl || activeStreamUrl === 'youtube-embed-active') return;
+    let normalizedStreamUrl = activeStreamUrl;
+    try {
+      normalizedStreamUrl = new URL(activeStreamUrl, window.location.href).href;
+    } catch { }
+    if (audio.currentSrc !== normalizedStreamUrl) return;
+    adaptivePlaybackStartedRef.current(currentTrackRef.current);
   };
 
   const handleAudioCanPlay = (slot: 0 | 1, audio: HTMLAudioElement) => {
@@ -4240,6 +4338,7 @@ export default function SpiceApp() {
       outgoing.dataset.spiceActive = 'false';
       outgoing.pause();
       outgoing.removeAttribute('src');
+      delete outgoing.dataset.spiceTrackKey;
       outgoing.load();
       setAudioTransitionGain(outgoing, 1);
     }
@@ -4263,6 +4362,7 @@ export default function SpiceApp() {
       ? incoming.duration
       : (prepared.track.durationMs || 0) / 1000;
     beginProfileListenCycle(prepared.track);
+    beginAdaptiveListenCycle(prepared.track);
     setCurrentTrack(prepared.track);
     setQueueIndex(prepared.queueIndex);
     setStreamUrl(prepared.streamUrl);
@@ -4286,6 +4386,7 @@ export default function SpiceApp() {
       if (!audio) continue;
       audio.pause();
       audio.removeAttribute('src');
+      delete audio.dataset.spiceTrackKey;
       audio.load();
     }
     try { sourceNodeRef.current?.disconnect(); } catch { }
@@ -5084,41 +5185,46 @@ export default function SpiceApp() {
     updateActiveProfileData({ history: newHist });
   };
 
-  const persistSleepTimer = (nextTimer: SleepTimerState) => {
-    const normalized = normalizeSleepTimer(nextTimer);
-    sleepTimerRef.current = normalized;
-    setSleepTimer(normalized);
-    setSleepTimerNow(currentTimestampMs());
-    const key = sleepTimerStorageKey(activeProfileIdRef.current);
-    if (normalized.mode === 'off') localStorage.removeItem(key);
-    else localStorage.setItem(key, JSON.stringify(normalized));
-  };
-
-  const stopPlaybackForSleepTimer = () => {
-    cancelPreparedCrossfade();
-    clearPlaybackRetryTimer();
-    shouldAutoPlayRef.current = false;
-    isPlayingRef.current = false;
-    audioSlotRefs.current.forEach((audio) => audio?.pause());
-    if (ytPlayerRef.current && typeof ytPlayerRef.current.pauseVideo === 'function') {
-      ytPlayerRef.current.pauseVideo();
-    }
-    setPlaybackPlaying(false);
-    persistSleepTimer(OFF_SLEEP_TIMER);
-    showSpiceNotice('Sleep timer finished. Playback is paused.', 'info');
-  };
-
-  const handleAudioEnded = (slot: 0 | 1 = activeAudioSlotRef.current) => {
+  const handleAudioEnded = (
+    slot: 0 | 1 = activeAudioSlotRef.current,
+    audio: HTMLAudioElement | null = null,
+  ) => {
     if (slot !== activeAudioSlotRef.current) {
-      if (preparedCrossfadeRef.current?.slot === slot) {
+      const prepared = preparedCrossfadeRef.current;
+      if (prepared?.slot === slot) {
+        if (
+          audio
+          && (
+            !audio.ended
+            || audio.dataset.spiceTrackKey !== playbackTrackKey(prepared.track)
+          )
+        ) return;
         logDebug('player', 'Prepared crossfade track ended before promotion; falling back to normal queue advance.');
         cancelPreparedCrossfade();
       }
       return;
     }
+
+    if (audio) {
+      const activeTrackKey = playbackTrackKey(currentTrackRef.current);
+      if (
+        audio !== audioRef.current
+        || !audio.ended
+        || audio.dataset.spiceTrackKey !== activeTrackKey
+      ) return;
+
+      const activeStreamUrl = streamUrlRef.current;
+      if (!activeStreamUrl || activeStreamUrl === 'youtube-embed-active') return;
+      let normalizedStreamUrl = activeStreamUrl;
+      try {
+        normalizedStreamUrl = new URL(activeStreamUrl, window.location.href).href;
+      } catch { }
+      if (audio.currentSrc !== normalizedStreamUrl) return;
+    }
     playbackRetryCountsRef.current.delete(playbackTrackKey(currentTrackRef.current));
     const endedTrack = currentTrackRef.current;
     const endedTrackKey = playbackTrackKey(endedTrack);
+    finishAdaptiveListenCycle(true);
 
     const currentRepeatMode = repeatModeRef.current;
     const currentStreamProtocol = streamProtocolRef.current;
@@ -5150,16 +5256,6 @@ export default function SpiceApp() {
         endedTrack,
         endedDurationSeconds,
       );
-    }
-
-    if (shouldStopForSleepTimer({
-      timer: sleepTimerRef.current,
-      event: 'track-ended',
-      trackKey: endedTrackKey,
-      isQueueTail: currentQueueIndex >= currentQueue.length - 1,
-    })) {
-      stopPlaybackForSleepTimer();
-      return;
     }
 
     if (preparedCrossfadeRef.current?.started && finalizePreparedCrossfade()) return;
@@ -5817,6 +5913,9 @@ export default function SpiceApp() {
       isSyncLoopCall,
       preserveCurrentCycle: preserveCurrentListenCycle,
     });
+    if (beginsNewListenCycle) {
+      finishAdaptiveListenCycle(false);
+    }
     if (!isRetryCall) {
       playbackRetryCountsRef.current.delete(trackKey);
       directEmbedRetryRef.current.delete(trackKey);
@@ -5839,6 +5938,7 @@ export default function SpiceApp() {
     if (activeAudio) {
       activeAudio.pause();
       activeAudio.removeAttribute('src');
+      delete activeAudio.dataset.spiceTrackKey;
       activeAudio.load();
       setAudioTransitionGain(activeAudio, 1);
     }
@@ -5957,6 +6057,7 @@ export default function SpiceApp() {
       streamUrlRef.current = resolvedStreamUrl;
       const directAudio = audioSlotRefs.current[activeAudioSlotRef.current];
       if (directAudio) {
+        directAudio.dataset.spiceTrackKey = trackKey;
         directAudio.src = resolvedStreamUrl;
         directAudio.load();
       }
@@ -6157,18 +6258,17 @@ export default function SpiceApp() {
 
     if (progressTime > 3) {
       const restartedTrack = currentTrackRef.current;
+      cancelPreparedCrossfade();
       beginProfileListenCycle(restartedTrack);
       progressRef.current = 0;
       if (streamProtocolRef.current === 'embed' && isYouTubeTrack(currentTrack) && ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
         ytPlayerRef.current.seekTo(0, true);
         setProgress(0);
-        setPlaybackPlaying(true);
         return;
       }
       if (audioRef.current) {
         audioRef.current.currentTime = 0;
         setProgress(0);
-        setPlaybackPlaying(true);
       }
       return;
     }
@@ -6195,6 +6295,26 @@ export default function SpiceApp() {
     void playTrackRef.current(currentQueue[prevIdx], currentQueue, prevIdx);
   };
 
+  const stopPlaybackAtQueueBoundary = () => {
+    finishAdaptiveListenCycle(false);
+    shouldAutoPlayRef.current = false;
+    clearPlaybackRetryTimer();
+    cancelPreparedCrossfade();
+
+    const targetTrack = currentTrackRef.current;
+    if (
+      streamProtocolRef.current === 'embed'
+      && isYouTubeTrack(targetTrack)
+      && typeof ytPlayerRef.current?.pauseVideo === 'function'
+    ) {
+      ytPlayerRef.current.pauseVideo();
+    }
+    audioRef.current?.pause();
+    setIsLoadingStream(false);
+    isLoadingStreamRef.current = false;
+    setPlaybackPlaying(false);
+  };
+
   const handleNext = (overrideIndex?: any) => {
     const currentQueue = queueRef.current;
     if (currentQueue.length === 0) return;
@@ -6209,8 +6329,7 @@ export default function SpiceApp() {
         void playTrackRef.current(currentQueue[0], currentQueue, 0);
         return;
       }
-      shouldAutoPlayRef.current = false;
-      setPlaybackPlaying(false);
+      stopPlaybackAtQueueBoundary();
       return;
     }
 
@@ -6244,8 +6363,7 @@ export default function SpiceApp() {
           void playTrackRef.current(refreshedQueue[0], refreshedQueue, 0);
           return;
         }
-        shouldAutoPlayRef.current = false;
-        setPlaybackPlaying(false);
+        stopPlaybackAtQueueBoundary();
         showSpiceNotice('SPICE could not find a related next track right now.', 'info');
       });
       return;
@@ -6259,12 +6377,12 @@ export default function SpiceApp() {
         {
           random: getSecureRandom,
           wrap: repeatModeRef.current === 'all',
+          weights: adaptiveWeightsForQueue(currentQueue),
         },
       );
       shuffleHistoryRef.current = next.state;
       if (next.index === null) {
-        shouldAutoPlayRef.current = false;
-        setPlaybackPlaying(false);
+        stopPlaybackAtQueueBoundary();
         return;
       }
       void playTrackRef.current(currentQueue[next.index], currentQueue, next.index);
@@ -6308,8 +6426,22 @@ export default function SpiceApp() {
   };
 
   const seekToPosition = (seekTime: number) => {
+    cancelPreparedCrossfade();
     const safeDuration = durationRef.current || duration || 0;
     const safeSeek = Math.max(0, Math.min(seekTime, safeDuration || seekTime));
+
+    const adaptiveCycle = adaptiveListenCycleRef.current;
+    if (
+      adaptiveCycle
+      && adaptiveCycle.trackKey === playbackTrackKey(currentTrackRef.current)
+      && shouldTreatAdaptiveSeekAsSkip({
+        positionMs: progressRef.current * 1000,
+        seekPositionMs: safeSeek * 1000,
+        durationMs: safeDuration * 1000,
+      })
+    ) {
+      adaptiveCycle.completionDisqualified = true;
+    }
 
     progressRef.current = safeSeek;
     setProgress(safeSeek);
@@ -6323,6 +6455,7 @@ export default function SpiceApp() {
   };
 
   const applyLocalShuffleMode = (enabled: boolean) => {
+    if (enabled !== isShuffleRef.current) cancelPreparedCrossfade();
     setIsShuffle(enabled);
     isShuffleRef.current = enabled;
     shuffleHistoryRef.current = enabled
@@ -6332,6 +6465,7 @@ export default function SpiceApp() {
   };
 
   const applyLocalRepeatMode = (mode: 'none' | 'all' | 'one') => {
+    if (mode !== repeatModeRef.current) cancelPreparedCrossfade();
     setRepeatMode(mode);
     repeatModeRef.current = mode;
     localStorage.setItem(PLAYER_REPEAT_STORAGE_KEY, mode);
@@ -8641,28 +8775,27 @@ export default function SpiceApp() {
   });
 
   useEffect(() => {
-    const handleDesktopSleepTimerExpired = () => pauseCurrentPlaybackRef.current();
-    window.addEventListener('spice-desktop-sleep-timer-expired', handleDesktopSleepTimerExpired);
-    return () => window.removeEventListener('spice-desktop-sleep-timer-expired', handleDesktopSleepTimerExpired);
-  }, []);
+    const nativeWindow = window as typeof window & {
+      __spiceSeekPlayback?: (seekTime: unknown) => boolean;
+    };
+    const seekPlayback = (seekTime: unknown) => {
+      const target = Number(seekTime);
+      if (!Number.isFinite(target) || target < 0) return false;
+      seekToPositionRef.current(target);
+      return true;
+    };
 
-  useEffect(() => {
-    sleepTimerRef.current = sleepTimer;
-  }, [sleepTimer]);
-
-  useEffect(() => {
-    if (sleepTimer.mode !== 'duration') return;
-    const evaluateSleepTimer = () => {
-      const now = Date.now();
-      setSleepTimerNow(now);
-      if (shouldStopForSleepTimer({ timer: sleepTimerRef.current, now })) {
-        stopPlaybackForSleepTimer();
+    Object.defineProperty(nativeWindow, '__spiceSeekPlayback', {
+      configurable: true,
+      value: seekPlayback,
+      writable: true,
+    });
+    return () => {
+      if (nativeWindow.__spiceSeekPlayback === seekPlayback) {
+        Reflect.deleteProperty(nativeWindow, '__spiceSeekPlayback');
       }
     };
-    evaluateSleepTimer();
-    const interval = window.setInterval(evaluateSleepTimer, 1000);
-    return () => window.clearInterval(interval);
-  }, [sleepTimer.mode, sleepTimer.expiresAt]);
+  }, []);
 
   // Listener Sync Loop
   useEffect(() => {
@@ -10900,9 +11033,10 @@ const getMaskedEmail = (email: string) => {
           crossOrigin="anonymous"
           preload="auto"
           onCanPlay={(event) => handleAudioCanPlay(slot, event.currentTarget)}
+          onPlaying={(event) => handleAudioPlaying(slot, event.currentTarget)}
           onTimeUpdate={(event) => handleTimeUpdate(slot, event.currentTarget)}
           onLoadedMetadata={(event) => handleLoadedMetadata(slot, event.currentTarget)}
-          onEnded={() => handleAudioEnded(slot)}
+          onEnded={(event) => handleAudioEnded(slot, event.currentTarget)}
           onError={() => {
             if (slot === activeAudioSlotRef.current) handleAudioError();
             else if (preparedCrossfadeRef.current?.slot === slot) cancelPreparedCrossfade();
@@ -14045,34 +14179,6 @@ const getMaskedEmail = (email: string) => {
                       </div>
                     </div>
 
-                    <div className="sleep-timer-settings">
-                      <div>
-                        <strong>Sleep Timer</strong>
-                        <span>{formatSleepTimer(sleepTimer, sleepTimerNow)}</span>
-                      </div>
-                      <p>Pause after a duration, the current song, or the end of this queue. The timer survives a reload for this profile.</p>
-                      <div className="sleep-timer-settings__actions">
-                        {[15, 30, 60, 90].map((minutes) => (
-                          <button key={minutes} type="button" className="btn btn--ghost" onClick={() => persistSleepTimer(createDurationSleepTimer(minutes))}>
-                            {minutes} min
-                          </button>
-                        ))}
-                        <button
-                          type="button"
-                          className="btn btn--ghost"
-                          disabled={currentTrack.id === 'placeholder'}
-                          onClick={() => persistSleepTimer({ mode: 'end-track', armedTrackKey: playbackTrackKey(currentTrack) })}
-                        >
-                          End of track
-                        </button>
-                        <button type="button" className="btn btn--ghost" onClick={() => persistSleepTimer({ mode: 'end-queue' })}>
-                          End of queue
-                        </button>
-                        {sleepTimer.mode !== 'off' && (
-                          <button type="button" className="btn btn--danger" onClick={() => persistSleepTimer(OFF_SLEEP_TIMER)}>Cancel</button>
-                        )}
-                      </div>
-                    </div>
                   </div>
 
                   {/* Listening Profile Sync */}
@@ -15670,13 +15776,7 @@ const getMaskedEmail = (email: string) => {
                     data-active={isActive}
                     onClick={() => {
                       if (!lyricsData.isSynced) return;
-                      setProgress(line.time);
-                      if (streamProtocol === 'embed' && isYouTubeTrack(currentTrack) && ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
-                        ytPlayerRef.current.seekTo(line.time, true);
-                      }
-                      if (audioRef.current) {
-                        audioRef.current.currentTime = line.time;
-                      }
+                      seekToPosition(line.time);
                     }}
                     style={{
                       fontSize: isChorus ? '1rem' : '0.88rem',
@@ -16435,13 +16535,7 @@ const getMaskedEmail = (email: string) => {
                               data-active={isActive}
                               onClick={() => {
                                 if (!lyricsData.isSynced) return;
-                                setProgress(line.time);
-                                if (streamProtocol === 'embed' && isYouTubeTrack(currentTrack) && ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
-                                  ytPlayerRef.current.seekTo(line.time, true);
-                                }
-                                if (audioRef.current) {
-                                  audioRef.current.currentTime = line.time;
-                                }
+                                seekToPosition(line.time);
                               }}
                               style={{
                                 fontSize: isChorus ? '1.15rem' : '1rem',

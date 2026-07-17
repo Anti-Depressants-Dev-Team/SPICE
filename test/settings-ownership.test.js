@@ -274,7 +274,8 @@ test('desktop updater cleanup cannot quit before electron-updater launches the i
   const main = read('main.js');
 
   assert.match(main, /for \(const targetWindow of BrowserWindow\.getAllWindows\(\)\)/);
-  assert.match(main, /if \(updateInstallInProgress\) return;\s*if \(process\.platform !== "darwin"\) app\.quit\(\);/);
+  assert.match(main, /if \(updateInstallInProgress\) return;\s*if \(shouldQuitWhenLastWindowCloses\(process\.platform\)\) app\.quit\(\);/);
+  assert.match(main, /await cleanupDesktopProcessForQuit\(\)/);
   assert.match(main, /await spiceRuntimeManager\.stop\(\)/);
   assert.match(main, /autoUpdater\.quitAndInstall\(false, true\)/);
 });

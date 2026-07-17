@@ -33,6 +33,7 @@ Do not add pnpm workspace files or a separate backend lockfile.
 - `npm run start:native`: run the SPICE-only native-mode shell.
 - `npm test`: run root Node tests.
 - `npm run dist`: build the standard desktop package.
+- `npm run dist:mac`: build the standard desktop package as a universal macOS app for both Apple Silicon and Intel.
 - `npm run dist:native`, `npm run dist:native:windows`, or `npm run dist:native:linux`: prepare the in-repo backend runtime once and build the native package.
 
 ### Backend
@@ -56,6 +57,8 @@ Do not add pnpm workspace files or a separate backend lockfile.
 
 - Preserve CommonJS style in root desktop code and the existing TypeScript/ES module style in `apps/backend`.
 - Keep desktop, backend, and mobile changes scoped separately when practical.
+- For every desktop product implementation or bug fix, assess whether the behavior is compatible with the native Android client. When it is compatible, implement and verify the equivalent Android behavior in the same change; when it is not, document the concrete platform or product constraint.
+- Keep the standard Windows and macOS Electron apps feature-equivalent. Desktop implementations and fixes must work on both unless an operating-system-specific limitation applies; document and test any intentional platform exception.
 - Frontend features and design changes must blend naturally with the existing visual language, including its spacing, typography, colors, controls, and interaction patterns.
 - Any new or changed frontend surface must use the shared theme system rather than fixed theme-specific styling, and it must update immediately when the user changes the theme in Settings.
 - Treat existing uncommitted changes as user work. Do not revert or reformat unrelated files.
@@ -82,6 +85,7 @@ Do not add pnpm workspace files or a separate backend lockfile.
 - Backend logic: `npm run backend:test`, `npm run backend:typecheck`, and `npm run backend:lint`.
 - Backend runtime changes: also run `npm run backend:build:local` and `npm run backend:build:vercel`.
 - Electron behavior: smoke-test with `npm start` when practical.
+- macOS-compatible desktop changes: rely on the universal macOS packaging check in CI and smoke-test on macOS when practical.
 - Native packaging/runtime: run `npm run start:native` or the relevant `npm run dist:native:*` path.
 - Mobile changes: run `npm run mobile:android:check`.
 

@@ -16,7 +16,6 @@ const expectedRuntimeFiles = [
   "spice-local-runtime-manager.js",
   "runtime-archive.js",
   "desktop-helpers.js",
-  "desktop-sleep-timer.js",
   "index.html",
   "settings.html",
   "queue.html",
@@ -151,6 +150,35 @@ test("wrapper Linux releases include a Fedora RPM distinct from Native", () => {
   assert.deepEqual(wrapperConfig.linux.target, ["AppImage", "flatpak", "deb", "rpm", "tar.gz"]);
   assert.equal(wrapperConfig.rpm.packageName, "spice");
   assert.equal(nativeConfig.rpm.packageName, "spice-native");
+});
+
+test("classic macOS releases are universal and package-checked on pull requests", () => {
+  const root = path.join(__dirname, "..");
+  const releaseWorkflow = fs.readFileSync(
+    path.join(root, ".github", "workflows", "release.yml"),
+    "utf8",
+  );
+  const buildChecksWorkflow = fs.readFileSync(
+    path.join(root, ".github", "workflows", "release-build-checks.yml"),
+    "utf8",
+  );
+
+  assert.equal(packageConfig.scripts["dist:mac"], "electron-builder --mac --universal");
+  assert.deepEqual(wrapperConfig.mac.target, ["dmg", "zip"]);
+  assert.match(
+    releaseWorkflow,
+    /Build & Publish Release \(macOS\)[\s\S]*npm run dist:mac -- --publish always/,
+  );
+  assert.match(buildChecksWorkflow, /wrapper-macos:[\s\S]*runs-on: macos-latest/);
+  assert.match(buildChecksWorkflow, /wrapper-macos:[\s\S]*run: npm test/);
+  assert.match(
+    buildChecksWorkflow,
+    /wrapper-macos:[\s\S]*npm run dist:mac -- --dir --publish never/,
+  );
+  assert.match(
+    buildChecksWorkflow,
+    /wrapper-macos:[\s\S]*lipo -archs[\s\S]*x86_64[\s\S]*arm64/,
+  );
 });
 
 test("native releases use an isolated update channel and cache", () => {

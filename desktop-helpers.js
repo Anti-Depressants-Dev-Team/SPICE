@@ -151,6 +151,16 @@ function shouldBlockNativeStartupPlayback({
   return !userPlaybackIntent && (waitingForAudioSettings || guardActive);
 }
 
+function resolveLocalRuntimePlatform(platform = process.platform) {
+  if (platform === "win32") return "windows";
+  if (platform === "linux") return "linux";
+  return null;
+}
+
+function shouldQuitWhenLastWindowCloses(platform = process.platform) {
+  return platform !== "darwin";
+}
+
 module.exports = {
   DEFAULT_SHELL_THEME,
   normalizeShellTheme,
@@ -158,4 +168,6 @@ module.exports = {
   getNavigationHistory,
   navigateHistory,
   shouldBlockNativeStartupPlayback,
+  resolveLocalRuntimePlatform,
+  shouldQuitWhenLastWindowCloses,
 };

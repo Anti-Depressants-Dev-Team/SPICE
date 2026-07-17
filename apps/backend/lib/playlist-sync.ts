@@ -33,6 +33,12 @@ interface StoredPlaylistItem {
   durationMs: number | null;
 }
 
+interface PlaylistTrackIdentity {
+  position: number;
+  sourceId: string;
+  trackId: string;
+}
+
 export function isUuid(value: unknown): value is string {
   return typeof value === 'string'
     && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
@@ -83,4 +89,14 @@ export function playlistItemsMatch(
       && stored.artworkUrl === snapshot.artworkUrl
       && stored.durationMs === snapshot.durationMs;
   });
+}
+
+export function findPlaylistTrackPosition(
+  storedItems: PlaylistTrackIdentity[],
+  track: Pick<TrackSnapshotInput, 'id' | 'sourceId'>,
+) {
+  const sourceId = track.sourceId || 'youtube_music';
+  return storedItems.find((item) => (
+    item.sourceId === sourceId && item.trackId === track.id
+  ))?.position ?? null;
 }

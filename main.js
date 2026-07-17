@@ -17,11 +17,9 @@ const {
   parseSupportedServiceUrl,
   getNavigationHistory,
   navigateHistory,
+  resolveLocalRuntimePlatform,
+  shouldQuitWhenLastWindowCloses,
 } = require("./desktop-helpers");
-const {
-  DesktopSleepTimer,
-  detectDesktopPlaybackBoundary,
-} = require("./desktop-sleep-timer");
 
 // Simple File Logger for Production Debugging - INITIALIZE FIRST
 const logFile = path.join(app.getPath("userData"), "debug.log");
@@ -96,13 +94,16 @@ let updateInstallCleanupCompleted = false;
 let downloadedUpdateInfo = null;
 let updateInstallPromptActive = false;
 let skipDownloadedUpdateOnClose = false;
-let desktopSleepTimer = null;
+let appQuitCleanupPromise = null;
+let appQuitCleanupCompleted = false;
+let appRestartInProgress = false;
 
-const SPICE_LOCAL_RUNTIME_PLATFORM = process.platform === "linux" ? "linux" : "windows";
+const SPICE_LOCAL_RUNTIME_PLATFORM = resolveLocalRuntimePlatform(process.platform);
 const APP_NATIVE_MODE =
-  process.env.SPICE_NATIVE_APP === "1" ||
-  process.env.SPICE_APP_MODE === "native" ||
-  (app.isPackaged && hasBundledNativeRuntime());
+  Boolean(SPICE_LOCAL_RUNTIME_PLATFORM) &&
+  (process.env.SPICE_NATIVE_APP === "1" ||
+    process.env.SPICE_APP_MODE === "native" ||
+    (app.isPackaged && hasBundledNativeRuntime()));
 const UPDATE_CHANNEL = APP_NATIVE_MODE ? "native" : "latest";
 const AUTO_UPDATE_SUPPORTED = process.platform !== "linux" || Boolean(process.env.APPIMAGE);
 const SPICE_LOCAL_RUNTIME_URL = normalizeServiceUrl(
@@ -111,9 +112,11 @@ const SPICE_LOCAL_RUNTIME_URL = normalizeServiceUrl(
 const SPICE_INSTALL_URL = normalizeServiceUrl(
   process.env.SPICE_INSTALL_URL || "https://install.spice-app.xyz/",
 );
-const SPICE_LOCAL_MANIFEST_URL =
-  process.env.SPICE_LOCAL_UPDATE_MANIFEST_URL ||
-  `https://music.spice-app.xyz/api/updates/local-${SPICE_LOCAL_RUNTIME_PLATFORM}`;
+const SPICE_REMOTE_MUSIC_URL = "https://music.spice-app.xyz/";
+const SPICE_LOCAL_MANIFEST_URL = SPICE_LOCAL_RUNTIME_PLATFORM
+  ? process.env.SPICE_LOCAL_UPDATE_MANIFEST_URL ||
+    `https://music.spice-app.xyz/api/updates/local-${SPICE_LOCAL_RUNTIME_PLATFORM}`
+  : null;
 
 const SERVICES = {
   yt: "https://music.youtube.com",
@@ -159,15 +162,6 @@ function broadcastShellTheme() {
   }
 }
 
-function broadcastDesktopSleepTimer() {
-  const state = desktopSleepTimer ? desktopSleepTimer.snapshot() : { mode: "off" };
-  for (const target of [mainWindow, settingsWindow, lyricsWindow]) {
-    if (target && !target.isDestroyed()) {
-      target.webContents.send("desktop-sleep-timer-changed", state);
-    }
-  }
-}
-
 function broadcastUpdateStatus(payload) {
   for (const target of [mainWindow, settingsWindow]) {
     if (target && !target.isDestroyed()) {
@@ -205,6 +199,7 @@ function normalizeServiceUrl(url) {
 }
 
 function bundledNativeRuntimeDir() {
+  if (!SPICE_LOCAL_RUNTIME_PLATFORM) return null;
   const bundleName = `spice-local-${SPICE_LOCAL_RUNTIME_PLATFORM}`;
   const candidates = [];
   if (process.resourcesPath) {
@@ -218,7 +213,11 @@ function bundledNativeRuntimeDir() {
 }
 
 function hasBundledNativeRuntime() {
-  return fs.existsSync(path.join(bundledNativeRuntimeDir(), "apps", "backend", "server.js"));
+  const runtimeDir = bundledNativeRuntimeDir();
+  return Boolean(
+    runtimeDir &&
+      fs.existsSync(path.join(runtimeDir, "apps", "backend", "server.js")),
+  );
 }
 
 function nativeModeSettings() {
@@ -387,6 +386,7 @@ async function isLocalSpiceRuntimeReady() {
 async function resolveServiceUrl(serviceKey) {
   if (serviceKey !== "spice_crazy") return SERVICES[serviceKey];
   if (await isLocalSpiceRuntimeReady()) return SPICE_LOCAL_RUNTIME_URL;
+  if (!SPICE_LOCAL_RUNTIME_PLATFORM) return SPICE_REMOTE_MUSIC_URL;
 
   if (APP_NATIVE_MODE && spiceRuntimeManager) {
     try {
@@ -525,9 +525,13 @@ ipcMain.on("open-devtools", () => {
 });
 
 function createWindow() {
-  const lastService = store ? store.get("lastService") : null;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.show();
+    mainWindow.focus();
+    return;
+  }
 
-  mainWindow = new BrowserWindow({
+  const windowInstance = new BrowserWindow({
     width: 1200,
     height: 800,
     backgroundColor: "#121212", // Match CSS bg
@@ -543,12 +547,13 @@ function createWindow() {
     },
     show: false,
   });
+  mainWindow = windowInstance;
 
   // Remove default menu
-  mainWindow.setMenuBarVisibility(false);
+  windowInstance.setMenuBarVisibility(false);
 
   // Block default DevTools shortcuts (F12, Ctrl+Shift+I)
-  mainWindow.webContents.on("before-input-event", (event, input) => {
+  windowInstance.webContents.on("before-input-event", (event, input) => {
     if (
       input.key === "F12" ||
       (input.control && input.shift && input.key.toLowerCase() === "i")
@@ -559,23 +564,37 @@ function createWindow() {
   });
 
   // Bridge console messages to terminal for debugging
-  mainWindow.webContents.on("console-message", (event, level, message) => {
+  windowInstance.webContents.on("console-message", (event, level, message) => {
     if (!message.includes("[Main Poll]")) {
       console.log(`[MainWindow] ${message}`);
     }
   });
 
   // Initial load via local server
-  mainWindow.loadURL(APP_NATIVE_MODE ? "http://localhost:6969/?native=1" : "http://localhost:6969/").then(() => {
-    mainWindow.show();
-    applyCustomCssToWebContents(mainWindow.webContents);
-    sendShellTheme(mainWindow.webContents);
+  windowInstance.loadURL(APP_NATIVE_MODE ? "http://localhost:6969/?native=1" : "http://localhost:6969/").then(() => {
+    if (mainWindow !== windowInstance || windowInstance.isDestroyed()) return;
+    windowInstance.show();
+    applyCustomCssToWebContents(windowInstance.webContents);
+    sendShellTheme(windowInstance.webContents);
     // mainWindow.webContents.openDevTools({ mode: "detach" }); // Disabled to stop DevTools console from popping up automatically
+
+    if (view && view.webContents.isDestroyed()) {
+      view = null;
+    }
+    if (view && currentService) {
+      viewHiddenForModal = false;
+      windowInstance.setBrowserView(view);
+      updateViewBounds();
+      sendActiveServiceState(true);
+      sendAudioControlState();
+      applyVolumeToActiveView();
+      return;
+    }
 
     // Check for Default Service Startup.
     const startupService = APP_NATIVE_MODE
       ? (store && store.get("nativeOnboarded", false) && getNativeAutoOpen() ? "spice_crazy" : DEFAULT_NATIVE_STARTUP_SERVICE)
-      : (store ? store.get("defaultService", DEFAULT_STARTUP_SERVICE) : DEFAULT_STARTUP_SERVICE);
+      : (currentService || (store ? store.get("defaultService", DEFAULT_STARTUP_SERVICE) : DEFAULT_STARTUP_SERVICE));
 
     if (
       startupService &&
@@ -585,7 +604,7 @@ function createWindow() {
       console.log(`Auto-loading Default Service: ${startupService}`);
       // Ensure we have a small delay so window is ready
       setTimeout(() => {
-        if (mainWindow && !mainWindow.isDestroyed()) {
+        if (mainWindow === windowInstance && !windowInstance.isDestroyed()) {
           loadService(startupService);
         }
       }, 500);
@@ -594,21 +613,31 @@ function createWindow() {
       console.log("Staying on Home Screen");
       sendActiveServiceState(false);
     }
+  }).catch((error) => {
+    console.error("Failed to load the SPICE desktop shell:", error);
   });
 
-  mainWindow.on("resize", () => {
-    if (view) {
+  windowInstance.on("resize", () => {
+    if (mainWindow === windowInstance && view) {
       updateViewBounds();
     }
   });
 
-  mainWindow.on("close", async (event) => {
+  windowInstance.on("close", async (event) => {
     if (
       !downloadedUpdateInfo ||
       !app.isPackaged ||
       updateInstallInProgress ||
       skipDownloadedUpdateOnClose
     ) {
+      if (
+        process.platform === "darwin" &&
+        mainWindow === windowInstance &&
+        view &&
+        !view.webContents.isDestroyed()
+      ) {
+        windowInstance.setBrowserView(null);
+      }
       return;
     }
 
@@ -617,7 +646,7 @@ function createWindow() {
 
     updateInstallPromptActive = true;
     try {
-      const result = await dialog.showMessageBox(mainWindow, {
+      const result = await dialog.showMessageBox(windowInstance, {
         type: "info",
         buttons: ["Install update", "Quit without installing", "Cancel"],
         defaultId: 0,
@@ -632,32 +661,30 @@ function createWindow() {
         await installDownloadedUpdate();
       } else if (result.response === 1) {
         skipDownloadedUpdateOnClose = true;
-        mainWindow.close();
+        app.quit();
       }
     } finally {
       updateInstallPromptActive = false;
     }
   });
 
-  // Handle Main Window Close - Ensure App Quits
-  mainWindow.on("closed", () => {
-    mainWindow = null;
-    if (lyricsWindow) {
-      lyricsWindow.close();
+  // macOS keeps the process and detached service view alive until the user
+  // explicitly quits. Companion windows are transient and close with the shell.
+  windowInstance.on("closed", () => {
+    if (mainWindow === windowInstance) {
+      mainWindow = null;
     }
-    if (miniPlayerWindow) {
-      miniPlayerWindow.close();
-    }
-    if (spiceRuntimeManager) {
-      spiceRuntimeManager.stop().catch(() => {});
-    }
-    // Properly disconnect Discord RPC before quitting
-    if (discordRpc) {
-      discordRpc.disconnect();
-    }
-    // Force quit to ensure no background processes remain
-    if (!updateInstallInProgress) {
-      app.quit();
+    viewHiddenForModal = false;
+    for (const companionWindow of [
+      lyricsWindow,
+      miniPlayerWindow,
+      queueWindow,
+      settingsWindow,
+      toolbarSettingsWindow,
+    ]) {
+      if (companionWindow && !companionWindow.isDestroyed()) {
+        companionWindow.close();
+      }
     }
   });
 }
@@ -850,8 +877,6 @@ function clearPlaybackSurfaces(rawData = {}, options = {}) {
   lastPolledTrackKey = null;
   lastScrobbledTrackKey = null;
   lastPolledTime = 0;
-  lastDesktopPlaybackSnapshot = null;
-  desktopQueueAtTail = false;
   lastInlineLyricsKey = null;
   if (options.resetScrobbler) {
     resetActiveScrobbleState();
@@ -898,6 +923,82 @@ function markSpiceNativePlaybackIntent(reason = "shell") {
     .catch(() => {});
 }
 
+async function cleanupDesktopProcessForQuit() {
+  if (appQuitCleanupPromise) return appQuitCleanupPromise;
+
+  appQuitCleanupPromise = (async () => {
+    try {
+      stopTrackPolling();
+      clearPlaybackSurfaces();
+    } catch (error) {
+      console.warn("Failed to clear desktop playback during quit:", error && error.message);
+    }
+
+    const activeView = view;
+    view = null;
+    if (activeView && activeView.webContents && !activeView.webContents.isDestroyed()) {
+      try {
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setBrowserView(null);
+        activeView.webContents.destroy();
+      } catch (_) {}
+    }
+
+    if (spiceRuntimeManager) {
+      try {
+        await spiceRuntimeManager.stop();
+      } catch (_) {}
+    }
+
+    if (discordRpc) {
+      try {
+        discordRpc.disconnect();
+      } catch (_) {}
+    }
+
+    appQuitCleanupCompleted = true;
+  })();
+
+  return appQuitCleanupPromise;
+}
+
+async function restartDesktopApp() {
+  if (appRestartInProgress) return;
+  appRestartInProgress = true;
+  app.relaunch();
+  try {
+    await cleanupDesktopProcessForQuit();
+  } catch (error) {
+    console.error("Failed to clean up SPICE before restart:", error);
+  } finally {
+    app.exit(0);
+  }
+}
+
+app.on("before-quit", (event) => {
+  if (updateInstallInProgress || appQuitCleanupCompleted) return;
+
+  // Let the existing close prompt run before tearing down playback when a
+  // downloaded update still needs an explicit user choice.
+  if (
+    downloadedUpdateInfo &&
+    app.isPackaged &&
+    !skipDownloadedUpdateOnClose &&
+    mainWindow &&
+    !mainWindow.isDestroyed()
+  ) {
+    return;
+  }
+
+  event.preventDefault();
+  cleanupDesktopProcessForQuit()
+    .catch((error) => {
+      console.error("Failed to clean up SPICE before quit:", error);
+    })
+    .finally(() => {
+      app.quit();
+    });
+});
+
 async function prepareForUpdateInstall() {
   if (updateInstallCleanupPromise) return updateInstallCleanupPromise;
 
@@ -911,28 +1012,7 @@ async function prepareForUpdateInstall() {
       } catch (_) {}
     };
 
-    stopTrackPolling();
-    clearPlaybackSurfaces();
-
-    if (view && view.webContents && !view.webContents.isDestroyed()) {
-      try {
-        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setBrowserView(null);
-        view.webContents.destroy();
-      } catch (_) {}
-    }
-    view = null;
-
-    if (spiceRuntimeManager) {
-      try {
-        await spiceRuntimeManager.stop();
-      } catch (_) {}
-    }
-
-    if (discordRpc) {
-      try {
-        discordRpc.disconnect();
-      } catch (_) {}
-    }
+    await cleanupDesktopProcessForQuit();
 
     // Destroy every renderer only after asynchronous runtime cleanup. Closing
     // the last window earlier emits `window-all-closed` and can terminate the
@@ -1180,44 +1260,29 @@ function seekPlayback(time) {
   const targetView = getActiveBackendView();
   const seekTime = Number(time);
   if (!targetView || !Number.isFinite(seekTime) || seekTime < 0) return;
+  const serializedSeekTime = JSON.stringify(seekTime);
 
   targetView.webContents
     .executeJavaScript(`
       (function() {
-        const media = document.querySelector('video, audio');
+        if (typeof window.__spiceSeekPlayback === 'function') {
+          return window.__spiceSeekPlayback(${serializedSeekTime});
+        }
+
+        const media = document.querySelector('[data-spice-active="true"]')
+          || document.querySelector('video, audio');
         if (!media) return false;
 
         const duration = Number(media.duration);
         media.currentTime = Number.isFinite(duration)
-          ? Math.min(${seekTime}, duration)
-          : ${seekTime};
+          ? Math.min(${serializedSeekTime}, duration)
+          : ${serializedSeekTime};
         return true;
       })();
     `)
     .catch((error) => {
       console.error("[Player] Failed to seek playback:", error);
     });
-}
-
-function pausePlaybackForDesktopSleepTimer() {
-  const targetView = getActiveBackendView();
-  if (!targetView || targetView.webContents.isDestroyed()) return;
-  targetView.webContents.executeJavaScript(`
-    (() => {
-      let paused = false;
-      document.querySelectorAll('audio, video').forEach((media) => {
-        if (!media.paused) {
-          media.pause();
-          paused = true;
-        }
-      });
-      window.dispatchEvent(new CustomEvent('spice-desktop-sleep-timer-expired'));
-      return paused;
-    })();
-  `).catch((error) => {
-    console.error("[Sleep Timer] Failed to pause active playback:", error);
-  });
-  miniPlayerServer.updateState({ paused: true });
 }
 
 // Handle VK player commands from the app-frame player bar
@@ -1654,8 +1719,6 @@ let trackPollingInterval = null;
 let lastPolledTrackKey = null;
 let lastScrobbledTrackKey = null;
 let lastPolledTime = 0;
-let lastDesktopPlaybackSnapshot = null;
-let desktopQueueAtTail = false;
 
 let queuePollingInterval = null;
 
@@ -1683,10 +1746,6 @@ function startQueuePolling() {
         })();
       `);
       if (queueData) {
-        if (queueData.length > 0) {
-          const selectedIndex = queueData.findIndex((item) => item.selected === true);
-          desktopQueueAtTail = selectedIndex >= 0 && selectedIndex === queueData.length - 1;
-        }
         miniPlayerServer.updateState({ queue: queueData });
         if (queueWindow && !queueWindow.isDestroyed()) {
           queueWindow.webContents.send("queue-update", queueData);
@@ -2326,25 +2385,6 @@ function startTrackPolling() {
         const trackKey = track.artist + " - " + track.title;
         const currentTime = track.currentTime || 0;
 
-        if (Number.isInteger(rawData.queueLength) && rawData.queueLength > 0) {
-          desktopQueueAtTail = Number(rawData.queueIndex) >= rawData.queueLength - 1;
-        }
-        const desktopPlaybackSnapshot = {
-          trackKey,
-          currentTime,
-          duration: Number(track.duration) || 0,
-          paused: track.paused === true,
-          queueAtTail: desktopQueueAtTail,
-        };
-        const playbackBoundary = detectDesktopPlaybackBoundary(
-          lastDesktopPlaybackSnapshot,
-          desktopPlaybackSnapshot,
-        );
-        lastDesktopPlaybackSnapshot = desktopPlaybackSnapshot;
-        if (playbackBoundary.trackEnded && desktopSleepTimer) {
-          desktopSleepTimer.handleTrackEnd({ queueEnded: playbackBoundary.queueEnded });
-        }
-
         // Always update lastTrack for progress tracking
         lastTrack = track;
 
@@ -2483,8 +2523,6 @@ function stopTrackPolling() {
   }
   lastPolledTrackKey = null;
   lastScrobbledTrackKey = null;
-  lastDesktopPlaybackSnapshot = null;
-  desktopQueueAtTail = false;
 }
 // ============== END TRACK POLLING ==============
 
@@ -2803,7 +2841,12 @@ function injectTrackDetection(serviceKey) {
 }
 
 app.on("activate", () => {
-  if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow();
+    return;
+  }
+  mainWindow.show();
+  mainWindow.focus();
 });
 
 app.whenReady().then(async () => {
@@ -3096,15 +3139,6 @@ app.whenReady().then(async () => {
   }
 
   initStore();
-  desktopSleepTimer = new DesktopSleepTimer({
-    initialState: store ? store.get("desktopSleepTimer", { mode: "off" }) : { mode: "off" },
-    onExpire: pausePlaybackForDesktopSleepTimer,
-    onChange: (state) => {
-      if (store) store.set("desktopSleepTimer", state);
-      broadcastDesktopSleepTimer();
-    },
-  });
-
   // NUCLEAR OPTION: Clear Cache on Startup
   if (session.defaultSession) {
     try {
@@ -3296,7 +3330,7 @@ app.whenReady().then(async () => {
 
   app.on("window-all-closed", () => {
     if (updateInstallInProgress) return;
-    if (process.platform !== "darwin") app.quit();
+    if (shouldQuitWhenLastWindowCloses(process.platform)) app.quit();
   });
 
   // IPC Handlers
@@ -4021,18 +4055,7 @@ app.whenReady().then(async () => {
       topBarSearchEnabled: store
         ? store.get("topBarSearchEnabled", false)
         : false,
-      desktopSleepTimer: desktopSleepTimer
-        ? desktopSleepTimer.snapshot()
-        : { mode: "off" },
     };
-  });
-
-  ipcMain.handle("set-desktop-sleep-timer", (event, request = {}) => {
-    if (!desktopSleepTimer) return { mode: "off" };
-    if (request.mode === "duration") return desktopSleepTimer.setDuration(request.minutes);
-    if (request.mode === "end-track") return desktopSleepTimer.setEndOfTrack();
-    if (request.mode === "end-queue") return desktopSleepTimer.setEndOfQueue();
-    return desktopSleepTimer.cancel();
   });
 
   ipcMain.handle("get-topbar-search", () => {
@@ -4101,8 +4124,7 @@ app.whenReady().then(async () => {
     if (store && store.get("vkPlayerEnabled", false) === next) return;
     if (store) store.set("vkPlayerEnabled", next);
     console.log(`VK Player on YT Music set to ${next}. Restarting...`);
-    app.relaunch();
-    app.exit();
+    void restartDesktopApp();
   });
 
   ipcMain.on("set-adblocker", (event, value) => {
@@ -4130,8 +4152,7 @@ app.whenReady().then(async () => {
 
     // For any change, we force a restart to ensure clean state and correct extension loading
     console.log("IPC: Restarting app to apply AdBlocker settings...");
-    app.relaunch();
-    app.exit();
+    void restartDesktopApp();
   });
 
   ipcMain.on("set-default-service", (event, service) => {
@@ -4143,8 +4164,7 @@ app.whenReady().then(async () => {
     if (store && store.get("defaultService", DEFAULT_STARTUP_SERVICE) === service) return;
     if (store) store.set("defaultService", service);
     console.log(`Default Service set to ${service}. Restarting...`);
-    app.relaunch();
-    app.exit();
+    void restartDesktopApp();
   });
 
   ipcMain.on("set-discord-rpc", (event, enabled) => {
@@ -4646,9 +4666,6 @@ app.whenReady().then(async () => {
   ipcMain.on("scrobble-track-end", (event, details = {}) => {
     if (scrobbler) {
       scrobbler.onTrackEnd();
-    }
-    if (desktopSleepTimer) {
-      desktopSleepTimer.handleTrackEnd({ queueEnded: details.queueEnded === true });
     }
   });
 

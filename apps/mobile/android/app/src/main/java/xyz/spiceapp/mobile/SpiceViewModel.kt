@@ -68,6 +68,8 @@ import xyz.spiceapp.mobile.model.StreamQuality
 import xyz.spiceapp.mobile.model.Track
 import xyz.spiceapp.mobile.playback.PlayerConnection
 import xyz.spiceapp.mobile.playback.PlayerUiState
+import xyz.spiceapp.mobile.playback.MobilePlaybackServiceContext
+import xyz.spiceapp.mobile.playback.normalizeMobilePlaybackHistoryForQueue
 import java.io.File
 import java.util.UUID
 import kotlin.random.Random
@@ -138,7 +140,6 @@ data class SpiceUiState(
     val selectedPlaybackDeviceId: String = "",
     val connectLoading: Boolean = false,
     val connectStatus: String = "",
-    val sleepTimer: MobileSleepTimerState = MobileSleepTimerState(),
     val appUpdate: AppUpdateUiState = AppUpdateUiState(),
     val message: String? = null,
 )
@@ -151,9 +152,14 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
     private val downloadClient = MediaDownloadClient(application)
     private val appUpdateClient = AppUpdateClient()
     private val appUpdateDownloadManager = DurableAppUpdateDownloadManager(application)
-    private val playerConnection = PlayerConnection(application) { handlePlaybackEnded() }
+    private val playerConnection = PlayerConnection(
+        context = application,
+        onPlaybackEnded = ::handlePlaybackEnded,
+        onTrackRepeated = ::handleTrackRepeated,
+        onCrossfadeCompleted = ::handleCrossfadeCompleted,
+        onCrossfadeFailed = ::handleCrossfadeFailed,
+    )
     private val connectPreferences = application.getSharedPreferences("spice_connect", Context.MODE_PRIVATE)
-    private val playbackPreferences = application.getSharedPreferences("spice_playback", Context.MODE_PRIVATE)
     private val remoteDeviceId = loadRemoteDeviceId()
     private val initialPairedCredential = pairedCredentialStore.load()
         ?.takeIf { it.deviceId == remoteDeviceId }
@@ -166,13 +172,19 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
     private var connectRefreshJob: Job? = null
     private var updateCheckJob: Job? = null
     private var updateDownloadJob: Job? = null
-    private var sleepTimerJob: Job? = null
     private var autoHistorySyncJob: Job? = null
     private var autoTasteSyncJob: Job? = null
     private var homeLoadJob: Job? = null
     private var transitionPreparationJob: Job? = null
-    private var playbackTransitionJob: Job? = null
     private var preparedTransition: PreparedMobileTransition? = null
+    private var crossfadeInProgress = false
+    private var crossfadeBypassOutgoingKey = ""
+    private val playbackHistory = mutableListOf<String>()
+    private var playbackHistoryCursor = -1
+    private val shuffleCycleTrackKeys = linkedSetOf<String>()
+    private var shuffleRoundPlayCount = 0
+    private var feedbackRecordedForCurrentPlayback = false
+    private var lastObservedShuffleEnabled = false
     private val cloudLibrarySyncMutex = Mutex()
     private var optimisticRemoteDeviceId: String? = null
     private var optimisticRemoteStateUntilElapsedMs: Long = 0L
@@ -192,7 +204,6 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
             pairedDeviceCredential = initialPairedCredential,
             remoteDeviceId = remoteDeviceId,
             selectedPlaybackDeviceId = loadSelectedPlaybackDeviceId(),
-            sleepTimer = loadMobileSleepTimer(),
         ),
     )
     val uiState: StateFlow<SpiceUiState> = _uiState.asStateFlow()
@@ -210,7 +221,6 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
             startSpiceConnect()
         }
         if (!resumeDurableAppUpdateDownload()) checkForAppUpdate()
-        scheduleMobileSleepTimer(_uiState.value.sleepTimer)
     }
 
     fun checkForAppUpdate() {
@@ -441,7 +451,8 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
         }
         val normalizedQueue = normalizeQueue(queue, track)
         val nextIndex = normalizedQueue.indexOfFirst { it.queueKey() == track.queueKey() }.takeIf { it >= 0 } ?: 0
-        playQueueIndex(normalizedQueue, nextIndex)
+        val departure = _uiState.value.currentTrack?.let { pendingManualPlaybackDeparture() }
+        playQueueIndex(normalizedQueue, nextIndex, manualDeparture = departure)
     }
 
     fun playNext() {
@@ -455,12 +466,18 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun playNextLocally() {
         val state = _uiState.value
-        val nextIndex = nextQueueIndex(state, allowWrap = state.playbackQueue.isNotEmpty())
-        if (nextIndex == null) {
+        val plan = nextQueuePlan(state, allowWrap = state.playbackQueue.isNotEmpty())
+        if (plan == null) {
             _uiState.value = state.copy(message = "No next track in queue.")
             return
         }
-        playQueueIndex(state.playbackQueue, nextIndex)
+        playQueueIndex(
+            state.playbackQueue,
+            plan.queueIndex,
+            historyCursorTarget = plan.historyCursorTarget,
+            startsNewShuffleRound = plan.startsNewShuffleRound,
+            manualDeparture = pendingManualPlaybackDeparture(),
+        )
     }
 
     fun playPrevious() {
@@ -479,29 +496,60 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.value = state.copy(message = "No previous track in queue.")
             return
         }
+        if (shouldRestartMobileTrackForPrevious(playerState.value.positionMs)) {
+            cancelMobilePlaybackTransition()
+            playerConnection.seekTo(0L)
+            feedbackRecordedForCurrentPlayback = false
+            return
+        }
+        if (playerState.value.shuffleEnabled) {
+            historyTraversalIndex(queue, step = -1)?.let { (historyCursor, queueIndex) ->
+                playQueueIndex(
+                    queue,
+                    queueIndex,
+                    historyCursorTarget = historyCursor,
+                    manualDeparture = pendingManualPlaybackDeparture(),
+                )
+                return
+            }
+        }
+        if (playerState.value.shuffleEnabled) {
+            _uiState.value = state.copy(message = "No earlier track in playback history.")
+            return
+        }
         val previousIndex = if (state.queueIndex > 0) {
             state.queueIndex - 1
         } else {
             queue.lastIndex
         }
-        playQueueIndex(queue, previousIndex)
+        playQueueIndex(queue, previousIndex, manualDeparture = pendingManualPlaybackDeparture())
     }
 
-    private fun playQueueIndex(queue: List<Track>, index: Int) {
+    private fun playQueueIndex(
+        queue: List<Track>,
+        index: Int,
+        historyCursorTarget: Int? = null,
+        startsNewShuffleRound: Boolean = false,
+        manualDeparture: PendingMobileDeparture? = null,
+    ) {
         val track = queue.getOrNull(index) ?: return
         cancelMobilePlaybackTransition()
-        playJob?.cancel()
+        cancelPendingLocalPlayResolution()
         _uiState.value = _uiState.value.copy(
             resolvingTrackId = track.id,
-            currentTrack = track,
-            playbackQueue = queue,
-            queueIndex = index,
             message = null,
         )
         playJob = viewModelScope.launch {
             try {
                 val playback = api.resolvePlayable(track, _uiState.value.quality)
-                commitResolvedPlayback(queue, index, playback)
+                commitResolvedPlayback(
+                    queue,
+                    index,
+                    playback,
+                    historyCursorTarget,
+                    startsNewShuffleRound,
+                    manualDeparture,
+                )
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
@@ -517,11 +565,32 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
         queue: List<Track>,
         index: Int,
         playback: ResolvedPlayback,
+        historyCursorTarget: Int? = null,
+        startsNewShuffleRound: Boolean = false,
+        manualDeparture: PendingMobileDeparture? = null,
     ) {
+        applyManualPlaybackDeparture(manualDeparture)
+        val updatedQueue = queue.replaceAt(index, playback.track)
+        if (
+            playerState.value.shuffleEnabled &&
+            shouldResetMobileShuffleRound(
+                previousQueueKeys = _uiState.value.playbackQueue.map { it.queueKey() },
+                replacementQueueKeys = queue.map { it.queueKey() },
+            )
+        ) {
+            shuffleCycleTrackKeys.clear()
+            shuffleRoundPlayCount = 0
+        }
+        recordPlaybackStarted(
+            updatedQueue,
+            playback.track,
+            historyCursorTarget,
+            startsNewShuffleRound,
+        )
         _uiState.value = _uiState.value.copy(
             resolvingTrackId = null,
             currentTrack = playback.track,
-            playbackQueue = queue.replaceAt(index, playback.track),
+            playbackQueue = updatedQueue,
             queueIndex = index,
             message = if (playback.usedFallback) {
                 "Playing full SoundCloud source: ${playback.track.title}"
@@ -530,7 +599,23 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
             },
         )
         playerConnection.clearError()
-        playerConnection.play(playback.track, playback.stream.url)
+        val localPlayer = playerState.value
+        playerConnection.play(
+            playback.track,
+            playback.stream.url,
+            MobilePlaybackServiceContext(
+                queue = updatedQueue,
+                queueIndex = index,
+                quality = _uiState.value.quality,
+                crossfadeDurationMs = _uiState.value.crossfadeDurationMs,
+                repeatMode = localPlayer.repeatMode,
+                shuffleEnabled = localPlayer.shuffleEnabled,
+                shuffleRoundTrackKeys = shuffleCycleTrackKeys.toList(),
+                shuffleRoundPlayCount = shuffleRoundPlayCount,
+                playbackHistory = playbackHistory.toList(),
+                playbackHistoryCursor = playbackHistoryCursor,
+            ),
+        )
         libraryRepository.addToHistory(playback.track)
         scheduleHistorySync()
     }
@@ -560,6 +645,8 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
     fun togglePlayback() {
         val targetDeviceId = activeRemoteTargetId()
         if (targetDeviceId == null) {
+            cancelPendingLocalPlayResolution()
+            cancelMobilePlaybackTransition()
             playerConnection.toggle()
             return
         }
@@ -582,6 +669,12 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
     fun seekTo(positionMs: Long) {
         val targetDeviceId = activeRemoteTargetId()
         if (targetDeviceId == null) {
+            cancelPendingLocalPlayResolution()
+            cancelMobilePlaybackTransition()
+            val player = playerState.value
+            if (shouldTreatMobileSeekAsSkip(player.positionMs, positionMs, player.durationMs)) {
+                recordManualPlaybackDeparture()
+            }
             playerConnection.seekTo(positionMs)
             return
         }
@@ -600,11 +693,32 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    fun seekBy(deltaMs: Long) = playerConnection.seekBy(deltaMs)
+    fun seekBy(deltaMs: Long) {
+        cancelPendingLocalPlayResolution()
+        cancelMobilePlaybackTransition()
+        val player = playerState.value
+        val targetPositionMs = (player.positionMs + deltaMs).coerceIn(
+            0L,
+            player.durationMs.takeIf { it > 0L } ?: Long.MAX_VALUE,
+        )
+        if (shouldTreatMobileSeekAsSkip(player.positionMs, targetPositionMs, player.durationMs)) {
+            recordManualPlaybackDeparture()
+        }
+        playerConnection.seekBy(deltaMs)
+    }
 
     fun toggleShuffle() {
         val targetDeviceId = activeRemoteTargetId()
         if (targetDeviceId == null) {
+            val enabling = !playerState.value.shuffleEnabled
+            shuffleCycleTrackKeys.clear()
+            shuffleRoundPlayCount = 0
+            if (enabling) {
+                _uiState.value.currentTrack?.queueKey()?.let {
+                    shuffleCycleTrackKeys += it
+                    shuffleRoundPlayCount = 1
+                }
+            }
             playerConnection.toggleShuffle()
             return
         }
@@ -642,12 +756,14 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun stopPlayback() {
+        cancelPendingLocalPlayResolution()
         cancelMobilePlaybackTransition()
         activeRemoteTargetId()?.let { targetDeviceId ->
             patchRemoteDevice(targetDeviceId) { it.copy(isPlaying = false) }
             sendRemoteCommand(targetDeviceId, "pause")
             return
         }
+        recordManualPlaybackDeparture()
         playerConnection.stop()
         _uiState.value = _uiState.value.copy(
             currentTrack = null,
@@ -655,6 +771,19 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
             queueIndex = -1,
             resolvingTrackId = null,
         )
+        playbackHistory.clear()
+        playbackHistoryCursor = -1
+        shuffleCycleTrackKeys.clear()
+        shuffleRoundPlayCount = 0
+        feedbackRecordedForCurrentPlayback = false
+    }
+
+    private fun cancelPendingLocalPlayResolution() {
+        playJob?.cancel()
+        playJob = null
+        if (_uiState.value.resolvingTrackId != null) {
+            _uiState.value = _uiState.value.copy(resolvingTrackId = null)
+        }
     }
 
     fun downloadTrack(track: Track) {
@@ -810,14 +939,18 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun addCurrentTrackToPlaylist(playlistId: String) {
-        val track = _uiState.value.currentTrack
+        val track = activePlayerTrack()
         if (track == null) {
             _uiState.value = _uiState.value.copy(message = "Play a track before adding it to a playlist.")
             return
         }
+        addTrackToPlaylist(playlistId, track)
+    }
+
+    fun addTrackToPlaylist(playlistId: String, track: Track) {
         val playlist = _uiState.value.playlists.firstOrNull { it.id == playlistId }
         if (playlist != null && playlist.shared) {
-            addCurrentTrackToSharedPlaylist(playlist)
+            addCurrentTrackToSharedPlaylist(playlist, track)
             return
         }
 
@@ -833,20 +966,19 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun addCurrentTrackToSharedPlaylist(playlist: Playlist) {
+    private fun addCurrentTrackToSharedPlaylist(playlist: Playlist, track: Track) {
         val state = _uiState.value
         val session = state.accountSession
-        val track = state.currentTrack
         if (session == null) {
             _uiState.value = state.copy(message = "Sign in before editing shared playlists.")
             return
         }
-        if (track == null) {
-            _uiState.value = state.copy(message = "Play a track before adding it to a playlist.")
-            return
-        }
         if (playlist.shareRole !in setOf("owner", "editor")) {
             _uiState.value = state.copy(message = "You need editor access to add tracks to this shared playlist.")
+            return
+        }
+        if (playlist.tracks.any { it.queueKey() == track.queueKey() }) {
+            _uiState.value = state.copy(message = "${track.title} is already in ${playlist.title}.")
             return
         }
 
@@ -929,12 +1061,14 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
     fun setQuality(quality: StreamQuality) {
         libraryRepository.setQuality(quality)
         _uiState.value = _uiState.value.copy(quality = quality)
+        playerConnection.updatePlaybackContextSettings(quality, _uiState.value.crossfadeDurationMs)
     }
 
     fun setCrossfadeDurationMs(durationMs: Long) {
         val normalized = normalizeMobileCrossfadeDurationMs(durationMs)
         libraryRepository.setCrossfadeDurationMs(normalized)
         _uiState.value = _uiState.value.copy(crossfadeDurationMs = normalized)
+        playerConnection.updatePlaybackContextSettings(_uiState.value.quality, normalized)
         if (normalized == 0L) cancelMobilePlaybackTransition()
     }
 
@@ -1648,71 +1782,47 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
 
     fun retryHome() = loadHome()
 
-    fun setSleepTimerMinutes(minutes: Int) {
-        updateMobileSleepTimer(durationMobileSleepTimer(minutes))
-    }
-
-    fun setSleepTimerEndOfTrack() {
-        val track = activePlayerTrack()
-        if (track == null) {
-            _uiState.value = _uiState.value.copy(message = "Play a track before arming the sleep timer.")
-            return
-        }
-        updateMobileSleepTimer(MobileSleepTimerState(
-            mode = MobileSleepTimerMode.EndTrack,
-            armedTrackKey = track.queueKey(),
-        ))
-    }
-
-    fun setSleepTimerEndOfQueue() {
-        if (activePlayerTrack() == null) {
-            _uiState.value = _uiState.value.copy(message = "Start a queue before arming the sleep timer.")
-            return
-        }
-        updateMobileSleepTimer(MobileSleepTimerState(mode = MobileSleepTimerMode.EndQueue))
-    }
-
-    fun cancelSleepTimer() {
-        updateMobileSleepTimer(MobileSleepTimerState())
-    }
-
-    private fun updateMobileSleepTimer(value: MobileSleepTimerState, message: String? = null) {
-        val timer = normalizeMobileSleepTimer(value)
-        playbackPreferences.edit()
-            .putString(KEY_SLEEP_TIMER_MODE, timer.mode.name)
-            .putLong(KEY_SLEEP_TIMER_EXPIRES_AT, timer.expiresAtEpochMs)
-            .putString(KEY_SLEEP_TIMER_TRACK_KEY, timer.armedTrackKey)
-            .apply()
-        _uiState.value = _uiState.value.copy(sleepTimer = timer, message = message)
-        scheduleMobileSleepTimer(timer)
-    }
-
-    private fun scheduleMobileSleepTimer(timer: MobileSleepTimerState) {
-        sleepTimerJob?.cancel()
-        sleepTimerJob = null
-        if (timer.mode != MobileSleepTimerMode.Duration) return
-        sleepTimerJob = viewModelScope.launch {
-            delay((timer.expiresAtEpochMs - System.currentTimeMillis()).coerceAtLeast(0L))
-            if (!shouldStopForMobileSleepTimer(_uiState.value.sleepTimer)) return@launch
-            pausePlaybackForSleepTimer()
-            updateMobileSleepTimer(MobileSleepTimerState(), "Sleep timer finished. Playback paused.")
-        }
-    }
-
-    private fun pausePlaybackForSleepTimer() {
-        cancelMobilePlaybackTransition()
-        activeRemoteTargetId()?.let { targetDeviceId ->
-            patchRemoteDevice(targetDeviceId) { it.copy(isPlaying = false) }
-            sendRemoteCommand(targetDeviceId, "pause")
-            return
-        }
-        playerConnection.pause()
-    }
-
     private fun observePlaybackTransitions() {
         viewModelScope.launch {
-            playerConnection.state.collect(::evaluateMobilePlaybackTransition)
+            playerConnection.state.collect { player ->
+                val restored = restoreLocalPlaybackContextIfNeeded(player)
+                if (!restored) updateObservedShuffleState(player)
+                evaluateMobilePlaybackTransition(player)
+            }
         }
+    }
+
+    private fun restoreLocalPlaybackContextIfNeeded(player: PlayerUiState): Boolean {
+        if (!player.connected || player.mediaId.isBlank()) return false
+        if (crossfadeInProgress || preparedTransition != null) return false
+        val state = _uiState.value
+        if (state.currentTrack?.id == player.mediaId && state.playbackQueue.isNotEmpty()) return false
+        val context = playerConnection.restoredPlaybackContext(player.mediaId) ?: return false
+        val currentTrack = context.queue.getOrNull(context.queueIndex) ?: return false
+        val queueKeys = context.queue.mapTo(hashSetOf()) { it.queueKey() }
+        val (restoredHistory, restoredHistoryCursor) = normalizeMobilePlaybackHistoryForQueue(
+            history = context.playbackHistory,
+            cursor = context.playbackHistoryCursor,
+            availableTrackKeys = queueKeys,
+        )
+        playbackHistory.clear()
+        playbackHistory += restoredHistory
+        playbackHistoryCursor = restoredHistoryCursor
+        shuffleCycleTrackKeys.clear()
+        shuffleCycleTrackKeys += context.shuffleRoundTrackKeys.filter { it in queueKeys }
+        shuffleRoundPlayCount = context.shuffleRoundPlayCount.coerceIn(0, context.queue.size)
+        feedbackRecordedForCurrentPlayback = false
+        lastObservedShuffleEnabled = context.shuffleEnabled
+        _uiState.value = state.copy(
+            currentTrack = currentTrack,
+            playbackQueue = context.queue,
+            queueIndex = context.queueIndex,
+            resolvingTrackId = null,
+            quality = context.quality,
+            crossfadeDurationMs = context.crossfadeDurationMs,
+            message = null,
+        )
+        return true
     }
 
     private fun evaluateMobilePlaybackTransition(player: PlayerUiState) {
@@ -1721,25 +1831,16 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
         val outgoingKey = current?.queueKey().orEmpty()
         val durationMs = player.durationMs
         val configuredDurationMs = state.crossfadeDurationMs
-        val nextIndex = when {
-            player.shuffleEnabled || player.repeatMode == RepeatMode.One -> null
-            state.queueIndex + 1 in state.playbackQueue.indices -> state.queueIndex + 1
-            player.repeatMode == RepeatMode.All && state.playbackQueue.size > 1 -> 0
-            else -> null
-        }
-        val sleepTimerBlocksTransition = when (state.sleepTimer.mode) {
-            MobileSleepTimerMode.EndTrack -> state.sleepTimer.armedTrackKey == outgoingKey
-            MobileSleepTimerMode.EndQueue -> nextIndex == null
-            else -> false
-        }
 
         if (
             activeRemoteTargetId() != null ||
             !player.isPlaying ||
             current == null ||
-            nextIndex == null ||
             configuredDurationMs <= 0L ||
-            sleepTimerBlocksTransition
+            player.repeatMode == RepeatMode.One ||
+            !player.localCrossfadeSupported ||
+            crossfadeInProgress ||
+            crossfadeBypassOutgoingKey == outgoingKey
         ) {
             if (preparedTransition?.outgoingTrackKey != outgoingKey) {
                 transitionPreparationJob?.cancel()
@@ -1749,11 +1850,13 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        val nextTrack = state.playbackQueue.getOrNull(nextIndex) ?: return
         val prepared = preparedTransition
         if (
             prepared != null &&
-            (prepared.outgoingTrackKey != outgoingKey || prepared.nextTrackKey != nextTrack.queueKey())
+            (
+                prepared.outgoingTrackKey != outgoingKey ||
+                    state.playbackQueue.getOrNull(prepared.nextIndex)?.queueKey() != prepared.nextTrackKey
+                )
         ) {
             preparedTransition = null
         }
@@ -1768,6 +1871,12 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
                 hasNextTrack = true,
             )
         ) {
+            val nextPlan = nextQueuePlan(
+                state = state,
+                allowWrap = player.repeatMode == RepeatMode.All,
+            ) ?: return
+            val nextIndex = nextPlan.queueIndex
+            val nextTrack = state.playbackQueue.getOrNull(nextIndex) ?: return
             val queueSnapshot = state.playbackQueue
             transitionPreparationJob = viewModelScope.launch {
                 runCatching { api.resolvePlayable(nextTrack, _uiState.value.quality) }
@@ -1777,13 +1886,35 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
                             latest.currentTrack?.queueKey() == outgoingKey &&
                             latest.playbackQueue.getOrNull(nextIndex)?.queueKey() == nextTrack.queueKey()
                         ) {
-                            preparedTransition = PreparedMobileTransition(
-                                outgoingTrackKey = outgoingKey,
-                                nextTrackKey = nextTrack.queueKey(),
-                                queue = queueSnapshot,
-                                nextIndex = nextIndex,
-                                playback = playback,
-                            )
+                            playerConnection.prepareCrossfade(
+                                trackKey = playback.track.queueKey(),
+                                track = playback.track,
+                                streamUrl = playback.stream.url,
+                                queueIndex = nextIndex,
+                                crossfadeDurationMs = configuredDurationMs,
+                                startsNewShuffleRound = nextPlan.startsNewShuffleRound,
+                                countsAsShuffleDraw = nextPlan.historyCursorTarget == null,
+                                historyCursorTarget = nextPlan.historyCursorTarget,
+                            ) { ready ->
+                                val currentState = _uiState.value
+                                if (
+                                    ready &&
+                                    currentState.currentTrack?.queueKey() == outgoingKey &&
+                                    currentState.playbackQueue.getOrNull(nextIndex)?.queueKey() == nextTrack.queueKey()
+                                ) {
+                                    preparedTransition = PreparedMobileTransition(
+                                        outgoingTrackKey = outgoingKey,
+                                        nextTrackKey = nextTrack.queueKey(),
+                                        queue = queueSnapshot,
+                                        nextIndex = nextIndex,
+                                        historyCursorTarget = nextPlan.historyCursorTarget,
+                                        startsNewShuffleRound = nextPlan.startsNewShuffleRound,
+                                        playback = playback,
+                                    )
+                                } else if (!ready) {
+                                    crossfadeBypassOutgoingKey = outgoingKey
+                                }
+                            }
                         }
                     }
                 transitionPreparationJob = null
@@ -1792,7 +1923,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
 
         val ready = preparedTransition ?: return
         if (
-            playbackTransitionJob?.isActive != true &&
+            !crossfadeInProgress &&
             shouldStartMobileTransition(
                 positionMs = player.positionMs,
                 durationMs = durationMs,
@@ -1800,7 +1931,17 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
                 prepared = true,
             )
         ) {
-            startMobilePlaybackTransition(ready, configuredDurationMs)
+            val effectiveDurationMs = effectiveMobileCrossfadeDurationMs(
+                configuredDurationMs = configuredDurationMs,
+                outgoingRemainingMs = durationMs - player.positionMs,
+            )
+            if (effectiveDurationMs == null) {
+                crossfadeBypassOutgoingKey = outgoingKey
+                preparedTransition = null
+                playerConnection.cancelPreparedCrossfade()
+            } else {
+                startMobilePlaybackTransition(ready, effectiveDurationMs)
+            }
         }
     }
 
@@ -1810,28 +1951,13 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         transitionPreparationJob?.cancel()
         transitionPreparationJob = null
-        playbackTransitionJob = viewModelScope.launch {
-            val safeDurationMs = normalizeMobileCrossfadeDurationMs(durationMs)
-            val steps = mobileTransitionStepCount(safeDurationMs)
-            var switched = false
-            try {
-                for (step in 0..steps) {
-                    if (_uiState.value.currentTrack?.queueKey() != prepared.outgoingTrackKey && !switched) {
-                        return@launch
-                    }
-                    val elapsedMs = safeDurationMs * step / steps
-                    if (!switched && elapsedMs * 2 >= safeDurationMs) {
-                        switched = true
-                        preparedTransition = null
-                        commitResolvedPlayback(prepared.queue, prepared.nextIndex, prepared.playback)
-                    }
-                    playerConnection.setTransitionGain(mobileTransitionGain(elapsedMs, safeDurationMs))
-                    if (step < steps) delay((safeDurationMs / steps).coerceAtLeast(25L))
-                }
-            } finally {
-                playerConnection.setTransitionGain(1f)
+        crossfadeInProgress = true
+        playerConnection.startPreparedCrossfade(durationMs) { started ->
+            if (!started) {
+                crossfadeBypassOutgoingKey = prepared.outgoingTrackKey
+                crossfadeInProgress = false
                 preparedTransition = null
-                playbackTransitionJob = null
+                playerConnection.cancelPreparedCrossfade()
             }
         }
     }
@@ -1839,33 +1965,164 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
     private fun cancelMobilePlaybackTransition() {
         transitionPreparationJob?.cancel()
         transitionPreparationJob = null
-        playbackTransitionJob?.cancel()
-        playbackTransitionJob = null
+        playerConnection.cancelPreparedCrossfade()
+        crossfadeInProgress = false
         preparedTransition = null
-        playerConnection.setTransitionGain(1f)
     }
 
-    private fun handlePlaybackEnded() {
+    private fun handleCrossfadeCompleted(trackKey: String) {
+        val transition = preparedTransition
+        val state = _uiState.value
+        if (transition == null || transition.playback.track.queueKey() != trackKey) {
+            crossfadeInProgress = false
+            preparedTransition = null
+            return
+        }
+        recordCompletedPlayback(transition.outgoingTrackKey)
+        val updatedQueue = transition.queue.replaceAt(transition.nextIndex, transition.playback.track)
+        _uiState.value = state.copy(
+            resolvingTrackId = null,
+            currentTrack = transition.playback.track,
+            playbackQueue = updatedQueue,
+            queueIndex = transition.nextIndex,
+            message = if (transition.playback.usedFallback) {
+                "Playing full SoundCloud source: ${transition.playback.track.title}"
+            } else {
+                null
+            },
+        )
+        recordPlaybackStarted(
+            updatedQueue,
+            transition.playback.track,
+            transition.historyCursorTarget,
+            transition.startsNewShuffleRound,
+        )
+        preparedTransition = null
+        crossfadeInProgress = false
         viewModelScope.launch {
-            if (playbackTransitionJob?.isActive == true) return@launch
+            libraryRepository.addToHistory(transition.playback.track)
+            scheduleHistorySync()
+        }
+    }
+
+    private fun handleCrossfadeFailed(trackKey: String) {
+        val transition = preparedTransition
+        if (transition != null && transition.playback.track.queueKey() == trackKey) {
+            crossfadeBypassOutgoingKey = transition.outgoingTrackKey
+        }
+        preparedTransition = null
+        crossfadeInProgress = false
+    }
+
+    private fun updateObservedShuffleState(player: PlayerUiState) {
+        if (player.shuffleEnabled != lastObservedShuffleEnabled) {
+            shuffleCycleTrackKeys.clear()
+            shuffleRoundPlayCount = 0
+            if (player.shuffleEnabled) {
+                _uiState.value.currentTrack?.queueKey()?.let {
+                    shuffleCycleTrackKeys += it
+                    shuffleRoundPlayCount = 1
+                }
+            }
+            lastObservedShuffleEnabled = player.shuffleEnabled
+        }
+    }
+
+    private fun handleTrackRepeated() {
+        recordCompletedPlayback()
+        feedbackRecordedForCurrentPlayback = false
+    }
+
+    private fun recordManualPlaybackDeparture() {
+        applyManualPlaybackDeparture(pendingManualPlaybackDeparture())
+    }
+
+    private fun pendingManualPlaybackDeparture(): PendingMobileDeparture? {
+        val state = _uiState.value
+        val track = state.currentTrack ?: return null
+        if (feedbackRecordedForCurrentPlayback) return null
+        val player = playerState.value
+        if (player.mediaId.isNotBlank() && player.mediaId != track.id) return null
+        return PendingMobileDeparture(
+            trackKey = track.queueKey(),
+            feedback = mobileTrackFeedbackForManualDeparture(player.positionMs, player.durationMs),
+        )
+    }
+
+    private fun applyManualPlaybackDeparture(departure: PendingMobileDeparture?) {
+        if (departure == null || feedbackRecordedForCurrentPlayback) return
+        libraryRepository.recordTrackFeedback(departure.trackKey, departure.feedback)
+        feedbackRecordedForCurrentPlayback = true
+    }
+
+    private fun recordCompletedPlayback(trackKeyOverride: String? = null) {
+        val trackKey = trackKeyOverride ?: _uiState.value.currentTrack?.queueKey() ?: return
+        if (feedbackRecordedForCurrentPlayback) return
+        libraryRepository.recordTrackFeedback(trackKey, MobileTrackFeedback.Completed)
+        feedbackRecordedForCurrentPlayback = true
+    }
+
+    private fun recordPlaybackStarted(
+        queue: List<Track>,
+        track: Track,
+        historyCursorTarget: Int? = null,
+        startsNewShuffleRound: Boolean = false,
+    ) {
+        val queueKeys = queue.mapTo(hashSetOf()) { it.queueKey() }
+        if (playbackHistory.any { it !in queueKeys }) {
+            playbackHistory.clear()
+            playbackHistoryCursor = -1
+        }
+        if (historyCursorTarget != null && historyCursorTarget in playbackHistory.indices) {
+            playbackHistoryCursor = historyCursorTarget
+            playbackHistory[historyCursorTarget] = track.queueKey()
+        } else {
+            while (playbackHistory.lastIndex > playbackHistoryCursor) {
+                playbackHistory.removeAt(playbackHistory.lastIndex)
+            }
+            if (playbackHistory.lastOrNull() != track.queueKey()) playbackHistory += track.queueKey()
+            playbackHistoryCursor = playbackHistory.lastIndex
+        }
+        if (playerState.value.shuffleEnabled) {
+            if (startsNewShuffleRound) {
+                shuffleCycleTrackKeys.clear()
+                shuffleRoundPlayCount = 0
+            }
+            if (historyCursorTarget == null) {
+                shuffleCycleTrackKeys += track.queueKey()
+                shuffleRoundPlayCount = (shuffleRoundPlayCount + 1).coerceAtMost(queue.size)
+            }
+        }
+        if (playbackHistory.size > MAX_PLAYBACK_HISTORY_ENTRIES) {
+            val removeCount = playbackHistory.size - MAX_PLAYBACK_HISTORY_ENTRIES
+            repeat(removeCount) { playbackHistory.removeAt(0) }
+            playbackHistoryCursor = (playbackHistoryCursor - removeCount).coerceAtLeast(0)
+        }
+        feedbackRecordedForCurrentPlayback = false
+        crossfadeBypassOutgoingKey = ""
+    }
+
+    private fun historyTraversalIndex(queue: List<Track>, step: Int): Pair<Int, Int>? {
+        val target = mobilePlaybackHistoryTarget(
+            history = playbackHistory,
+            cursor = playbackHistoryCursor,
+            step = step,
+            availableTrackKeys = queue.mapTo(hashSetOf()) { it.queueKey() },
+        ) ?: return null
+        return target.first to queue.indexOfFirst { it.queueKey() == target.second }
+    }
+
+    private fun handlePlaybackEnded(endedMediaId: String) {
+        viewModelScope.launch {
+            if (crossfadeInProgress || preparedTransition != null) return@launch
             val state = _uiState.value
-            val nextIndex = nextQueueIndex(
+            if (endedMediaId.isBlank() || state.currentTrack?.id != endedMediaId) return@launch
+            recordCompletedPlayback()
+            val nextPlan = nextQueuePlan(
                 state = state,
                 allowWrap = playerState.value.repeatMode == RepeatMode.All,
             )
-            val endedTrackKey = state.currentTrack?.queueKey().orEmpty()
-            if (shouldStopForMobileSleepTimer(
-                    timer = state.sleepTimer,
-                    trackEnded = true,
-                    trackKey = endedTrackKey,
-                    queueEnded = nextIndex == null,
-                )
-            ) {
-                pausePlaybackForSleepTimer()
-                updateMobileSleepTimer(MobileSleepTimerState(), "Sleep timer finished. Playback paused.")
-                return@launch
-            }
-            if (nextIndex == null) {
+            if (nextPlan == null) {
                 if (state.smartQueueEnabled) {
                     val continuation = mobileSmartQueueCandidates(
                         sections = state.homeSections,
@@ -1880,7 +2137,12 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.value = state.copy(message = "Queue finished.")
                 return@launch
             }
-            playQueueIndex(state.playbackQueue, nextIndex)
+            playQueueIndex(
+                state.playbackQueue,
+                nextPlan.queueIndex,
+                historyCursorTarget = nextPlan.historyCursorTarget,
+                startsNewShuffleRound = nextPlan.startsNewShuffleRound,
+            )
         }
     }
 
@@ -2167,7 +2429,11 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun activePlayerTrack(): Track? =
-        if (activeRemoteTargetId() == null) _uiState.value.currentTrack else selectedRemoteDevice()?.currentTrack
+        activeMobilePlaybackTrack(
+            localTrack = _uiState.value.currentTrack,
+            selectedRemoteDeviceId = _uiState.value.selectedPlaybackDeviceId,
+            selectedRemoteTrack = selectedRemoteDevice()?.currentTrack,
+        )
 
     private fun unavailableRemoteTarget() {
         _uiState.value = _uiState.value.copy(message = "The selected Spice Connect device is unavailable. Refreshing devices.")
@@ -2602,7 +2868,6 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
             observedDevices
         }
         val selectedId = state.selectedPlaybackDeviceId
-        val previousSelectedDevice = state.remoteDevices.firstOrNull { it.deviceId == selectedId }
         val selectedStillExists = selectedId.isBlank() || reconciledDevices.any { it.deviceId == selectedId }
         if (!selectedStillExists) {
             clearOptimisticRemoteState(selectedId)
@@ -2615,41 +2880,6 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
             connectStatus = if (selectedStillExists) status else "Selected device went offline; using this phone.",
             message = if (selectedStillExists) state.message else "Selected Spice Connect device went offline. Playback controls are local again.",
         )
-        if (selectedStillExists && selectedId.isNotBlank()) {
-            evaluateRemoteSleepTimer(
-                previous = previousSelectedDevice,
-                current = reconciledDevices.firstOrNull { it.deviceId == selectedId },
-            )
-        }
-    }
-
-    private fun evaluateRemoteSleepTimer(previous: RemoteDevice?, current: RemoteDevice?) {
-        val previousTrack = previous?.currentTrack ?: return
-        if (current == null) return
-        val previousTrackKey = previousTrack.queueKey()
-        val currentTrackKey = current.currentTrack?.queueKey().orEmpty()
-        val durationMs = maxOf(previous.durationMs, current.durationMs)
-        val boundary = detectMobilePlaybackBoundary(
-            previousTrackKey = previousTrackKey,
-            currentTrackKey = currentTrackKey,
-            previousProgressMs = previous.progressMs,
-            currentProgressMs = current.progressMs,
-            previousPlaying = previous.isPlaying,
-            currentPlaying = current.isPlaying,
-            durationMs = durationMs,
-            queueAtTail = previous.queue.isEmpty() || previous.queueIndex >= previous.queue.lastIndex,
-        )
-        if (!boundary.trackEnded) return
-        if (!shouldStopForMobileSleepTimer(
-                timer = _uiState.value.sleepTimer,
-                trackEnded = true,
-                trackKey = previousTrackKey,
-                queueEnded = boundary.queueEnded,
-            )
-        ) return
-
-        pausePlaybackForSleepTimer()
-        updateMobileSleepTimer(MobileSleepTimerState(), "Sleep timer finished. Playback paused.")
     }
 
     private fun remoteSnapshotAcknowledgesOptimisticState(
@@ -2831,19 +3061,6 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
     private fun loadSelectedPlaybackDeviceId(): String =
         connectPreferences.getString(KEY_SELECTED_PLAYBACK_DEVICE_ID, "").orEmpty()
 
-    private fun loadMobileSleepTimer(): MobileSleepTimerState {
-        val mode = runCatching {
-            MobileSleepTimerMode.valueOf(
-                playbackPreferences.getString(KEY_SLEEP_TIMER_MODE, MobileSleepTimerMode.Off.name).orEmpty(),
-            )
-        }.getOrDefault(MobileSleepTimerMode.Off)
-        return normalizeMobileSleepTimer(MobileSleepTimerState(
-            mode = mode,
-            expiresAtEpochMs = playbackPreferences.getLong(KEY_SLEEP_TIMER_EXPIRES_AT, 0L),
-            armedTrackKey = playbackPreferences.getString(KEY_SLEEP_TIMER_TRACK_KEY, "").orEmpty(),
-        ))
-    }
-
     private fun loadAppliedRemoteCommandIds(): List<String> = runCatching {
         val payload = JSONArray(
             connectPreferences.getString(KEY_APPLIED_REMOTE_COMMAND_IDS, "[]").orEmpty(),
@@ -2912,17 +3129,37 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun nextQueueIndex(state: SpiceUiState, allowWrap: Boolean): Int? {
+    private fun nextQueuePlan(state: SpiceUiState, allowWrap: Boolean): PlannedQueueIndex? {
         val queue = state.playbackQueue
         if (queue.isEmpty()) return null
-        if (playerState.value.shuffleEnabled && queue.size > 1) {
-            val choices = queue.indices.filter { it != state.queueIndex }
-            return choices.random(Random(System.nanoTime()))
+        if (playerState.value.shuffleEnabled) {
+            historyTraversalIndex(queue, step = 1)?.let { (cursor, index) ->
+                return PlannedQueueIndex(index, cursor)
+            }
+            if (queue.size > 1) {
+                return planMobileShuffleQueueIndex(
+                    queueIndices = queue.indices.toList(),
+                    currentIndex = state.queueIndex,
+                    playedTrackKeys = shuffleCycleTrackKeys,
+                    roundPlayCount = shuffleRoundPlayCount,
+                    allowWrap = allowWrap,
+                    trackKeyForIndex = { index -> queue[index].queueKey() },
+                    priorityForIndex = { index ->
+                        libraryRepository.trackPriority(queue[index].queueKey())
+                    },
+                    randomUnit = Random.nextDouble(),
+                )?.let { plan ->
+                    PlannedQueueIndex(
+                        queueIndex = plan.queueIndex,
+                        startsNewShuffleRound = plan.startsNewRound,
+                    )
+                }
+            }
         }
         val next = state.queueIndex + 1
         return when {
-            next in queue.indices -> next
-            allowWrap -> 0
+            next in queue.indices -> PlannedQueueIndex(next)
+            allowWrap -> PlannedQueueIndex(0)
             else -> null
         }
     }
@@ -2951,11 +3188,9 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
         connectRefreshJob?.cancel()
         updateCheckJob?.cancel()
         updateDownloadJob?.cancel()
-        sleepTimerJob?.cancel()
         autoHistorySyncJob?.cancel()
         homeLoadJob?.cancel()
         transitionPreparationJob?.cancel()
-        playbackTransitionJob?.cancel()
         autoTasteSyncJob?.cancel()
         appUpdateClient.cancelActiveRequest()
         playerConnection.release()
@@ -2966,10 +3201,8 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
         const val KEY_REMOTE_DEVICE_ID = "remote_device_id"
         const val KEY_SELECTED_PLAYBACK_DEVICE_ID = "selected_playback_device_id"
         const val KEY_APPLIED_REMOTE_COMMAND_IDS = "applied_remote_command_ids"
-        const val KEY_SLEEP_TIMER_MODE = "sleep_timer_mode"
-        const val KEY_SLEEP_TIMER_EXPIRES_AT = "sleep_timer_expires_at"
-        const val KEY_SLEEP_TIMER_TRACK_KEY = "sleep_timer_track_key"
         const val MAX_APPLIED_REMOTE_COMMAND_IDS = 160
+        const val MAX_PLAYBACK_HISTORY_ENTRIES = 512
         const val APP_UPDATE_DOWNLOAD_POLL_INTERVAL_MS = 1_000L
         const val MAX_MISSING_APP_UPDATE_DOWNLOAD_CHECKS = 3
         const val AUTO_HISTORY_SYNC_DEBOUNCE_MS = 90_000L
@@ -2994,7 +3227,20 @@ private data class PreparedMobileTransition(
     val nextTrackKey: String,
     val queue: List<Track>,
     val nextIndex: Int,
+    val historyCursorTarget: Int?,
+    val startsNewShuffleRound: Boolean,
     val playback: ResolvedPlayback,
+)
+
+private data class PlannedQueueIndex(
+    val queueIndex: Int,
+    val historyCursorTarget: Int? = null,
+    val startsNewShuffleRound: Boolean = false,
+)
+
+private data class PendingMobileDeparture(
+    val trackKey: String,
+    val feedback: MobileTrackFeedback,
 )
 
 private data class SharePlaylistResult(

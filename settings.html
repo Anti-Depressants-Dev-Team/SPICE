@@ -430,7 +430,6 @@
                 <a href="#updates-section" class="settings-sidebar-link">Updates</a>
                 <a href="#scrobbling-section" class="settings-sidebar-link">Scrobbling</a>
                 <a href="#mini-player-section" class="settings-sidebar-link">Mini Player</a>
-                <a href="#sleep-timer-section" class="settings-sidebar-link">Sleep Timer</a>
                 <a href="#advanced-section" class="settings-sidebar-link">Advanced</a>
             </nav>
 
@@ -606,30 +605,6 @@
                     <button id="save-custom-css-btn" class="btn">
                         Save CSS
                     </button>
-                </div>
-            </div>
-
-            <div class="settings-header" id="sleep-timer-section" style="margin-top: 30px">
-                <h2>Sleep Timer</h2>
-            </div>
-            <div class="settings-section">
-                <div class="section-header">
-                    <div>
-                        <label style="margin: 0; font-size: 16px">Pause Desktop Playback</label>
-                        <p style="color: var(--text-secondary); font-size: 12px; margin: 5px 0 0">
-                            Works across embedded YouTube Music, SoundCloud, and SPICE Music. The active timer survives a desktop restart.
-                        </p>
-                    </div>
-                    <span id="desktop-sleep-timer-status" class="status">Off</span>
-                </div>
-                <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px">
-                    <button class="btn btn-secondary desktop-sleep-duration" data-minutes="15">15 min</button>
-                    <button class="btn btn-secondary desktop-sleep-duration" data-minutes="30">30 min</button>
-                    <button class="btn btn-secondary desktop-sleep-duration" data-minutes="60">60 min</button>
-                    <button class="btn btn-secondary desktop-sleep-duration" data-minutes="90">90 min</button>
-                    <button id="desktop-sleep-end-track" class="btn btn-secondary">End of track</button>
-                    <button id="desktop-sleep-end-queue" class="btn btn-secondary">End of queue</button>
-                    <button id="desktop-sleep-cancel" class="btn">Cancel</button>
                 </div>
             </div>
 
@@ -900,28 +875,6 @@
             const clearCustomCssBtn = document.getElementById(
                 "clear-custom-css-btn",
             );
-            const desktopSleepTimerStatus = document.getElementById(
-                "desktop-sleep-timer-status",
-            );
-            let desktopSleepTimerState = { mode: "off" };
-
-            function renderDesktopSleepTimer(state = desktopSleepTimerState) {
-                desktopSleepTimerState = state && typeof state === "object" ? state : { mode: "off" };
-                if (desktopSleepTimerState.mode === "duration") {
-                    const remaining = Math.max(0, Math.ceil((Number(desktopSleepTimerState.expiresAt) - Date.now()) / 1000));
-                    desktopSleepTimerStatus.textContent = `${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, "0")}`;
-                    desktopSleepTimerStatus.className = "status status-connected";
-                } else if (desktopSleepTimerState.mode === "end-track") {
-                    desktopSleepTimerStatus.textContent = "End of track";
-                    desktopSleepTimerStatus.className = "status status-connected";
-                } else if (desktopSleepTimerState.mode === "end-queue") {
-                    desktopSleepTimerStatus.textContent = "End of queue";
-                    desktopSleepTimerStatus.className = "status status-connected";
-                } else {
-                    desktopSleepTimerStatus.textContent = "Off";
-                    desktopSleepTimerStatus.className = "status";
-                }
-            }
             const nativeLegacySections = document.querySelectorAll(
                 ".native-legacy-setting",
             );
@@ -966,7 +919,6 @@
                 topbarSearchToggle.checked = settings.topBarSearchEnabled;
                 alwaysOnTopToggle.checked = settings.alwaysOnTop === true;
                 customCssInput.value = settings.customCss || "";
-                renderDesktopSleepTimer(settings.desktopSleepTimer);
                 applySettingsTheme(settings.shellTheme);
             }).catch((error) => {
                 console.error("Could not load desktop settings:", error);
@@ -1048,28 +1000,6 @@
             if (window.api.onShellThemeChanged) {
                 window.api.onShellThemeChanged(applySettingsTheme);
             }
-            if (window.api.onDesktopSleepTimerChanged) {
-                window.api.onDesktopSleepTimerChanged(renderDesktopSleepTimer);
-            }
-            setInterval(() => renderDesktopSleepTimer(), 1000);
-
-            document.querySelectorAll(".desktop-sleep-duration").forEach((button) => {
-                button.addEventListener("click", async () => {
-                    renderDesktopSleepTimer(await window.api.setDesktopSleepTimer({
-                        mode: "duration",
-                        minutes: Number(button.dataset.minutes),
-                    }));
-                });
-            });
-            document.getElementById("desktop-sleep-end-track").addEventListener("click", async () => {
-                renderDesktopSleepTimer(await window.api.setDesktopSleepTimer({ mode: "end-track" }));
-            });
-            document.getElementById("desktop-sleep-end-queue").addEventListener("click", async () => {
-                renderDesktopSleepTimer(await window.api.setDesktopSleepTimer({ mode: "end-queue" }));
-            });
-            document.getElementById("desktop-sleep-cancel").addEventListener("click", async () => {
-                renderDesktopSleepTimer(await window.api.setDesktopSleepTimer({ mode: "off" }));
-            });
 
             adBlockTypeSelect.addEventListener("change", (e) => {
                 const requested = e.target.value;

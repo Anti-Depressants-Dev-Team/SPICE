@@ -1,5 +1,17 @@
 # SPICE Walkthrough
 
+## v1.0.145
+
+- [All players main] Remove Sleep Timer from Electron, SPICE Music, and Android, including its settings, playback-boundary logic, persistence, IPC, and tests.
+- [Spice.Player main] Add persistent profile-scoped adaptive queue priority: natural completions and repeats raise future shuffle frequency, manual skips lower it, weighted choices never immediately repeat the same song, and Previous/forward navigation follows exact listening history.
+- [Spice.Player main] Harden crossfade and playback transitions against stale media events, seeks, lyric jumps, profile changes, exhausted queues, and shell-controlled seeking while preserving the active audio slot.
+- [Spice.Mobile main] Replace the expanded-player timer control with Save to playlist, including local and editable shared playlist selection, duplicate-safe saves, and stable track snapshots while the picker is open.
+- [Spice.Mobile main] Add real dual-ExoPlayer crossfade, service-owned queue continuation after task removal, notification/headset queue navigation, persistent adaptive history, and cancellation-safe background resolution.
+- [Spice.Mobile main] Keep settings tabs, audio-quality choices, now-playing titles, and update notes readable on narrow screens, with bounded scrolling and plain release-note formatting.
+- [Spice.Desktop main] Ship the standard macOS app as a universal Intel/Apple Silicon package, preserve playback across normal macOS window closure, and use hosted SPICE Music when the Windows/Linux-only local runtime is unavailable.
+- [Spice.Playlists main] Make shared playlist saves idempotent under concurrent taps without removing valid repeated songs from private or imported playlists.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.145`.
+
 ## v1.0.144
 
 - [Spice.Mobile main] Build Recommended Next and Because you played shelves from synced likes and recent listening, label the familiar history shelf Recently Played, and continue finished queues with a locally ranked smart queue.

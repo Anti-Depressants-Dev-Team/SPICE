@@ -177,6 +177,7 @@ private fun SpiceRoot(
             onLibraryTabSelected = viewModel::setLibraryTab,
             onCreatePlaylist = viewModel::createPlaylist,
             onAddCurrentTrackToPlaylist = viewModel::addCurrentTrackToPlaylist,
+            onAddTrackToPlaylist = viewModel::addTrackToPlaylist,
             onSharePlaylist = viewModel::sharePlaylist,
             onAcceptPlaylistInvite = viewModel::acceptPlaylistInvite,
             onDismissPlaylistInvite = viewModel::dismissPlaylistInvite,
@@ -216,10 +217,6 @@ private fun SpiceRoot(
             onRefreshSpiceConnect = viewModel::refreshSpiceConnect,
             onPlaybackDeviceSelected = viewModel::selectPlaybackDevice,
             onHandoffPlayback = viewModel::handoffPlaybackToSelectedDevice,
-            onSleepTimerMinutes = viewModel::setSleepTimerMinutes,
-            onSleepTimerEndTrack = viewModel::setSleepTimerEndOfTrack,
-            onSleepTimerEndQueue = viewModel::setSleepTimerEndOfQueue,
-            onSleepTimerCancel = viewModel::cancelSleepTimer,
             onTestEngine = {
                 ensureNotificationPermission()
                 viewModel.playEngineTest()

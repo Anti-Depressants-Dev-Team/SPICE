@@ -33,8 +33,10 @@ Native Android preview for Spice Music, built with Jetpack Compose and Media3.
 - Media3/ExoPlayer playback service with Android media session and notification
 - Lock-screen controls, audio focus, headset/Bluetooth commands, noisy-output pause, and background playback
 - Keyboard-safe player surfaces that stay above the Android IME
-- Stable expanded full player sheet with seek, play/pause, like, download, lyrics, shuffle, previous/next, repeat, and stop controls
+- Stable expanded full player sheet with seek, play/pause, like, save-to-playlist, download, lyrics, shuffle-history previous/next, repeat, and stop controls
 - Compact mini player with duration, receiver selection, shuffle/repeat/play controls, and a full-width seekbar above the navigation bar
+- True two-player crossfade for prepared local queue transitions, with safe exact-cut fallback for remote, repeat-one, late, or unavailable transitions
+- Persistent adaptive shuffle weighting that raises completed/repeated tracks and lowers manually skipped tracks; neutral shuffle keeps no-repeat rounds, while learned shuffle uses bounded weighted rounds with no immediate same-song repeat and exact Previous/forward history
 - Debug-only local audio test for validating the native media stack without the network
 
 The app intentionally does not embed the website or use its YouTube iframe fallback. Native background playback requires a direct HTTPS audio URL.

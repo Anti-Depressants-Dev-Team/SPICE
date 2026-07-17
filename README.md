@@ -41,12 +41,15 @@ npm start                 # Standard Electron wrapper
 npm run start:native      # SPICE-only desktop development mode
 npm test                  # Desktop Node tests
 npm run dist              # Standard desktop package
-npm run dist:native       # Native package for the current platform
+npm run dist:mac          # Universal Apple Silicon + Intel macOS package
+npm run dist:native       # Native package on a supported Windows/Linux host
 npm run dist:native:windows
 npm run dist:native:linux
 ```
 
 Native builds use distinct application metadata and update channels, so publishing a native build does not replace the classic desktop updater release.
+
+The standard macOS app ships the same desktop and SPICE Music features as the Windows wrapper and is packaged universally for Apple Silicon and Intel. The bundled local-runtime Native mode remains Windows/Linux-only; macOS uses the hosted SPICE Music runtime because no macOS local-runtime artifact is currently produced.
 
 ## Backend commands
 
