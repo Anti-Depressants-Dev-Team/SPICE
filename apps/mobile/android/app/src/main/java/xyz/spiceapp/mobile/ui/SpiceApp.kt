@@ -34,6 +34,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Album
+import androidx.compose.material.icons.rounded.BookmarkBorder
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Delete
@@ -62,7 +63,6 @@ import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material.icons.rounded.Stop
-import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -129,8 +129,7 @@ import coil3.compose.AsyncImage
 import kotlinx.coroutines.delay
 import xyz.spiceapp.mobile.BuildConfig
 import xyz.spiceapp.mobile.SpiceUiState
-import xyz.spiceapp.mobile.MobileSleepTimerMode
-import xyz.spiceapp.mobile.formatMobileSleepTimer
+import xyz.spiceapp.mobile.readableMobileReleaseNotes
 import xyz.spiceapp.mobile.formatSpiceConnectPairingCodeInput
 import xyz.spiceapp.mobile.isCompleteSpiceConnectPairingCode
 import xyz.spiceapp.mobile.normalizeSpiceConnectPairingCodeInput
@@ -181,6 +180,7 @@ fun SpiceApp(
     onLibraryTabSelected: (LibraryTab) -> Unit,
     onCreatePlaylist: () -> Unit,
     onAddCurrentTrackToPlaylist: (String) -> Unit,
+    onAddTrackToPlaylist: (String, Track) -> Unit,
     onSharePlaylist: (Playlist) -> Unit,
     onAcceptPlaylistInvite: () -> Unit,
     onDismissPlaylistInvite: () -> Unit,
@@ -220,10 +220,6 @@ fun SpiceApp(
     onRefreshSpiceConnect: () -> Unit,
     onPlaybackDeviceSelected: (String?) -> Unit,
     onHandoffPlayback: () -> Unit,
-    onSleepTimerMinutes: (Int) -> Unit,
-    onSleepTimerEndTrack: () -> Unit,
-    onSleepTimerEndQueue: () -> Unit,
-    onSleepTimerCancel: () -> Unit,
     onTestEngine: () -> Unit,
     onDownloadTrack: (Track) -> Unit,
     onCancelDownload: () -> Unit,
@@ -348,10 +344,6 @@ fun SpiceApp(
                 onQualitySelected = onQualitySelected,
                 onCrossfadeDurationSelected = onCrossfadeDurationSelected,
                 onSmartQueueEnabled = onSmartQueueEnabled,
-                onSleepTimerMinutes = onSleepTimerMinutes,
-                onSleepTimerEndTrack = onSleepTimerEndTrack,
-                onSleepTimerEndQueue = onSleepTimerEndQueue,
-                onSleepTimerCancel = onSleepTimerCancel,
                 onOpenProfileEditor = onOpenProfileEditor,
                 onSyncNow = onSyncNow,
                 onRefreshPendingInvites = onRefreshPendingInvites,
@@ -389,10 +381,7 @@ fun SpiceApp(
             onRefreshDevices = onRefreshSpiceConnect,
             onDeviceSelected = onPlaybackDeviceSelected,
             onHandoffPlayback = onHandoffPlayback,
-            onSleepTimerMinutes = onSleepTimerMinutes,
-            onSleepTimerEndTrack = onSleepTimerEndTrack,
-            onSleepTimerEndQueue = onSleepTimerEndQueue,
-            onSleepTimerCancel = onSleepTimerCancel,
+            onAddTrackToPlaylist = onAddTrackToPlaylist,
         )
     }
 
@@ -508,11 +497,20 @@ private fun AppUpdateDialog(
     } else {
         0f
     }
+    val readableNotes = remember(update.releaseNotes) {
+        readableMobileReleaseNotes(update.releaseNotes)
+    }
     AlertDialog(
         onDismissRequest = { if (!state.downloading) onDismiss() },
         title = { Text("SPICE ${update.version} is available") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 430.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
                 Text(
                     when {
                         state.downloading -> "Downloading the signed Android update..."
@@ -534,13 +532,12 @@ private fun AppUpdateDialog(
                 state.error?.let { error ->
                     Text(error, color = MaterialTheme.colorScheme.error, fontSize = 13.sp)
                 }
-                update.releaseNotes
-                    .trim()
+                readableNotes
                     .takeIf(String::isNotEmpty)
                     ?.let { notes ->
                         Surface(
                             shape = RoundedCornerShape(8.dp),
-                            color = Color.Black.copy(alpha = 0.18f),
+                            color = SpiceSurfaceHigh,
                             modifier = Modifier.fillMaxWidth(),
                         ) {
                             Text(
@@ -550,8 +547,6 @@ private fun AppUpdateDialog(
                                 lineHeight = 18.sp,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .heightIn(max = 190.dp)
-                                    .verticalScroll(rememberScrollState())
                                     .padding(10.dp),
                             )
                         }
@@ -1521,10 +1516,6 @@ private fun SettingsScreen(
     onQualitySelected: (StreamQuality) -> Unit,
     onCrossfadeDurationSelected: (Long) -> Unit,
     onSmartQueueEnabled: (Boolean) -> Unit,
-    onSleepTimerMinutes: (Int) -> Unit,
-    onSleepTimerEndTrack: () -> Unit,
-    onSleepTimerEndQueue: () -> Unit,
-    onSleepTimerCancel: () -> Unit,
     onOpenProfileEditor: () -> Unit,
     onSyncNow: () -> Unit,
     onRefreshPendingInvites: () -> Unit,
@@ -1544,12 +1535,16 @@ private fun SettingsScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            PrimaryTabRow(selectedTabIndex = selectedTab.ordinal, containerColor = SpiceBackground) {
-                SettingsTab.entries.forEach { tab ->
-                    Tab(
-                        selected = selectedTab == tab,
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(SettingsTab.entries) { tab ->
+                    AssistChip(
                         onClick = { selectedTab = tab },
-                        text = { Text(tab.label) },
+                        label = { Text(tab.label, maxLines = 1) },
+                        leadingIcon = if (selectedTab == tab) {
+                            { Icon(Icons.Rounded.Check, null, Modifier.size(16.dp)) }
+                        } else {
+                            null
+                        },
                     )
                 }
             }
@@ -1613,10 +1608,6 @@ private fun SettingsScreen(
                     onQualitySelected = onQualitySelected,
                     onCrossfadeDurationSelected = onCrossfadeDurationSelected,
                     onSmartQueueEnabled = onSmartQueueEnabled,
-                    onSleepTimerMinutes = onSleepTimerMinutes,
-                    onSleepTimerEndTrack = onSleepTimerEndTrack,
-                    onSleepTimerEndQueue = onSleepTimerEndQueue,
-                    onSleepTimerCancel = onSleepTimerCancel,
                 )
             }
             SettingsTab.Terms -> item { TermsSection() }
@@ -1631,10 +1622,6 @@ private fun PlaybackSettingsSection(
     onQualitySelected: (StreamQuality) -> Unit,
     onCrossfadeDurationSelected: (Long) -> Unit,
     onSmartQueueEnabled: (Boolean) -> Unit,
-    onSleepTimerMinutes: (Int) -> Unit,
-    onSleepTimerEndTrack: () -> Unit,
-    onSleepTimerEndQueue: () -> Unit,
-    onSleepTimerCancel: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1657,8 +1644,8 @@ private fun PlaybackSettingsSection(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         RadioButton(selected = uiState.quality == quality, onClick = { onQualitySelected(quality) })
-                        Column {
-                            Text(quality.label, fontWeight = FontWeight.SemiBold)
+                        Column(Modifier.weight(1f)) {
+                            Text(quality.label, fontWeight = FontWeight.SemiBold, maxLines = 1)
                             Text(
                                 when (quality) {
                                     StreamQuality.High -> "Best available bitrate"
@@ -1690,7 +1677,7 @@ private fun PlaybackSettingsSection(
                 HorizontalDivider()
                 Text("Crossfade transition", fontWeight = FontWeight.Bold)
                 Text(
-                    "Smoothly fades between resolved tracks. Shuffle, repeat-one, remote playback, and sleep-timer boundaries stay exact.",
+                    "Overlaps the end of one locally played queue track with the next. It uses weighted shuffle too, but safely falls back to an exact cut for Spice Connect, repeat-one, unknown durations, or tracks that cannot be prepared in time.",
                     color = SpiceTextMuted,
                     fontSize = 12.sp,
                 )
@@ -1707,35 +1694,6 @@ private fun PlaybackSettingsSection(
             }
         }
 
-        Card(colors = CardDefaults.cardColors(containerColor = SpiceSurfaceHigh)) {
-            Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Icon(Icons.Rounded.Timer, null)
-                    Column {
-                        Text("Sleep timer", fontWeight = FontWeight.Bold)
-                        Text(formatMobileSleepTimer(uiState.sleepTimer), color = SpiceTextMuted, fontSize = 12.sp)
-                    }
-                }
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(listOf(15, 30, 60, 90)) { minutes ->
-                        AssistChip(onClick = { onSleepTimerMinutes(minutes) }, label = { Text("$minutes min") })
-                    }
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    OutlinedButton(onClick = onSleepTimerEndTrack, modifier = Modifier.weight(1f)) {
-                        Text("End of track", maxLines = 1)
-                    }
-                    OutlinedButton(onClick = onSleepTimerEndQueue, modifier = Modifier.weight(1f)) {
-                        Text("End of queue", maxLines = 1)
-                    }
-                }
-                if (uiState.sleepTimer.mode != MobileSleepTimerMode.Off) {
-                    TextButton(onClick = onSleepTimerCancel, modifier = Modifier.fillMaxWidth()) {
-                        Text("Cancel sleep timer")
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -2801,13 +2759,10 @@ private fun FullPlayer(
     onRefreshDevices: () -> Unit,
     onDeviceSelected: (String?) -> Unit,
     onHandoffPlayback: () -> Unit,
-    onSleepTimerMinutes: (Int) -> Unit,
-    onSleepTimerEndTrack: () -> Unit,
-    onSleepTimerEndQueue: () -> Unit,
-    onSleepTimerCancel: () -> Unit,
+    onAddTrackToPlaylist: (String, Track) -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var showSleepTimer by remember { mutableStateOf(false) }
+    var playlistPickerTrack by remember { mutableStateOf<Track?>(null) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -2827,15 +2782,25 @@ private fun FullPlayer(
                 modifier = Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(8.dp)),
             )
             Spacer(Modifier.height(20.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(track.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 2)
-                    Text(track.artist, color = SpiceTextMuted)
-                    val queueText = queueLabel(queueSize, queueIndex)
-                    if (queueText.isNotBlank()) {
-                        Text(queueText, color = SpiceTextMuted, fontSize = 12.sp)
-                    }
+            Column(Modifier.fillMaxWidth()) {
+                Text(
+                    track.title,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(track.artist, color = SpiceTextMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                val queueText = queueLabel(queueSize, queueIndex)
+                if (queueText.isNotBlank()) {
+                    Text(queueText, color = SpiceTextMuted, fontSize = 12.sp)
                 }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceEvenly,
+            ) {
                 SpiceConnectReceiverMenu(
                     uiState = uiState,
                     selectedRemoteDevice = selectedRemoteDevice,
@@ -2857,15 +2822,15 @@ private fun FullPlayer(
                 IconButton(onClick = onLyrics, modifier = Modifier.size(40.dp)) {
                     Icon(Icons.Rounded.MusicNote, "Lyrics")
                 }
-                IconButton(onClick = { showSleepTimer = true }, modifier = Modifier.size(40.dp)) {
-                    Icon(
-                        Icons.Rounded.Timer,
-                        "Sleep timer",
-                        tint = if (uiState.sleepTimer.mode != MobileSleepTimerMode.Off) MaterialTheme.colorScheme.primary else Color.White,
-                    )
+                IconButton(onClick = { playlistPickerTrack = track }, modifier = Modifier.size(40.dp)) {
+                    Icon(Icons.Rounded.BookmarkBorder, "Save to playlist")
                 }
-                IconButton(onClick = onLike) {
-                    Icon(if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, "Like", tint = if (liked) MaterialTheme.colorScheme.primary else Color.White)
+                IconButton(onClick = onLike, modifier = Modifier.size(40.dp)) {
+                    Icon(
+                        if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                        "Like",
+                        tint = if (liked) MaterialTheme.colorScheme.primary else Color.White,
+                    )
                 }
             }
             if (selectedRemoteDevice != null && uiState.currentTrack != null) {
@@ -2929,27 +2894,51 @@ private fun FullPlayer(
         }
     }
 
-    if (showSleepTimer) {
+    playlistPickerTrack?.let { pickerTrack ->
         AlertDialog(
-            onDismissRequest = { showSleepTimer = false },
-            title = { Text("Sleep Timer") },
+            onDismissRequest = { playlistPickerTrack = null },
+            title = { Text("Save to playlist") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("Active: ${formatMobileSleepTimer(uiState.sleepTimer)}", color = SpiceTextMuted)
-                    listOf(15, 30, 60, 90).forEach { minutes ->
-                        TextButton(onClick = { onSleepTimerMinutes(minutes); showSleepTimer = false }) {
-                            Text("Pause in $minutes minutes")
+                if (uiState.playlists.isEmpty()) {
+                    Text("Create a playlist in Library first.", color = SpiceTextMuted)
+                } else {
+                    Column(
+                        modifier = Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        uiState.playlists.forEach { playlist ->
+                            val canAdd = !playlist.shared || playlist.shareRole in setOf("owner", "editor")
+                            val alreadySaved = playlist.tracks.any {
+                                it.id == pickerTrack.id && it.sourceId == pickerTrack.sourceId
+                            }
+                            TextButton(
+                                onClick = {
+                                    onAddTrackToPlaylist(playlist.id, pickerTrack)
+                                    playlistPickerTrack = null
+                                },
+                                enabled = canAdd && !alreadySaved,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Icon(Icons.Rounded.BookmarkBorder, null, Modifier.size(18.dp))
+                                Column(Modifier.weight(1f).padding(start = 10.dp)) {
+                                    Text(playlist.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(
+                                        when {
+                                            alreadySaved -> "Saved"
+                                            canAdd -> "${playlist.tracks.size} tracks"
+                                            else -> "View-only shared playlist"
+                                        },
+                                        color = SpiceTextMuted,
+                                        fontSize = 11.sp,
+                                    )
+                                }
+                            }
                         }
                     }
-                    TextButton(onClick = { onSleepTimerEndTrack(); showSleepTimer = false }) { Text("Pause at end of track") }
-                    TextButton(onClick = { onSleepTimerEndQueue(); showSleepTimer = false }) { Text("Pause at end of queue") }
                 }
             },
             confirmButton = {
-                TextButton(onClick = { onSleepTimerCancel(); showSleepTimer = false }) { Text("Cancel timer") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showSleepTimer = false }) { Text("Close") }
+                TextButton(onClick = { playlistPickerTrack = null }) { Text("Close") }
             },
         )
     }

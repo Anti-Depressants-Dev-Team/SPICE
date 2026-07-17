@@ -6218,7 +6218,6 @@ h4 { font-size: 1rem; }
 }
 
 .weekly-recap__metric span,
-.sleep-timer-settings p,
 .sync-outbox-status span {
   color: var(--text-secondary);
   font-size: 0.76rem;
@@ -6255,7 +6254,6 @@ h4 { font-size: 1rem; }
   border-color: var(--accent-pink);
 }
 
-.sleep-timer-settings,
 .sync-outbox-status {
   margin-top: 20px;
   padding: 16px;
@@ -6264,7 +6262,6 @@ h4 { font-size: 1rem; }
   background: color-mix(in srgb, var(--bg-primary) 78%, transparent);
 }
 
-.sleep-timer-settings > div:first-child,
 .sync-outbox-status,
 .sync-outbox-status > div {
   display: flex;
@@ -6280,20 +6277,8 @@ h4 { font-size: 1rem; }
   font-size: 0.68rem;
 }
 
-.sleep-timer-settings strong,
 .sync-outbox-status strong {
   color: var(--text-primary);
-}
-
-.sleep-timer-settings > div:first-child span {
-  color: var(--accent-pink);
-  font-weight: 700;
-}
-
-.sleep-timer-settings__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
 }
 
 .sync-outbox-status {

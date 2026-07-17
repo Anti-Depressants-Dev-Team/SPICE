@@ -8,6 +8,8 @@ const {
   getNavigationHistory,
   navigateHistory,
   shouldBlockNativeStartupPlayback,
+  resolveLocalRuntimePlatform,
+  shouldQuitWhenLastWindowCloses,
 } = require("../desktop-helpers");
 
 test("normalizes supported shell themes and rejects unknown values", () => {
@@ -126,4 +128,17 @@ test("native startup playback yields immediately to an explicit user action", ()
     }),
     false,
   );
+});
+
+test("maps only supported desktop platforms to managed local runtimes", () => {
+  assert.equal(resolveLocalRuntimePlatform("win32"), "windows");
+  assert.equal(resolveLocalRuntimePlatform("linux"), "linux");
+  assert.equal(resolveLocalRuntimePlatform("darwin"), null);
+  assert.equal(resolveLocalRuntimePlatform("freebsd"), null);
+});
+
+test("keeps the macOS process alive after the last window closes", () => {
+  assert.equal(shouldQuitWhenLastWindowCloses("darwin"), false);
+  assert.equal(shouldQuitWhenLastWindowCloses("win32"), true);
+  assert.equal(shouldQuitWhenLastWindowCloses("linux"), true);
 });

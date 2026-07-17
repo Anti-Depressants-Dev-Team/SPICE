@@ -7,6 +7,9 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import org.json.JSONArray
+import xyz.spiceapp.mobile.MobileTrackFeedback
+import xyz.spiceapp.mobile.parseMobileTrackPriorities
+import xyz.spiceapp.mobile.updateMobileTrackPriorityPayload
 import xyz.spiceapp.mobile.data.local.DownloadEntity
 import xyz.spiceapp.mobile.data.local.DownloadRow
 import xyz.spiceapp.mobile.data.local.HistoryTrackEntity
@@ -29,6 +32,8 @@ class LibraryRepository(context: Context) {
     private val database = SpiceDatabase.get(context)
     private val dao = database.libraryDao()
     private val preferences = context.getSharedPreferences("spice_native_library", Context.MODE_PRIVATE)
+    private var trackPriorityPayload = preferences.getString(KEY_TRACK_PRIORITIES, "[]").orEmpty()
+    private val trackPriorities = parseMobileTrackPriorities(trackPriorityPayload)
     private val likesMutex = Mutex()
     private val historyMutex = Mutex()
 
@@ -279,6 +284,32 @@ class LibraryRepository(context: Context) {
         preferences.edit().putBoolean(KEY_SMART_QUEUE_ENABLED, enabled).apply()
     }
 
+    fun trackPriority(trackKey: String): Int = synchronized(TRACK_PRIORITY_LOCK) {
+        refreshTrackPrioritiesLocked()
+        trackPriorities[trackKey] ?: 0
+    }
+
+    internal fun recordTrackFeedback(trackKey: String, feedback: MobileTrackFeedback): Int {
+        if (trackKey.isBlank()) return 0
+        return synchronized(TRACK_PRIORITY_LOCK) {
+            val latestPayload = preferences.getString(KEY_TRACK_PRIORITIES, "[]").orEmpty()
+            val update = updateMobileTrackPriorityPayload(latestPayload, trackKey, feedback)
+            trackPriorityPayload = update.payload
+            trackPriorities.clear()
+            trackPriorities.putAll(parseMobileTrackPriorities(update.payload))
+            preferences.edit().putString(KEY_TRACK_PRIORITIES, update.payload).apply()
+            update.updatedScore
+        }
+    }
+
+    private fun refreshTrackPrioritiesLocked() {
+        val latestPayload = preferences.getString(KEY_TRACK_PRIORITIES, "[]").orEmpty()
+        if (latestPayload == trackPriorityPayload) return
+        trackPriorityPayload = latestPayload
+        trackPriorities.clear()
+        trackPriorities.putAll(parseMobileTrackPriorities(latestPayload))
+    }
+
     fun pendingHistoryTrackIds(): Set<String> = runCatching {
         val array = JSONArray(preferences.getString(KEY_PENDING_HISTORY_IDS, "[]"))
         buildSet {
@@ -437,12 +468,14 @@ class LibraryRepository(context: Context) {
         )
 
     private companion object {
+        val TRACK_PRIORITY_LOCK = Any()
         const val KEY_LEGACY_HISTORY = "history"
         const val KEY_LEGACY_LIKED = "liked"
         const val KEY_ACCENT_THEME = "accent_theme"
         const val KEY_QUALITY = "quality"
         const val KEY_CROSSFADE_DURATION_MS = "crossfade_duration_ms"
         const val KEY_SMART_QUEUE_ENABLED = "smart_queue_enabled"
+        const val KEY_TRACK_PRIORITIES = "track_priorities_v1"
         const val KEY_PENDING_LIKED_IDS = "pending_liked_ids"
         const val KEY_LIKES_SYNC_INITIALIZED = "likes_sync_initialized"
         const val KEY_LIKES_SYNC_REVISION = "likes_sync_revision"

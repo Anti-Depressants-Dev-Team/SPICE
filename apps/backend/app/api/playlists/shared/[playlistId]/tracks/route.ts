@@ -4,9 +4,10 @@ import { verifySession } from '@/lib/auth';
 import { jsonResponse, optionsResponse } from '@/lib/cors';
 import { db } from '@/db';
 import { playlists, playlistItems, playlistMembers, users, profiles } from '@/db/schema';
-import { and, eq, inArray, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { trackSnapshotColumns, trackSnapshotFromRow } from '@/lib/track-snapshot';
 import type { TrackSnapshotInput } from '@/lib/track-snapshot';
+import { findPlaylistTrackPosition } from '@/lib/playlist-sync';
 
 export const runtime = 'nodejs';
 
@@ -31,7 +32,11 @@ async function verifyPlaylistAccess(playlistId: string, userId: string) {
   }
 
   const membership = await db.query.playlistMembers.findFirst({
-    where: and(eq(playlistMembers.playlistId, playlistId), eq(playlistMembers.userId, userId)),
+    where: and(
+      eq(playlistMembers.playlistId, playlistId),
+      eq(playlistMembers.userId, userId),
+      eq(playlistMembers.status, 'accepted'),
+    ),
   });
   if (!membership) return null;
 
@@ -171,25 +176,80 @@ export async function POST(
       return jsonResponse({ error: 'invalid_track', message: 'A track with an id is required.' }, { status: 400 });
     }
 
-    // Determine next position
-    const existingItems = await db.query.playlistItems.findMany({
+    const sourceId = track.sourceId || 'youtube_music';
+    const snapshot = trackSnapshotColumns(track, track.id);
+
+    // Serialize mutations for this shared playlist inside Neon's HTTP batch
+    // transaction. This makes repeat taps idempotent without imposing a global
+    // uniqueness rule on private/imported playlists, where repeated songs are
+    // valid ordered entries.
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const [, mutationResult] = await db.batch([
+        db.execute(sql`
+          SELECT pg_advisory_xact_lock(hashtextextended(${playlistId}, 0))
+        `),
+        db.execute<{ position: number; alreadyExists: boolean }>(sql`
+          WITH existing AS (
+            SELECT position
+            FROM playlist_items
+            WHERE playlist_id = ${playlistId}
+              AND source_id = ${sourceId}
+              AND track_id = ${track.id}
+            ORDER BY position
+            LIMIT 1
+          ), inserted AS (
+            INSERT INTO playlist_items (
+              playlist_id,
+              position,
+              source_id,
+              track_id,
+              title,
+              artists_json,
+              artwork_url,
+              duration_ms,
+              added_by_user_id
+            )
+            SELECT
+              ${playlistId},
+              COALESCE(MAX(position) + 1, 0),
+              ${sourceId},
+              ${track.id},
+              ${snapshot.title},
+              ${snapshot.artistsJson},
+              ${snapshot.artworkUrl},
+              ${snapshot.durationMs},
+              ${session.userId}
+            FROM playlist_items
+            WHERE playlist_id = ${playlistId}
+            HAVING NOT EXISTS (SELECT 1 FROM existing)
+            ON CONFLICT (playlist_id, position) DO NOTHING
+            RETURNING position
+          )
+          SELECT position, false AS "alreadyExists" FROM inserted
+          UNION ALL
+          SELECT position, true AS "alreadyExists" FROM existing
+          LIMIT 1
+        `),
+      ]);
+      const result = mutationResult.rows[0];
+      if (result) {
+        return jsonResponse({
+          success: true,
+          alreadyExists: result.alreadyExists,
+          position: result.position,
+        });
+      }
+    }
+
+    const finalItems = await db.query.playlistItems.findMany({
       where: eq(playlistItems.playlistId, playlistId),
       orderBy: playlistItems.position,
     });
-    const nextPosition = existingItems.length > 0
-      ? Math.max(...existingItems.map((item) => item.position)) + 1
-      : 0;
-
-    await db.insert(playlistItems).values({
-      playlistId,
-      position: nextPosition,
-      sourceId: track.sourceId || 'youtube_music',
-      trackId: track.id,
-      ...trackSnapshotColumns(track, track.id),
-      addedByUserId: session.userId,
-    });
-
-    return jsonResponse({ success: true, position: nextPosition });
+    const finalPosition = findPlaylistTrackPosition(finalItems, track);
+    if (finalPosition !== null) {
+      return jsonResponse({ success: true, alreadyExists: true, position: finalPosition });
+    }
+    throw new Error('The playlist changed too quickly. Please try adding the track again.');
   } catch (error) {
     return jsonResponse(
       {
@@ -243,32 +303,38 @@ export async function DELETE(
       return jsonResponse({ error: 'invalid_position', message: 'A valid track position is required.' }, { status: 400 });
     }
 
-    // Check the track exists and verify permission
-    const item = await db.query.playlistItems.findFirst({
-      where: and(
-        eq(playlistItems.playlistId, playlistId),
-        eq(playlistItems.position, position),
-      ),
-    });
+    const itemFilter = and(
+      eq(playlistItems.playlistId, playlistId),
+      eq(playlistItems.position, position),
+    );
+    const deleteFilter = access.isOwner
+      ? itemFilter
+      : and(itemFilter, eq(playlistItems.addedByUserId, session.userId));
+    const [, deletedItems, remainingItems] = await db.batch([
+      db.execute(sql`
+        SELECT pg_advisory_xact_lock(hashtextextended(${playlistId}, 0))
+      `),
+      db.delete(playlistItems)
+        .where(deleteFilter)
+        .returning({ position: playlistItems.position }),
+      db.select({ addedByUserId: playlistItems.addedByUserId })
+        .from(playlistItems)
+        .where(itemFilter)
+        .limit(1),
+    ]);
 
-    if (!item) {
-      return jsonResponse({ error: 'track_not_found', message: 'Track not found at that position.' }, { status: 404 });
-    }
-
-    // Members can only remove their own tracks; owner can remove any
-    if (!access.isOwner && item.addedByUserId !== session.userId) {
+    if (!deletedItems[0]) {
+      if (remainingItems[0] && !access.isOwner) {
+        return jsonResponse(
+          { error: 'forbidden', message: 'You can only remove tracks you added.' },
+          { status: 403 },
+        );
+      }
       return jsonResponse(
-        { error: 'forbidden', message: 'You can only remove tracks you added.' },
-        { status: 403 },
+        { error: 'track_not_found', message: 'Track not found at that position.' },
+        { status: 404 },
       );
     }
-
-    await db.delete(playlistItems).where(
-      and(
-        eq(playlistItems.playlistId, playlistId),
-        eq(playlistItems.position, position),
-      ),
-    );
 
     return jsonResponse({ success: true });
   } catch (error) {
