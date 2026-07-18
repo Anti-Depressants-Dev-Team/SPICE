@@ -161,6 +161,22 @@ function shouldQuitWhenLastWindowCloses(platform = process.platform) {
   return platform !== "darwin";
 }
 
+function supportsStartOnBoot(platform = process.platform) {
+  return platform === "win32" || platform === "darwin";
+}
+
+function createLoginItemSettings(
+  enabled,
+  platform = process.platform,
+  executablePath = process.execPath,
+) {
+  const settings = { openAtLogin: enabled === true };
+  if (platform === "win32" && typeof executablePath === "string" && executablePath) {
+    settings.path = executablePath;
+  }
+  return settings;
+}
+
 module.exports = {
   DEFAULT_SHELL_THEME,
   normalizeShellTheme,
@@ -170,4 +186,6 @@ module.exports = {
   shouldBlockNativeStartupPlayback,
   resolveLocalRuntimePlatform,
   shouldQuitWhenLastWindowCloses,
+  supportsStartOnBoot,
+  createLoginItemSettings,
 };

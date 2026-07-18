@@ -348,6 +348,8 @@ function installSpiceNativeShellBridge() {
             return Promise.resolve(next);
         },
         setAlwaysOnTop: (enabled) => ipcRenderer.invoke('set-always-on-top', enabled === true),
+        getStartOnBoot: () => ipcRenderer.invoke('get-start-on-boot'),
+        setStartOnBoot: (enabled) => ipcRenderer.invoke('set-start-on-boot', enabled === true),
         setToolbarButtons: (buttons) => {
             ipcRenderer.send('set-toolbar-buttons', buttons);
         },
@@ -381,6 +383,8 @@ function installSpiceDesktopUpdaterBridge() {
     const bridge = {
         checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
         installUpdate: () => ipcRenderer.send('install-update'),
+        getStartOnBoot: () => ipcRenderer.invoke('get-start-on-boot'),
+        setStartOnBoot: (enabled) => ipcRenderer.invoke('set-start-on-boot', enabled === true),
         onUpdateStatus: (callback) => {
             if (typeof callback !== 'function') return () => {};
             const listener = (_event, status) => callback(status);
@@ -426,7 +430,7 @@ function installSpiceDesktopUiBridge() {
             const savedSurface = window.localStorage.getItem('spice_visual_surface');
             if (validAccents.has(savedAccent)) accent = savedAccent;
             if (validSurfaces.has(savedSurface)) surface = savedSurface;
-            if (window.localStorage.getItem('spice_custom_theme_enabled') !== 'false') {
+            if (window.localStorage.getItem('spice_custom_theme_enabled') === 'true') {
                 custom = defaultCustomPalette;
                 const savedPalette = window.localStorage.getItem('spice_custom_theme_palette');
                 if (savedPalette) {

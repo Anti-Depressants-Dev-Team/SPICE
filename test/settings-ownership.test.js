@@ -45,6 +45,7 @@ test('desktop-only settings stay in the Electron settings window', () => {
     'vk-player-toggle',
     'topbar-search-toggle',
     'always-on-top-toggle',
+    'start-on-boot-toggle',
     'open-toolbar-settings-btn',
     'custom-css',
     'check-updates-btn',
@@ -130,6 +131,19 @@ test('desktop updater status reaches the settings window', () => {
   assert.match(viewPreload, /Object\.defineProperty\(window, 'spiceDesktopUpdater'/);
   assert.match(viewPreload, /checkForUpdates: \(\) => ipcRenderer\.invoke\('check-for-updates'\)/);
   assert.match(viewPreload, /return \(\) => ipcRenderer\.removeListener\('update-status', listener\)/);
+});
+
+test('custom palettes and desktop boot launch are opt-in settings', () => {
+  const spiceApp = read('apps/backend/app/spice-app.tsx');
+  const viewPreload = read('preload-view.js');
+  const main = read('main.js');
+
+  assert.match(spiceApp, /useState\(false\).*customThemeEnabled|customThemeEnabled, setCustomThemeEnabled\] = useState\(false\)/);
+  assert.match(spiceApp, /getItem\('spice_custom_theme_enabled'\) === 'true'/);
+  assert.match(viewPreload, /getItem\('spice_custom_theme_enabled'\) === 'true'/);
+  assert.match(spiceApp, /Start SPICE on boot/);
+  assert.match(main, /ipcMain\.handle\("set-start-on-boot"/);
+  assert.match(viewPreload, /setStartOnBoot: \(enabled\) => ipcRenderer\.invoke\('set-start-on-boot'/);
 });
 
 test('fresh launch and profile changes both reset the player to the idle prompt', () => {

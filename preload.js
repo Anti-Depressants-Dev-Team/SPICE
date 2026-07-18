@@ -39,6 +39,9 @@ contextBridge.exposeInMainWorld("api", {
   getAlwaysOnTop: () => ipcRenderer.invoke("get-always-on-top"),
   setAlwaysOnTop: (enabled) =>
     ipcRenderer.invoke("set-always-on-top", enabled === true),
+  getStartOnBoot: () => ipcRenderer.invoke("get-start-on-boot"),
+  setStartOnBoot: (enabled) =>
+    ipcRenderer.invoke("set-start-on-boot", enabled === true),
   setAdBlocker: (enabled) => ipcRenderer.send("set-adblocker", enabled),
   setVkPlayer: (enabled) => ipcRenderer.send("set-vk-player", enabled),
   setDefaultService: (service) =>
