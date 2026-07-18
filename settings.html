@@ -529,6 +529,24 @@
                 </p>
             </div>
 
+            <div class="settings-section" id="start-on-boot-section">
+                <div class="toggle-container">
+                    <label
+                        for="start-on-boot-toggle"
+                        style="margin: 0; font-size: 16px"
+                        >Start SPICE on Boot</label
+                    >
+                    <label class="switch">
+                        <input type="checkbox" id="start-on-boot-toggle" />
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <p style="color: #666; font-size: 12px; margin-top: 5px">
+                    Open SPICE automatically when you sign in to this computer.
+                    This is off by default.
+                </p>
+            </div>
+
             <div class="settings-section">
                 <div class="toggle-container">
                     <label
@@ -863,6 +881,9 @@
             const alwaysOnTopToggle = document.getElementById(
                 "always-on-top-toggle",
             );
+            const startOnBootToggle = document.getElementById(
+                "start-on-boot-toggle",
+            );
             const openToolbarSettingsBtn = document.getElementById(
                 "open-toolbar-settings-btn",
             );
@@ -918,6 +939,8 @@
                 vkPlayerToggle.checked = settings.vkPlayerEnabled;
                 topbarSearchToggle.checked = settings.topBarSearchEnabled;
                 alwaysOnTopToggle.checked = settings.alwaysOnTop === true;
+                startOnBootToggle.checked = settings.startOnBoot === true;
+                startOnBootToggle.disabled = settings.startOnBootSupported !== true;
                 customCssInput.value = settings.customCss || "";
                 applySettingsTheme(settings.shellTheme);
             }).catch((error) => {
@@ -1057,6 +1080,20 @@
                     console.error("Could not update Always on Top:", error);
                 } finally {
                     e.target.disabled = false;
+                }
+            });
+
+            startOnBootToggle.addEventListener("change", async (e) => {
+                const requested = e.target.checked;
+                e.target.disabled = true;
+                try {
+                    const preference = await window.api.setStartOnBoot(requested);
+                    e.target.checked = preference.enabled === true;
+                } catch (error) {
+                    e.target.checked = !requested;
+                    console.error("Could not update Start SPICE on Boot:", error);
+                } finally {
+                    e.target.disabled = loadedSettings?.startOnBootSupported !== true;
                 }
             });
 

@@ -1,5 +1,11 @@
 # SPICE Walkthrough
 
+## v1.0.146
+
+- [Spice.Music main] Make the custom theme palette explicitly opt-in so fresh profiles use the selected built-in accent until the listener enables or applies a custom palette.
+- [Spice.Desktop main] Add an off-by-default Start SPICE on boot control to both SPICE Music and the Electron settings window, backed by Windows and macOS login-item state.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.146`.
+
 ## v1.0.145
 
 - [All players main] Remove Sleep Timer from Electron, SPICE Music, and Android, including its settings, playback-boundary logic, persistence, IPC, and tests.

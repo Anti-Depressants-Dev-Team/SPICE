@@ -10,6 +10,8 @@ const {
   shouldBlockNativeStartupPlayback,
   resolveLocalRuntimePlatform,
   shouldQuitWhenLastWindowCloses,
+  supportsStartOnBoot,
+  createLoginItemSettings,
 } = require("../desktop-helpers");
 
 test("normalizes supported shell themes and rejects unknown values", () => {
@@ -141,4 +143,17 @@ test("keeps the macOS process alive after the last window closes", () => {
   assert.equal(shouldQuitWhenLastWindowCloses("darwin"), false);
   assert.equal(shouldQuitWhenLastWindowCloses("win32"), true);
   assert.equal(shouldQuitWhenLastWindowCloses("linux"), true);
+});
+
+test("configures start on boot only on supported desktop platforms", () => {
+  assert.equal(supportsStartOnBoot("win32"), true);
+  assert.equal(supportsStartOnBoot("darwin"), true);
+  assert.equal(supportsStartOnBoot("linux"), false);
+  assert.deepEqual(createLoginItemSettings(false, "win32", "C:\\Spice\\Spice.exe"), {
+    openAtLogin: false,
+    path: "C:\\Spice\\Spice.exe",
+  });
+  assert.deepEqual(createLoginItemSettings(true, "darwin", "/Applications/Spice.app"), {
+    openAtLogin: true,
+  });
 });

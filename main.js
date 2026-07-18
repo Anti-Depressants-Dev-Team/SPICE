@@ -19,6 +19,8 @@ const {
   navigateHistory,
   resolveLocalRuntimePlatform,
   shouldQuitWhenLastWindowCloses,
+  supportsStartOnBoot,
+  createLoginItemSettings,
 } = require("./desktop-helpers");
 
 // Simple File Logger for Production Debugging - INITIALIZE FIRST
@@ -191,6 +193,31 @@ function setAlwaysOnTop(enabled) {
     mainWindow.setAlwaysOnTop(next);
   }
   return next;
+}
+
+function getStartOnBootSettings() {
+  if (!supportsStartOnBoot(process.platform)) {
+    return { supported: false, enabled: false };
+  }
+  try {
+    const query = createLoginItemSettings(false, process.platform, process.execPath);
+    delete query.openAtLogin;
+    const settings = app.getLoginItemSettings(query);
+    return { supported: true, enabled: settings.openAtLogin === true };
+  } catch (error) {
+    console.error("Could not read the start-on-boot setting:", error);
+    return { supported: false, enabled: false };
+  }
+}
+
+function setStartOnBoot(enabled) {
+  if (!supportsStartOnBoot(process.platform)) {
+    return { supported: false, enabled: false };
+  }
+  app.setLoginItemSettings(
+    createLoginItemSettings(enabled, process.platform, process.execPath),
+  );
+  return getStartOnBootSettings();
 }
 
 function normalizeServiceUrl(url) {
@@ -4032,6 +4059,7 @@ app.whenReady().then(async () => {
     const storedAdBlockerType = store
       ? store.get("adBlockerType", "spice")
       : "spice";
+    const startOnBootSettings = getStartOnBootSettings();
     return {
       ...nativeModeSettings(),
       nativeAccount: getNativeAccountSummary(),
@@ -4048,6 +4076,8 @@ app.whenReady().then(async () => {
       toolbarButtons: getToolbarButtons(),
       boostEnabled: currentBoostEnabled,
       alwaysOnTop: getAlwaysOnTop(),
+      startOnBootSupported: startOnBootSettings.supported,
+      startOnBoot: startOnBootSettings.enabled,
       shellTheme: getShellTheme(),
       customCss: store ? store.get("customCss", "") : "",
       discordRpcEnabled: store ? store.get("discordRpcEnabled", true) : true,
@@ -4117,6 +4147,12 @@ app.whenReady().then(async () => {
 
   ipcMain.handle("set-always-on-top", (event, enabled) => {
     return setAlwaysOnTop(enabled);
+  });
+
+  ipcMain.handle("get-start-on-boot", () => getStartOnBootSettings());
+
+  ipcMain.handle("set-start-on-boot", (event, enabled) => {
+    return setStartOnBoot(enabled);
   });
 
   ipcMain.on("set-vk-player", (event, enabled) => {

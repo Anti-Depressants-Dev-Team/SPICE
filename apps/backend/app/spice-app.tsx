@@ -798,7 +798,14 @@ interface NativeShellUpdateStatus {
 interface SpiceDesktopUpdaterBridge {
   checkForUpdates: () => Promise<{ success: boolean; error?: string }>;
   installUpdate: () => void;
+  getStartOnBoot?: () => Promise<DesktopStartOnBootPreference>;
+  setStartOnBoot?: (enabled: boolean) => Promise<DesktopStartOnBootPreference>;
   onUpdateStatus: (callback: (status: NativeShellUpdateStatus) => void) => () => void;
+}
+
+interface DesktopStartOnBootPreference {
+  supported: boolean;
+  enabled: boolean;
 }
 
 interface SpiceNativeShellBridge extends SpiceDesktopUpdaterBridge {
@@ -1768,7 +1775,7 @@ export default function SpiceApp() {
     ...DEFAULT_PURPLE_PALETTE,
     colors: { ...DEFAULT_PURPLE_PALETTE.colors },
   }));
-  const [customThemeEnabled, setCustomThemeEnabled] = useState(true);
+  const [customThemeEnabled, setCustomThemeEnabled] = useState(false);
   const [visualSurface, setVisualSurface] = useState<VisualSurface>('midnight');
   const [artworkShape, setArtworkShape] = useState<ArtworkShape>('rounded');
   const [motionLevel, setMotionLevel] = useState<MotionLevel>('full');
@@ -1783,6 +1790,8 @@ export default function SpiceApp() {
   const [sidebarProfileEnabled, setSidebarProfileEnabled] = useState(true);
   const [sidebarSettingsEnabled, setSidebarSettingsEnabled] = useState(true);
   const [desktopUpdaterAvailable, setDesktopUpdaterAvailable] = useState(false);
+  const [desktopStartOnBoot, setDesktopStartOnBoot] = useState<DesktopStartOnBootPreference | null>(null);
+  const [desktopStartOnBootMessage, setDesktopStartOnBootMessage] = useState<string | null>(null);
   const [nativeShellAvailable, setNativeShellAvailable] = useState(false);
   const [nativeShellSettings, setNativeShellSettings] = useState<NativeShellPreferences | null>(null);
   const [nativeShellCssDraft, setNativeShellCssDraft] = useState('');
@@ -1829,6 +1838,11 @@ export default function SpiceApp() {
     if (!bridge) return;
 
     setDesktopUpdaterAvailable(true);
+    if (bridge.getStartOnBoot) {
+      void bridge.getStartOnBoot()
+        .then(setDesktopStartOnBoot)
+        .catch(() => setDesktopStartOnBoot(null));
+    }
     const removeUpdateListener = bridge.onUpdateStatus((status) => {
       setNativeUpdateStatus(status);
       if (status.status !== 'checking' && status.status !== 'downloading') {
@@ -3171,7 +3185,7 @@ export default function SpiceApp() {
       if (isAccentTheme(savedTheme)) setAccentTheme(savedTheme);
       const storedCustomTheme = loadStoredThemePalette();
       setCustomThemePalette(storedCustomTheme.palette);
-      setCustomThemeEnabled(localStorage.getItem('spice_custom_theme_enabled') !== 'false');
+      setCustomThemeEnabled(localStorage.getItem('spice_custom_theme_enabled') === 'true');
       setPlaybackProfileState(loadPlaybackProfileState(localStorage));
 
       const savedSurface = localStorage.getItem('spice_visual_surface');
@@ -3567,6 +3581,22 @@ export default function SpiceApp() {
       }
     } catch (error) {
       setNativeUpdateStatus({ status: 'error', error: error instanceof Error ? error.message : String(error) });
+      setNativeShellBusy(null);
+    }
+  };
+
+  const updateDesktopStartOnBoot = async (enabled: boolean) => {
+    const bridge = getSpiceDesktopUpdaterBridge();
+    if (!bridge?.setStartOnBoot) return;
+    setNativeShellBusy('startOnBoot');
+    setDesktopStartOnBootMessage(null);
+    try {
+      const preference = await bridge.setStartOnBoot(enabled);
+      setDesktopStartOnBoot(preference);
+      setDesktopStartOnBootMessage(`Start on boot ${preference.enabled ? 'enabled' : 'disabled'}.`);
+    } catch (error) {
+      setDesktopStartOnBootMessage(`Could not update start on boot: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
       setNativeShellBusy(null);
     }
   };
@@ -10492,7 +10522,7 @@ const getMaskedEmail = (email: string) => {
     {
       label: 'Desktop',
       items: [
-        ...(desktopUpdaterAvailable ? [{ id: 'desktop-updates', label: 'Desktop Updates', icon: Icons.download }] : []),
+        ...(desktopUpdaterAvailable ? [{ id: 'desktop-updates', label: 'Desktop App', icon: Icons.monitor }] : []),
         ...(nativeShellAvailable ? [
           { id: 'native-shell', label: 'Native Desktop', icon: Icons.monitor },
           { id: 'discord-activity', label: 'Discord Activity', icon: Icons.account },
@@ -13957,13 +13987,34 @@ const getMaskedEmail = (email: string) => {
                     <div id="desktop-updates" className="native-shell-settings">
                       <div className="native-shell-settings__heading">
                         <div>
-                          <h3>{Icons.download} SPICE Desktop Updates</h3>
+                          <h3>{Icons.monitor} SPICE Desktop</h3>
                           <p>{nativeUpdateStatusMessage(nativeUpdateStatus)}</p>
                         </div>
                         <span className={`native-shell-settings__update-state native-shell-settings__update-state--${nativeUpdateStatus?.status || 'idle'}`}>
                           {nativeUpdateStatus?.status === 'downloaded' ? 'Ready' : nativeUpdateStatus?.status === 'error' ? 'Error' : 'Updater'}
                         </span>
                       </div>
+                      {desktopStartOnBootMessage && (
+                        <div className="native-shell-settings__message" role="status">
+                          {desktopStartOnBootMessage}
+                        </div>
+                      )}
+                      {desktopStartOnBoot?.supported && (
+                        <div className="native-shell-settings__toggle-grid">
+                          <label className="native-shell-settings__toggle">
+                            <input
+                              type="checkbox"
+                              checked={desktopStartOnBoot.enabled}
+                              disabled={nativeShellBusy === 'startOnBoot'}
+                              onChange={(event) => void updateDesktopStartOnBoot(event.target.checked)}
+                            />
+                            <span>
+                              <strong>Start SPICE on boot</strong>
+                              <small>Open SPICE automatically when you sign in to this computer. Off by default.</small>
+                            </span>
+                          </label>
+                        </div>
+                      )}
                       <div className="native-shell-settings__actions native-shell-settings__actions--start">
                         <button
                           type="button"
