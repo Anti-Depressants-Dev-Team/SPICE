@@ -1,5 +1,11 @@
 # SPICE Walkthrough
 
+## v1.0.149
+
+- [Spice.Player main] Let the floating mini player size itself around the receiver selector and action row so controls remain fully visible at compact window heights and non-default zoom levels.
+- [Spice.Playlists main] Recover playlist covers from custom, track, album, or derived YouTube artwork, retry alternate candidates when an image fails, and keep the themed fallback visible instead of broken-image text.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.149`.
+
 ## v1.0.148
 
 - [Spice.Connect main] Deliver remote-control wakeups through an authenticated Server-Sent Events stream backed by PostgreSQL `LISTEN`/`NOTIFY`, while preserving the durable command queue as the source of truth and reconnecting automatically.
