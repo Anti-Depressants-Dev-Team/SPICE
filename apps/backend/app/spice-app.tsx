@@ -2503,6 +2503,7 @@ export default function SpiceApp() {
     typeof window === 'undefined' ? '' : localStorage.getItem('spice_connect_receiver_id') || ''
   ));
   const [remoteStatus, setRemoteStatus] = useState<string | null>(null);
+  const [forgettingRemoteDeviceIds, setForgettingRemoteDeviceIds] = useState<Set<string>>(new Set());
   const [receiverMenuOpen, setReceiverMenuOpen] = useState<ReceiverSelectVariant | null>(null);
   const [playerPlacement, setPlayerPlacement] = useState<'bottom' | 'top'>('bottom');
   const [playerViewMode, setPlayerViewMode] = useState<'bar' | 'expanded' | 'mini'>('bar');
@@ -2800,6 +2801,8 @@ export default function SpiceApp() {
   const remoteStateSyncTimeoutRef = useRef<number | null>(null);
   const remoteTargetRefreshTimeoutRef = useRef<number | null>(null);
   const optimisticRemoteDeviceStateRef = useRef<OptimisticRemoteDeviceState | null>(null);
+  const forgettingRemoteDeviceIdsRef = useRef<Set<string>>(new Set());
+  const remoteDeviceListRevisionRef = useRef(0);
   const remoteRequestGenerationRef = useRef(0);
 
   const handleAudioEndedRef = useRef<(
@@ -6698,6 +6701,7 @@ export default function SpiceApp() {
 
     remoteDeviceLoadInFlightRef.current = true;
     const requestGeneration = remoteRequestGenerationRef.current;
+    const listRevision = remoteDeviceListRevisionRef.current;
     const requestToken = remoteAuthToken;
     try {
       const response = await spiceFetch('cloud', '/remote/devices', {
@@ -6711,6 +6715,7 @@ export default function SpiceApp() {
       if (!response.ok) {
         throw new Error(data.message || `Spice Connect device load failed with status ${response.status}.`);
       }
+      if (listRevision !== remoteDeviceListRevisionRef.current) return;
 
       const devices = Array.isArray(data.devices)
         ? data.devices.map((device: RemoteDevice) => ({
@@ -6722,7 +6727,7 @@ export default function SpiceApp() {
           lastSeenSeconds: remoteSnapshotAgeSeconds(device.updatedAt, data.serverTime),
           isOnline: device.isOnline !== false,
           syncedAtMs: currentTimestampMs(),
-        }))
+        })).filter((device: RemoteDevice) => !forgettingRemoteDeviceIdsRef.current.has(device.deviceId))
         : [];
       const optimisticState = optimisticRemoteDeviceStateRef.current;
       if (optimisticState && optimisticState.expiresAt <= currentTimestampMs()) {
@@ -9667,23 +9672,49 @@ export default function SpiceApp() {
   };
 
   const forgetSpiceConnectDevice = async (deviceId: string) => {
-    if (!remoteAuthToken || !deviceId || deviceId === remoteDeviceId) return;
+    if (
+      !remoteAuthToken
+      || !deviceId
+      || deviceId === remoteDeviceId
+      || forgettingRemoteDeviceIdsRef.current.has(deviceId)
+    ) return;
+
+    const requestGeneration = remoteRequestGenerationRef.current;
+    const requestToken = remoteAuthToken;
+    const forgottenDevice = remoteDevices.find((device) => device.deviceId === deviceId) || null;
+    forgettingRemoteDeviceIdsRef.current.add(deviceId);
+    remoteDeviceListRevisionRef.current += 1;
+    setForgettingRemoteDeviceIds(new Set(forgettingRemoteDeviceIdsRef.current));
+    setRemoteDevices((devices) => devices.filter((device) => device.deviceId !== deviceId));
+
     try {
       const response = await spiceFetch(
         'cloud',
         `/remote/devices?sourceDeviceId=${encodeURIComponent(remoteDeviceId)}&deviceId=${encodeURIComponent(deviceId)}`,
         {
           method: 'DELETE',
-          headers: { Authorization: `Bearer ${remoteAuthToken}` },
+          headers: { Authorization: `Bearer ${requestToken}` },
         },
       );
       const payload = await response.json().catch(() => ({}));
+      if (requestGeneration !== remoteRequestGenerationRef.current) return;
       if (!response.ok) throw new Error(payload.message || 'The remembered device could not be forgotten.');
-      setRemoteDevices((devices) => devices.filter((device) => device.deviceId !== deviceId));
       if (selectedRemoteDeviceId === deviceId) selectSpiceConnectReceiver('');
       setRemoteStatus('Forgot the remembered Spice Connect device. It can appear again if it reconnects.');
     } catch (error) {
+      if (requestGeneration !== remoteRequestGenerationRef.current) return;
+      if (forgottenDevice) {
+        setRemoteDevices((devices) => (
+          devices.some((device) => device.deviceId === deviceId)
+            ? devices
+            : [...devices, forgottenDevice]
+        ));
+      }
       setRemoteStatus(error instanceof Error ? error.message : 'The remembered device could not be forgotten.');
+    } finally {
+      forgettingRemoteDeviceIdsRef.current.delete(deviceId);
+      remoteDeviceListRevisionRef.current += 1;
+      setForgettingRemoteDeviceIds(new Set(forgettingRemoteDeviceIdsRef.current));
     }
   };
 
@@ -9693,13 +9724,12 @@ export default function SpiceApp() {
     detail: string,
     selected: boolean,
   ) => (
-    <div key={value || 'local-device'} style={{ display: 'flex', alignItems: 'stretch' }}>
+    <div key={value || 'local-device'} className="spice-connect-receiver__option-row">
       <button
         type="button"
         role="option"
         aria-selected={selected}
         className={`spice-connect-receiver__option ${selected ? 'is-selected' : ''}`}
-        style={{ flex: 1 }}
         onMouseDown={(event) => event.preventDefault()}
         onClick={() => {
           selectSpiceConnectReceiver(value);
@@ -9716,10 +9746,11 @@ export default function SpiceApp() {
       {value && (
         <button
           type="button"
-          className="spice-connect-receiver__option"
-          style={{ width: 42, flex: '0 0 42px', justifyContent: 'center', padding: 0 }}
+          className="spice-connect-receiver__forget"
           title={`Forget ${label}`}
           aria-label={`Forget ${label}`}
+          aria-busy={forgettingRemoteDeviceIds.has(value)}
+          disabled={forgettingRemoteDeviceIds.has(value)}
           onMouseDown={(event) => event.preventDefault()}
           onClick={(event) => {
             event.stopPropagation();

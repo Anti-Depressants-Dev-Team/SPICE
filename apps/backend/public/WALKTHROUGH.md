@@ -1,5 +1,11 @@
 # SPICE Walkthrough
 
+## v1.0.150
+
+- [Spice.Connect main] Make remembered-device Forget actions update immediately, reject stale receiver refreshes that could restore a removed device, and roll back cleanly when the server rejects removal.
+- [Spice.Player main] Replace the oversized receiver-row outline on Forget controls with a compact, theme-aware circular hover and keyboard-focus treatment.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.150`.
+
 ## v1.0.149
 
 - [Spice.Player main] Let the floating mini player size itself around the receiver selector and action row so controls remain fully visible at compact window heights and non-default zoom levels.
