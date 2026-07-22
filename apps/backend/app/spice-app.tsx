@@ -27,6 +27,7 @@ import {
   PLAYLIST_ROW_HEIGHT_PX,
 } from './playlist-performance';
 import { mergePlaylistOccurrences } from './playlist-merge';
+import { playlistArtworkCandidates } from './playlist-artwork';
 import CommandPalette, { type CommandPaletteCommand } from './command-palette';
 import { isCommandPaletteShortcut } from './command-palette-core';
 import ThemeEditor from './theme-editor';
@@ -985,6 +986,37 @@ interface Playlist {
   ownerDisplayName?: string;
   shareRole?: 'listener' | 'editor' | string;
   members?: PlaylistMember[];
+}
+
+function PlaylistCoverImage({
+  playlist,
+  alt,
+  className,
+  style,
+}: {
+  playlist: Playlist;
+  alt: string;
+  className?: string;
+  style?: React.CSSProperties;
+}) {
+  const candidates = playlistArtworkCandidates(playlist);
+  const [failedCandidates, setFailedCandidates] = useState<string[]>([]);
+  const src = candidates.find((candidate) => !failedCandidates.includes(candidate));
+
+  if (!src) return null;
+
+  return (
+    <img
+      key={src}
+      src={src}
+      alt={alt}
+      className={className}
+      style={style}
+      onError={() => setFailedCandidates((failed) => (
+        failed.includes(src) ? failed : [...failed, src]
+      ))}
+    />
+  );
 }
 
 const trackListFingerprint = (tracks: Track[]) => {
@@ -6349,8 +6381,9 @@ export default function SpiceApp() {
     const x = e.clientX - dragStartRef.current.x;
     const y = e.clientY - dragStartRef.current.y;
 
-    const maxX = typeof window !== 'undefined' ? window.innerWidth - 356 : 800;
-    const maxY = typeof window !== 'undefined' ? window.innerHeight - 124 : 600;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const maxX = typeof window !== 'undefined' ? window.innerWidth - rect.width - 16 : 800;
+    const maxY = typeof window !== 'undefined' ? window.innerHeight - rect.height - 16 : 600;
 
     setMiniPlayerPos({
       x: Math.max(16, Math.min(x, maxX)),
@@ -12029,13 +12062,8 @@ const getMaskedEmail = (email: string) => {
                 <div className="playlist-hero__body">
                   {/* Cover art */}
                   <div className="playlist-hero__cover">
-                    {selectedPlaylist.coverUrl ? (
-                      <img src={selectedPlaylist.coverUrl} alt={selectedPlaylist.title} />
-                    ) : selectedPlaylist.tracks.length > 0 ? (
-                      <img src={selectedPlaylist.tracks[0].artworkUrl} alt={selectedPlaylist.title} />
-                    ) : (
-                      <span className="playlist-hero__cover-icon">{Icons.musicNote}</span>
-                    )}
+                    <span className="playlist-hero__cover-icon">{Icons.musicNote}</span>
+                    <PlaylistCoverImage playlist={selectedPlaylist} alt={selectedPlaylist.title} />
                   </div>
 
                   {/* Info */}
@@ -12601,13 +12629,12 @@ const getMaskedEmail = (email: string) => {
                           {customPlaylists.map((pl) => (
                             <div key={pl.id} className="card animate-in" onClick={() => setSelectedPlaylist(pl)}>
                               <div className="card__art-wrapper" style={{ background: pl.gradient || PRESET_GRADIENTS[0], display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '180px', position: 'relative', overflow: 'hidden' }}>
-                                {pl.coverUrl ? (
-                                  <img src={pl.coverUrl} alt={pl.title} style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'absolute', inset: 0 }} />
-                                ) : pl.tracks.length > 0 ? (
-                                  <img src={pl.tracks[0].artworkUrl} alt={pl.title} style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'absolute', inset: 0 }} />
-                                ) : (
-                                  <div style={{ fontSize: '3rem', textShadow: '0 4px 12px rgba(0,0,0,0.3)', color: '#fff', position: 'relative', zIndex: 1 }}>{Icons.musicFolder}</div>
-                                )}
+                                <div style={{ fontSize: '3rem', textShadow: '0 4px 12px rgba(0,0,0,0.3)', color: '#fff', position: 'relative', zIndex: 1 }}>{Icons.musicFolder}</div>
+                                <PlaylistCoverImage
+                                  playlist={pl}
+                                  alt={pl.title}
+                                  style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'absolute', inset: 0, zIndex: 2 }}
+                                />
                                 <div className="card__play-overlay">{Icons.play}</div>
                               </div>
                               <div className="card__title truncate" style={{ marginTop: '8px', fontWeight: 600 }}>{pl.title}</div>
@@ -13150,13 +13177,8 @@ const getMaskedEmail = (email: string) => {
                       ) : (
                         editablePlaylists.map((pl) => (
                           <div key={pl.id} className="playlist-card animate-in" onClick={() => setSelectedPlaylist(pl)}>
-                            {pl.coverUrl ? (
-                              <img src={pl.coverUrl} alt={pl.title} className="playlist-card__img" />
-                            ) : pl.tracks.length > 0 ? (
-                              <img src={pl.tracks[0].artworkUrl} alt={pl.title} className="playlist-card__img" />
-                            ) : (
-                              <div className="playlist-card__bg" style={{ background: pl.gradient }}></div>
-                            )}
+                            <div className="playlist-card__bg" style={{ background: pl.gradient }}></div>
+                            <PlaylistCoverImage playlist={pl} alt={pl.title} className="playlist-card__img" />
                             <div className="playlist-card__overlay"></div>
                             <div className="playlist-card__info">
                               <h3 className="playlist-card__title truncate">{pl.title}</h3>
@@ -13181,13 +13203,8 @@ const getMaskedEmail = (email: string) => {
                       ) : (
                         sharedPlaylists.map((pl) => (
                           <div key={pl.id} className="playlist-card animate-in" style={{ position: 'relative' }} onClick={() => setSelectedPlaylist(pl)}>
-                            {pl.coverUrl ? (
-                              <img src={pl.coverUrl} alt={pl.title} className="playlist-card__img" />
-                            ) : pl.tracks.length > 0 ? (
-                              <img src={pl.tracks[0].artworkUrl} alt={pl.title} className="playlist-card__img" />
-                            ) : (
-                              <div className="playlist-card__bg" style={{ background: pl.gradient }}></div>
-                            )}
+                            <div className="playlist-card__bg" style={{ background: pl.gradient }}></div>
+                            <PlaylistCoverImage playlist={pl} alt={pl.title} className="playlist-card__img" />
                             <div className="playlist-card__overlay"></div>
                             {/* Shared badge chip */}
                             <span className="playlist-card__shared-badge">
@@ -17133,7 +17150,9 @@ const getMaskedEmail = (email: string) => {
             right: miniPlayerPos ? 'auto' : '24px',
             bottom: miniPlayerPos ? 'auto' : '24px',
             width: '360px',
-            height: (showMiniLyrics && showMiniQueue) ? '302px' : showMiniLyrics ? '172px' : showMiniQueue ? '254px' : '124px',
+            minHeight: '140px',
+            height: 'auto',
+            maxHeight: 'calc(100vh - 32px)',
             background: 'rgba(10, 10, 10, 0.88)',
             backgroundImage: `radial-gradient(circle at 10% 10%, rgba(var(--accent-pink-rgb, 236, 72, 153), 0.12), transparent 70%)`,
             border: '1px solid var(--border-color)',
@@ -17152,7 +17171,7 @@ const getMaskedEmail = (email: string) => {
             cursor: isDraggingMini ? 'grabbing' : 'grab',
             userSelect: 'none',
             touchAction: 'none',
-            transition: 'height 0.25s cubic-bezier(0.4, 0, 0.2, 1)'
+            overflowY: 'auto'
           }}
         >
           <div style={{ display: 'flex', width: '100%', alignItems: 'center', gap: '12px', minWidth: 0 }}>
