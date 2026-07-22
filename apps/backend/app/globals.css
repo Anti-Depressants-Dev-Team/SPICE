@@ -2476,6 +2476,50 @@ h4 { font-size: 1rem; }
   transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast), transform var(--transition-fast);
 }
 
+.spice-connect-receiver__option-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.spice-connect-receiver__option-row > .spice-connect-receiver__option {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.spice-connect-receiver__forget {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.spice-connect-receiver__forget:hover,
+.spice-connect-receiver__forget:focus-visible {
+  border-color: rgba(255, 255, 255, 0.1);
+  outline: none;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text-primary);
+}
+
+.spice-connect-receiver__forget:focus-visible {
+  box-shadow: 0 0 0 2px rgba(var(--accent-pink-rgb, 236, 72, 153), 0.24);
+}
+
+.spice-connect-receiver__forget:disabled {
+  opacity: 0.42;
+  cursor: wait;
+}
+
 .spice-connect-receiver__option:hover,
 .spice-connect-receiver__option:focus-visible {
   border-color: rgba(255, 255, 255, 0.08);
