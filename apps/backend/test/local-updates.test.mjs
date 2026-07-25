@@ -3,9 +3,11 @@ import test from 'node:test';
 
 import {
   buildLocalLinuxUpdateManifest,
+  buildLocalMacosUpdateManifest,
   buildLocalWindowsUpdateManifest,
   compareVersions,
   localLinuxDownloadUrl,
+  localMacosDownloadUrl,
   localUpdateManifestUrl,
   localWindowsDownloadUrl,
   newestRuntimeVersion,
@@ -99,6 +101,26 @@ test('local Linux updates use a separate public artifact and manifest route', ()
   restoreEnv('SPICE_LOCAL_UPDATE_MANIFEST_URL', originalManifest);
 });
 
+test('local macOS updates use a universal public artifact and manifest route', () => {
+  const originalUrl = process.env.SPICE_LOCAL_MACOS_DOWNLOAD_URL;
+  const originalManifest = process.env.SPICE_LOCAL_UPDATE_MANIFEST_URL;
+  delete process.env.SPICE_LOCAL_MACOS_DOWNLOAD_URL;
+  delete process.env.SPICE_LOCAL_UPDATE_MANIFEST_URL;
+
+  assert.equal(
+    localMacosDownloadUrl(),
+    'https://github.com/Anti-Depressants-Dev-Team/spice/releases/download/spice-local-runtime/spice-local-macos.zip',
+  );
+  assert.equal(
+    localUpdateManifestUrl('https://music.spice-app.xyz', 'macos'),
+    'https://music.spice-app.xyz/api/updates/local-macos',
+  );
+  assert.equal(buildLocalMacosUpdateManifest().platform, 'macos');
+
+  restoreEnv('SPICE_LOCAL_MACOS_DOWNLOAD_URL', originalUrl);
+  restoreEnv('SPICE_LOCAL_UPDATE_MANIFEST_URL', originalManifest);
+});
+
 test('buildLocalWindowsUpdateManifest uses configured artifact metadata without requiring a database', () => {
   const originalUrl = process.env.SPICE_LOCAL_WINDOWS_DOWNLOAD_URL;
   const originalHash = process.env.SPICE_LOCAL_WINDOWS_SHA256;
@@ -115,7 +137,7 @@ test('buildLocalWindowsUpdateManifest uses configured artifact metadata without 
   delete process.env.SPICE_LOCAL_WINDOWS_RELEASE_NOTES_URL;
 
   const manifest = buildLocalWindowsUpdateManifest();
-  assert.equal(manifest.version, '1.0.152');
+  assert.equal(manifest.version, '1.0.153');
   assert.equal(manifest.download?.url, 'https://downloads.spice-app.xyz/spice-local-windows.zip');
   assert.equal(manifest.download?.sha256, 'abc123');
   assert.equal(manifest.download?.sizeBytes, 42);

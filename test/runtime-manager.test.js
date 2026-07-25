@@ -46,5 +46,10 @@ test("runtimePlatformConfig selects platform-correct update artifacts", () => {
     manifestUrl: "https://music.spice-app.xyz/api/updates/local-linux",
     downloadUrl: "https://github.com/Anti-Depressants-Dev-Team/spice/releases/download/spice-local-runtime/spice-local-linux.zip",
   });
-  assert.equal(runtimePlatformConfig("darwin"), null);
+  assert.deepEqual(runtimePlatformConfig("darwin"), {
+    id: "macos",
+    archiveName: "spice-local-macos.zip",
+    manifestUrl: "https://music.spice-app.xyz/api/updates/local-macos",
+    downloadUrl: "https://github.com/Anti-Depressants-Dev-Team/spice/releases/download/spice-local-runtime/spice-local-macos.zip",
+  });
 });

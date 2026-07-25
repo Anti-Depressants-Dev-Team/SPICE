@@ -8,7 +8,7 @@ const { extractRuntimeArchive } = require("../runtime-archive");
 
 const repoRoot = path.resolve(__dirname, "..");
 const platform = process.env.SPICE_NATIVE_TARGET_PLATFORM || process.platform;
-const platformNames = { win32: "windows", linux: "linux" };
+const platformNames = { win32: "windows", linux: "linux", darwin: "macos" };
 const platformName = platformNames[platform];
 
 if (!platformName) {
@@ -116,7 +116,9 @@ function assertRuntime(candidate) {
 function finalizeRuntime() {
   fs.writeFileSync(path.join(targetRuntime, ".gitkeep"), "");
   const shellLauncher = path.join(targetRuntime, "start-spice-local.sh");
-  if (platform === "linux" && fs.existsSync(shellLauncher)) fs.chmodSync(shellLauncher, 0o755);
+  const ffmpegBinary = path.join(targetRuntime, "node_modules", "ffmpeg-static", "ffmpeg");
+  if (platform !== "win32" && fs.existsSync(shellLauncher)) fs.chmodSync(shellLauncher, 0o755);
+  if (platform !== "win32" && fs.existsSync(ffmpegBinary)) fs.chmodSync(ffmpegBinary, 0o755);
 }
 
 function assertSafeChild(candidate, parent) {

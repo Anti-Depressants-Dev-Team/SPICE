@@ -15,6 +15,10 @@ const RUNTIME_PLATFORMS = {
     id: "linux",
     archiveName: "spice-local-linux.zip",
   },
+  darwin: {
+    id: "macos",
+    archiveName: "spice-local-macos.zip",
+  },
 };
 
 function runtimePlatformConfig(platform = process.platform) {
@@ -41,6 +45,7 @@ class SpiceLocalRuntimeManager {
     this.tempDir = path.join(this.rootDir, "tmp");
     this.bundledRuntimeDir = options.bundledRuntimeDir || null;
     this.child = null;
+    this.childOutput = "";
     this.busy = false;
     this.message = "Ready";
     this.onStatus = typeof options.onStatus === "function" ? options.onStatus : () => {};
@@ -69,6 +74,7 @@ class SpiceLocalRuntimeManager {
       bundledDir: this.bundledRuntimeDir,
       localUrl: this.localUrl,
       manifestUrl: this.manifestUrl,
+      runtimeLog: this.childOutput,
     };
   }
 
@@ -256,6 +262,8 @@ class SpiceLocalRuntimeManager {
       }
     }
 
+    prepareRuntimeExecutables(this.runtimeDir, this.platform);
+    this.childOutput = "";
     this.child = spawn(
       this.execPath,
       [serverFile],
@@ -276,12 +284,20 @@ class SpiceLocalRuntimeManager {
           SPICE_CLOUD_API_ORIGIN: process.env.SPICE_CLOUD_API_ORIGIN || "https://music.spice-app.xyz",
           SPICE_LOCAL_UPDATE_MANIFEST_URL: this.manifestUrl,
         },
-        stdio: "ignore",
+        stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
       },
     );
 
-    this.child.once("exit", () => {
+    this.child.stdout?.on("data", (chunk) => this.captureChildOutput(chunk));
+    this.child.stderr?.on("data", (chunk) => this.captureChildOutput(chunk));
+    this.child.once("error", (error) => {
+      this.captureChildOutput(error && error.message ? error.message : String(error));
+    });
+    this.child.once("exit", (code, signal) => {
+      if (!this.childOutput.trim()) {
+        this.captureChildOutput(`Runtime exited with code ${code ?? "unknown"}${signal ? ` (${signal})` : ""}.`);
+      }
       this.child = null;
       this.emitStatus();
     });
@@ -319,9 +335,13 @@ class SpiceLocalRuntimeManager {
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
       if (await this.isRunning()) return true;
+      if (!this.child) break;
       await delay(500);
     }
-    throw new Error("SPICE local runtime did not answer before the startup timeout.");
+    const diagnostic = lastRuntimeLogLine(this.childOutput);
+    throw new Error(
+      `SPICE local runtime did not answer before the startup timeout.${diagnostic ? ` ${diagnostic}` : ""}`,
+    );
   }
 
   async isRunning() {
@@ -373,6 +393,12 @@ class SpiceLocalRuntimeManager {
       .then((status) => this.onStatus(status))
       .catch(() => {});
   }
+
+  captureChildOutput(chunk) {
+    const text = String(chunk || "").replace(/\u0000/g, "");
+    if (!text) return;
+    this.childOutput = `${this.childOutput}${text}`.slice(-12000);
+  }
 }
 
 function normalizeServiceUrl(url) {
@@ -395,6 +421,29 @@ function resolveRuntimeDownloadUrl(value, manifestUrl, fallbackUrl = runtimePlat
 
 function runtimeServerFile(runtimeDir) {
   return path.join(runtimeDir, "apps", "backend", "server.js");
+}
+
+function prepareRuntimeExecutables(runtimeDir, platform = process.platform) {
+  if (!runtimeDir || platform === "win32") return;
+  const candidates = [
+    path.join(runtimeDir, "node_modules", "ffmpeg-static", "ffmpeg"),
+    path.join(runtimeDir, "apps", "backend", "node_modules", "ffmpeg-static", "ffmpeg"),
+    path.join(runtimeDir, "start-spice-local.sh"),
+  ];
+  for (const candidate of candidates) {
+    if (!fs.existsSync(candidate)) continue;
+    try {
+      fs.chmodSync(candidate, 0o755);
+    } catch {}
+  }
+}
+
+function lastRuntimeLogLine(output) {
+  const lines = String(output || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return lines.at(-1)?.slice(0, 500) || "";
 }
 
 function delay(ms) {

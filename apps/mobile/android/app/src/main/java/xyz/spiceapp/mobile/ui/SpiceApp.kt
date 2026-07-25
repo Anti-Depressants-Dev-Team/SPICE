@@ -136,6 +136,7 @@ import xyz.spiceapp.mobile.isCompleteSpiceConnectPairingCode
 import xyz.spiceapp.mobile.normalizeSpiceConnectPairingCodeInput
 import xyz.spiceapp.mobile.projectedSpiceConnectProgressMs
 import xyz.spiceapp.mobile.sanitizeSpiceConnectPairingCodeEdit
+import xyz.spiceapp.mobile.spiceConnectDeviceStatus
 import xyz.spiceapp.mobile.data.update.AppUpdateUiState
 import xyz.spiceapp.mobile.model.AccentTheme
 import xyz.spiceapp.mobile.model.AppScreen
@@ -2563,6 +2564,9 @@ private fun SpiceConnectReceiverMenu(
     val hasRemoteAccess = uiState.accountSession != null || uiState.pairedDeviceCredential != null
     val targets = uiState.remoteDevices.filter { it.deviceId != uiState.remoteDeviceId }
     val targetLabel = selectedRemoteDevice?.displayName ?: "This phone"
+    val incomingController = targets.firstOrNull {
+        it.deviceId == uiState.incomingRemoteControllerDeviceId && it.isOnline
+    }
 
     Box(modifier) {
         IconButton(
@@ -2591,7 +2595,12 @@ private fun SpiceConnectReceiverMenu(
                 text = {
                     Column {
                         Text("This phone", fontWeight = FontWeight.SemiBold)
-                        Text("Play and control locally", color = SpiceTextMuted, fontSize = 12.sp)
+                        Text(
+                            incomingController?.let { "Controlled by ${it.displayName}" }
+                                ?: "Play and control locally",
+                            color = SpiceTextMuted,
+                            fontSize = 12.sp,
+                        )
                     }
                 },
                 onClick = {
@@ -2624,11 +2633,12 @@ private fun SpiceConnectReceiverMenu(
                             Column {
                                 Text(device.displayName, fontWeight = FontWeight.SemiBold)
                                 Text(
-                                    if (!device.isOnline) {
-                                        "Offline · remembered for 30 days"
-                                    } else device.currentTrack?.let {
-                                        "${if (device.isPlaying) "Playing" else "Paused"} - ${it.title}"
-                                    } ?: "Idle",
+                                    spiceConnectDeviceStatus(
+                                        isOnline = device.isOnline,
+                                        isPlaying = device.isPlaying,
+                                        lastSeenSeconds = device.lastSeenSeconds,
+                                        trackTitle = device.currentTrack?.title,
+                                    ),
                                     color = SpiceTextMuted,
                                     fontSize = 12.sp,
                                     maxLines = 1,

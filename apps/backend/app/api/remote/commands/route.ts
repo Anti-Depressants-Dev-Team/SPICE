@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { jsonResponse, optionsResponse } from '@/lib/cors';
 import { db } from '@/db';
 import { remoteCommands, remoteDeviceAuthorizations, remoteDevices } from '@/db/schema';
@@ -115,6 +117,7 @@ export async function GET(request: Request) {
       const redisCommands = await claimSpiceConnectCommands(principal.userId, deviceId, now);
       if (redisCommands !== null) {
         return jsonResponse({
+          transport: 'redis',
           commands: redisCommands.map((command) => ({
             id: command.id,
             sourceDeviceId: command.sourceDeviceId,
@@ -206,7 +209,11 @@ export async function GET(request: Request) {
       consumedAt: command.consumedAt ? new Date(command.consumedAt).toISOString() : null,
       deliveryAttempts: command.deliveryAttempts,
     })));
-    return jsonResponse({ commands }, { headers: { 'Cache-Control': 'no-store, max-age=0' } }, request);
+    return jsonResponse(
+      { transport: 'postgresql', commands },
+      { headers: { 'Cache-Control': 'no-store, max-age=0' } },
+      request,
+    );
   } catch (error) {
     if (error instanceof SpiceConnectAuthorizationError) {
       return jsonResponse({ error: error.code, message: error.message }, { status: error.status }, request);
@@ -286,35 +293,40 @@ export async function POST(request: Request) {
       );
     }
 
-    const [created] = await db
-      .insert(remoteCommands)
-      .values({
-        userId: principal.userId,
-        targetDeviceId: input.targetDeviceId,
-        sourceDeviceId: input.sourceDeviceId,
-        command: input.command,
-        payloadJson: input.payloadJson,
-      })
-      .returning();
-
-    const redisQueued = await enqueueSpiceConnectCommand(principal.userId, {
-      id: created.id,
-      sourceDeviceId: created.sourceDeviceId,
-      targetDeviceId: created.targetDeviceId,
-      command: created.command as SpiceConnectCommandType,
+    const createdAt = new Date();
+    const redisCommand = {
+      id: randomUUID(),
+      sourceDeviceId: input.sourceDeviceId,
+      targetDeviceId: input.targetDeviceId,
+      command: input.command,
       payloadJson: input.payloadJson,
-      createdAt: created.createdAt.toISOString(),
+      createdAt: createdAt.toISOString(),
       consumedAt: null,
       deliveryAttempts: 0,
-    });
+    };
+    const redisQueued = await enqueueSpiceConnectCommand(principal.userId, redisCommand);
+    let commandId: string = redisCommand.id;
+    let commandCreatedAt = redisCommand.createdAt;
     if (redisQueued) {
-      // Redis Pub/Sub is a latency hint. The PostgreSQL command row is still
-      // durable, and the receiver's periodic fallback catches missed wakes.
+      // Playback commands are intentionally ephemeral. Keeping a successful
+      // queue entirely in Redis removes a Neon write from every player action.
       void publishSpiceConnectRedisSignal(
         principal.userId,
         createSpiceConnectCommandSignal(principal.userId, input.targetDeviceId),
       );
     } else {
+      const [created] = await db
+        .insert(remoteCommands)
+        .values({
+          userId: principal.userId,
+          targetDeviceId: input.targetDeviceId,
+          sourceDeviceId: input.sourceDeviceId,
+          command: input.command,
+          payloadJson: input.payloadJson,
+        })
+        .returning();
+      commandId = created.id;
+      commandCreatedAt = created.createdAt.toISOString();
       try {
         await db.execute(sql`SELECT pg_notify(
           ${SPICE_CONNECT_REALTIME_CHANNEL},
@@ -333,11 +345,12 @@ export async function POST(request: Request) {
 
     return jsonResponse({
       success: true,
+      transport: redisQueued ? 'redis' : 'postgresql',
       command: {
-        id: created.id,
-        targetDeviceId: created.targetDeviceId,
-        command: created.command,
-        createdAt: created.createdAt.toISOString(),
+        id: commandId,
+        targetDeviceId: input.targetDeviceId,
+        command: input.command,
+        createdAt: commandCreatedAt,
       },
     }, { headers: { 'Cache-Control': 'no-store, max-age=0' } }, request);
   } catch (error) {

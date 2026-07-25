@@ -3,7 +3,11 @@ import { verifySession } from '@/lib/auth';
 import { db } from '@/db';
 import { likes } from '@/db/schema';
 import { eq, and, or } from 'drizzle-orm';
-import { trackSnapshotColumns, trackSnapshotFromRow } from '@/lib/track-snapshot';
+import {
+  trackSnapshotColumns,
+  trackSnapshotFromRow,
+  type TrackSnapshotInput,
+} from '@/lib/track-snapshot';
 
 export const runtime = 'nodejs';
 
@@ -185,6 +189,78 @@ export async function POST(request: Request) {
         message: error instanceof Error ? error.message : 'Failed to synchronize favorites.',
       },
       { status: 500 }
+    );
+  }
+}
+
+export async function PATCH(request: Request) {
+  try {
+    const auth = request.headers.get('Authorization');
+    if (!auth || !auth.startsWith('Bearer ')) {
+      return jsonResponse({ error: 'unauthorized', message: 'Missing auth header.' }, { status: 401 });
+    }
+    const session = await verifySession(auth.substring(7));
+    if (!process.env.DATABASE_URL) {
+      return jsonResponse(
+        { error: 'database_not_configured', message: 'Backend DATABASE_URL environment variable is not configured.' },
+        { status: 500 },
+      );
+    }
+
+    const body = await request.json().catch(() => ({}));
+    const liked = body.liked;
+    const track = body.track && typeof body.track === 'object'
+      ? body.track as Record<string, unknown>
+      : null;
+    const trackId = typeof track?.id === 'string' ? track.id.trim().slice(0, 220) : '';
+    const sourceId = typeof track?.sourceId === 'string' && track.sourceId.trim()
+      ? track.sourceId.trim().slice(0, 80)
+      : 'youtube_music';
+    const profileId = typeof body.profileId === 'string' && body.profileId.trim()
+      ? body.profileId.trim().slice(0, 120)
+      : 'default';
+    if (typeof liked !== 'boolean' || !trackId) {
+      return jsonResponse(
+        { error: 'invalid_like_mutation', message: 'A track and boolean liked state are required.' },
+        { status: 400 },
+      );
+    }
+
+    if (liked) {
+      const snapshot = trackSnapshotColumns(
+        { ...(track || {}), id: trackId } as TrackSnapshotInput,
+        trackId,
+      );
+      await db
+        .insert(likes)
+        .values({
+          userId: session.userId,
+          profileId,
+          sourceId,
+          trackId,
+          ...snapshot,
+        })
+        .onConflictDoUpdate({
+          target: [likes.userId, likes.profileId, likes.sourceId, likes.trackId],
+          set: snapshot,
+        });
+    } else {
+      await db.delete(likes).where(and(
+        eq(likes.userId, session.userId),
+        eq(likes.profileId, profileId),
+        eq(likes.sourceId, sourceId),
+        eq(likes.trackId, trackId),
+      ));
+    }
+
+    return jsonResponse({ success: true, liked, trackId, sourceId, profileId });
+  } catch (error) {
+    return jsonResponse(
+      {
+        error: 'sync_patch_like_failed',
+        message: error instanceof Error ? error.message : 'Failed to save this favorite.',
+      },
+      { status: 500 },
     );
   }
 }

@@ -8,9 +8,15 @@ const standaloneDir = path.join(appRoot, '.next', 'standalone');
 const staticDir = path.join(appRoot, '.next', 'static');
 const publicDir = path.join(appRoot, 'public');
 const distRoot = path.join(appRoot, 'dist');
-const packagePlatform = process.env.SPICE_LOCAL_PACKAGE_PLATFORM === 'linux' ? 'linux' : 'windows';
+const supportedPackagePlatforms = new Set(['windows', 'linux', 'macos']);
+const requestedPackagePlatform = process.env.SPICE_LOCAL_PACKAGE_PLATFORM || 'windows';
+if (!supportedPackagePlatforms.has(requestedPackagePlatform)) {
+  throw new Error(`Unsupported SPICE local package platform: ${requestedPackagePlatform}`);
+}
+const packagePlatform = requestedPackagePlatform;
+const unixPackage = packagePlatform === 'linux' || packagePlatform === 'macos';
 const packageName = `spice-local-${packagePlatform}`;
-const ffmpegBinaryName = packagePlatform === 'linux' ? 'ffmpeg' : 'ffmpeg.exe';
+const ffmpegBinaryName = unixPackage ? 'ffmpeg' : 'ffmpeg.exe';
 const ffmpegSourceDir = path.resolve(appRoot, '..', '..', 'node_modules', 'ffmpeg-static');
 const defaultUpdateManifestUrl = `https://music.spice-app.xyz/api/updates/local-${packagePlatform}`;
 const packageDir = path.join(distRoot, packageName);
@@ -90,7 +96,7 @@ async function copyFfmpegRuntime(root) {
     await cp(source, path.join(destinationDir, file));
   }
 
-  if (packagePlatform === 'linux') {
+  if (unixPackage) {
     await chmod(path.join(destinationDir, ffmpegBinaryName), 0o755);
   }
 }
@@ -138,7 +144,7 @@ async function assertPackagedAssets(root) {
     `${ffmpegBinary}.README`,
     'The packaged FFmpeg binary is missing its source and build notice.',
   );
-  if (packagePlatform === 'linux') await chmod(ffmpegBinary, 0o755);
+  if (unixPackage) await chmod(ffmpegBinary, 0o755);
 }
 
 async function pruneLocalPackage(root) {
@@ -450,10 +456,12 @@ async function writeLaunchers(root) {
     'SPICE_LOCAL_UPDATE_CHECK_MIN_HOURS=12',
     'SPICE_STREAM_HMAC_SECRET=replace-with-a-random-local-secret',
     '',
-  ].join(packagePlatform === 'linux' ? '\n' : '\r\n');
+  ].join(unixPackage ? '\n' : '\r\n');
 
   const manifest = {
-    name: `SPICE Local ${packagePlatform === 'linux' ? 'Linux' : 'Windows'} Runtime`,
+    name: `SPICE Local ${
+      packagePlatform === 'windows' ? 'Windows' : packagePlatform === 'macos' ? 'macOS' : 'Linux'
+    } Runtime`,
     runtimeTarget: 'local',
     platform: packagePlatform,
     version,
@@ -463,14 +471,14 @@ async function writeLaunchers(root) {
     cloudApiPrefix: '/api/cloud',
     cloudApiOrigin: 'https://music.spice-app.xyz',
     updateManifestUrl: manifestUrl,
-    startScript: packagePlatform === 'linux' ? 'start-spice-local.sh' : 'start-spice-local.ps1',
+    startScript: unixPackage ? 'start-spice-local.sh' : 'start-spice-local.ps1',
     updateCheckScript: packagePlatform === 'windows' ? 'check-spice-local-update.ps1' : null,
   };
 
   await writeFile(path.join(root, '.env.local.example'), envExample);
   await writeFile(path.join(root, 'spice-local-manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
 
-  if (packagePlatform === 'linux') {
+  if (unixPackage) {
     const sh = [
       '#!/usr/bin/env sh',
       'set -eu',

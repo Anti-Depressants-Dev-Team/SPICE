@@ -266,12 +266,48 @@ class LibraryRepository(context: Context) {
                 true
             }
         }
-        val pendingIds = pendingLikedTrackIds().toMutableSet().apply { add(track.id) }
+        markLikeMutationPendingLocked(track.id)
+        liked
+    }
+
+    suspend fun setLiked(track: Track, liked: Boolean, markPending: Boolean = true) =
+        likesMutex.withLock {
+            val now = System.currentTimeMillis()
+            database.withTransaction {
+                dao.upsertTrack(track.toEntity(now))
+                if (liked) {
+                    dao.upsertLikedTrack(LikedTrackEntity(track.id, now))
+                } else {
+                    dao.deleteLikedTrack(track.id)
+                }
+            }
+            if (markPending) {
+                markLikeMutationPendingLocked(track.id)
+            }
+        }
+
+    suspend fun isLiked(trackId: String): Boolean = likesMutex.withLock {
+        dao.isLiked(trackId)
+    }
+
+    suspend fun markLikeMutationPending(trackId: String) = likesMutex.withLock {
+        markLikeMutationPendingLocked(trackId)
+    }
+
+    suspend fun markLikeMutationSynced(trackId: String) = likesMutex.withLock {
+        val pendingIds = pendingLikedTrackIds().toMutableSet().apply { remove(trackId) }
+        preferences.edit()
+            .putBoolean(KEY_LIKES_SYNC_INITIALIZED, true)
+            .putString(KEY_PENDING_LIKED_IDS, JSONArray(pendingIds.toList()).toString())
+            .apply()
+    }
+
+    private fun markLikeMutationPendingLocked(trackId: String) {
+        val pendingIds = pendingLikedTrackIds().toMutableSet().apply { add(trackId) }
         preferences.edit()
             .putString(KEY_PENDING_LIKED_IDS, JSONArray(pendingIds.toList()).toString())
             .putLong(KEY_LIKES_SYNC_REVISION, likesSyncRevision() + 1L)
             .apply()
-        liked
     }
 
     fun quality(): StreamQuality = runCatching {

@@ -140,6 +140,19 @@ test('Spice Connect command normalization accepts idempotent shuffle and repeat 
   assert.deepEqual(JSON.parse(repeat.payloadJson), { mode: 'one' });
 });
 
+test('Spice Connect command normalization accepts reciprocal controller presence', () => {
+  const input = normalizeSpiceConnectCommandInput({
+    sourceDeviceId: 'phone',
+    targetDeviceId: 'desktop',
+    command: 'connect',
+    payload: { connected: true },
+  });
+
+  assert.ok(!('error' in input));
+  assert.equal(input.command, 'connect');
+  assert.deepEqual(JSON.parse(input.payloadJson), { connected: true });
+});
+
 test('Spice Connect command normalization rejects same-device and unsupported commands', () => {
   assert.deepEqual(
     normalizeSpiceConnectCommandInput({

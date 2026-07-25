@@ -161,10 +161,70 @@ jobs:
             apps/backend/dist/spice-local-linux.zip
             apps/backend/dist/spice-local-linux.sha256
 
+  local-macos-package:
+    name: SPICE local macOS universal package
+    runs-on: macos-latest
+    outputs:
+      version: ${{ steps.package-metadata.outputs.version }}
+      sha256: ${{ steps.package-metadata.outputs.sha256 }}
+      size_bytes: ${{ steps.package-metadata.outputs.size_bytes }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install unified workspace
+        run: npm ci
+      - name: Prepare universal Intel and Apple Silicon FFmpeg
+        run: npm run backend:prepare:ffmpeg:macos-universal
+      - name: Build local runtime
+        run: npm run backend:build:local
+      - name: Package local runtime
+        run: npm run backend:package:local:macos
+      - name: Verify and zip local runtime
+        run: |
+          FFMPEG='apps/backend/dist/spice-local-macos/node_modules/ffmpeg-static/ffmpeg'
+          ARCHITECTURES="$(lipo -archs "$FFMPEG")"
+          [[ "$ARCHITECTURES" == *x86_64* ]]
+          [[ "$ARCHITECTURES" == *arm64* ]]
+          cd apps/backend/dist/spice-local-macos
+          shopt -s dotglob nullglob
+          entries=(*)
+          if [ "${#entries[@]}" -eq 0 ]; then
+            echo 'Local macOS runtime package is empty.' >&2
+            exit 1
+          fi
+          zip -qry ../spice-local-macos.zip -- "${entries[@]}"
+          if zipinfo -1 ../spice-local-macos.zip | grep -Fxq './'; then
+            echo 'Runtime ZIP contains an unsafe root-dot entry.' >&2
+            exit 1
+          fi
+      - name: Hash local runtime artifact
+        id: package-metadata
+        run: |
+          ZIP_PATH='apps/backend/dist/spice-local-macos.zip'
+          SHA_PATH='apps/backend/dist/spice-local-macos.sha256'
+          MANIFEST_PATH='apps/backend/dist/spice-local-macos/spice-local-manifest.json'
+          HASH=$(shasum -a 256 "$ZIP_PATH" | awk '{print $1}')
+          SIZE_BYTES=$(stat -f%z "$ZIP_PATH")
+          VERSION=$(node -p "require('./$MANIFEST_PATH').version")
+          printf '%s  spice-local-macos.zip\n' "$HASH" > "$SHA_PATH"
+          echo "sha256=$HASH" >> "$GITHUB_OUTPUT"
+          echo "size_bytes=$SIZE_BYTES" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Upload local runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: spice-local-macos
+          path: |
+            apps/backend/dist/spice-local-macos.zip
+            apps/backend/dist/spice-local-macos.sha256
+
   publish-local-runtime-release:
     name: Publish local runtime release
     runs-on: ubuntu-latest
-    needs: [local-windows-package, local-linux-package]
+    needs: [local-windows-package, local-linux-package, local-macos-package]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: write
@@ -179,6 +239,11 @@ jobs:
         with:
           name: spice-local-linux
           path: apps/backend/dist
+      - name: download macOS runtime artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: spice-local-macos
+          path: apps/backend/dist
       - name: publish local runtime release
         shell: pwsh
         env:
@@ -190,12 +255,18 @@ jobs:
           SIZE_BYTES: ${{ needs.local-windows-package.outputs.size_bytes }}
           LINUX_SHA256: ${{ needs.local-linux-package.outputs.sha256 }}
           LINUX_SIZE_BYTES: ${{ needs.local-linux-package.outputs.size_bytes }}
+          MACOS_VERSION: ${{ needs.local-macos-package.outputs.version }}
+          MACOS_SHA256: ${{ needs.local-macos-package.outputs.sha256 }}
+          MACOS_SIZE_BYTES: ${{ needs.local-macos-package.outputs.size_bytes }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:VERSION)) {
             throw 'Package version output was empty.'
           }
           if ($env:VERSION -ne $env:LINUX_VERSION) {
             throw "Runtime package versions do not match: Windows $env:VERSION, Linux $env:LINUX_VERSION."
+          }
+          if ($env:VERSION -ne $env:MACOS_VERSION) {
+            throw "Runtime package versions do not match: Windows $env:VERSION, macOS $env:MACOS_VERSION."
           }
 
           $tag = "spice-local-runtime"
@@ -204,8 +275,10 @@ jobs:
           $hashUrl = "https://github.com/$env:REPOSITORY/releases/download/$tag/spice-local-windows.sha256"
           $linuxDownloadUrl = "https://github.com/$env:REPOSITORY/releases/download/$tag/spice-local-linux.zip"
           $linuxHashUrl = "https://github.com/$env:REPOSITORY/releases/download/$tag/spice-local-linux.sha256"
+          $macosDownloadUrl = "https://github.com/$env:REPOSITORY/releases/download/$tag/spice-local-macos.zip"
+          $macosHashUrl = "https://github.com/$env:REPOSITORY/releases/download/$tag/spice-local-macos.sha256"
           $notes = @"
-          SPICE Local Windows and Linux runtime packages.
+          SPICE Local Windows, Linux, and universal macOS runtime packages.
 
           Download URL:
           $downloadUrl
@@ -231,12 +304,26 @@ jobs:
           Linux size bytes:
           $env:LINUX_SIZE_BYTES
 
+          macOS universal download URL:
+          $macosDownloadUrl
+
+          macOS SHA-256 file:
+          $macosHashUrl
+
+          macOS SHA-256:
+          $env:MACOS_SHA256
+
+          macOS size bytes:
+          $env:MACOS_SIZE_BYTES
+
           Vercel setup:
           - Set SPICE_LOCAL_WINDOWS_DOWNLOAD_URL to the download URL above.
           - Set SPICE_LOCAL_WINDOWS_SHA256 to the SHA-256 above only when you will update it for each release.
           - Set SPICE_LOCAL_WINDOWS_SIZE_BYTES to the byte size above only when you will update it for each release.
           - Set SPICE_LOCAL_LINUX_DOWNLOAD_URL to the Linux download URL above.
           - Set SPICE_LOCAL_LINUX_SHA256 and SPICE_LOCAL_LINUX_SIZE_BYTES only when you will update them for each release.
+          - Set SPICE_LOCAL_MACOS_DOWNLOAD_URL to the macOS download URL above.
+          - Set SPICE_LOCAL_MACOS_SHA256 and SPICE_LOCAL_MACOS_SIZE_BYTES only when you will update them for each release.
           "@
           $notesFile = New-TemporaryFile
           Set-Content -LiteralPath $notesFile -Value $notes
@@ -249,15 +336,16 @@ jobs:
           }
 
           if ($existingTags -contains $tag) {
-            gh release upload $tag apps/backend/dist/spice-local-windows.zip apps/backend/dist/spice-local-windows.sha256 apps/backend/dist/spice-local-linux.zip apps/backend/dist/spice-local-linux.sha256 --clobber --repo $env:REPOSITORY
+            gh release upload $tag apps/backend/dist/spice-local-windows.zip apps/backend/dist/spice-local-windows.sha256 apps/backend/dist/spice-local-linux.zip apps/backend/dist/spice-local-linux.sha256 apps/backend/dist/spice-local-macos.zip apps/backend/dist/spice-local-macos.sha256 --clobber --repo $env:REPOSITORY
             gh release edit $tag --title $title --notes-file $notesFile --latest=false --repo $env:REPOSITORY
           } else {
-            gh release create $tag apps/backend/dist/spice-local-windows.zip apps/backend/dist/spice-local-windows.sha256 apps/backend/dist/spice-local-linux.zip apps/backend/dist/spice-local-linux.sha256 --title $title --notes-file $notesFile --latest=false --target $env:GITHUB_SHA --repo $env:REPOSITORY
+            gh release create $tag apps/backend/dist/spice-local-windows.zip apps/backend/dist/spice-local-windows.sha256 apps/backend/dist/spice-local-linux.zip apps/backend/dist/spice-local-linux.sha256 apps/backend/dist/spice-local-macos.zip apps/backend/dist/spice-local-macos.sha256 --title $title --notes-file $notesFile --latest=false --target $env:GITHUB_SHA --repo $env:REPOSITORY
           }
 
           "### SPICE local runtime release" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
           "Windows: $downloadUrl ($env:SHA256, $env:SIZE_BYTES bytes)" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
           "Linux: $linuxDownloadUrl ($env:LINUX_SHA256, $env:LINUX_SIZE_BYTES bytes)" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          "macOS universal: $macosDownloadUrl ($env:MACOS_SHA256, $env:MACOS_SIZE_BYTES bytes)" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
 
   vercel-deploy:
     name: Vercel prebuilt deploy

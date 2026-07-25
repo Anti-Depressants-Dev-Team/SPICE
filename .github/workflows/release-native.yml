@@ -85,3 +85,40 @@ jobs:
         run: npm run dist:native:linux -- --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-native-macos:
+    needs: prepare-native-release
+    runs-on: macos-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install unified workspace
+        run: npm ci
+
+      - name: Build and publish universal Native macOS release
+        run: npm run dist:native:mac -- --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify Intel and Apple Silicon Native slices
+        run: |
+          APP_ROOT='dist-native/mac-universal/Spice Native.app'
+          APP_EXECUTABLE="$APP_ROOT/Contents/MacOS/Spice Native"
+          RUNTIME_FFMPEG="$APP_ROOT/Contents/Resources/native-runtime/spice-local-macos/node_modules/ffmpeg-static/ffmpeg"
+          ARCHITECTURES="$(lipo -archs "$APP_EXECUTABLE")"
+          FFMPEG_ARCHITECTURES="$(lipo -archs "$RUNTIME_FFMPEG")"
+          [[ "$ARCHITECTURES" == *x86_64* ]]
+          [[ "$ARCHITECTURES" == *arm64* ]]
+          [[ "$FFMPEG_ARCHITECTURES" == *x86_64* ]]
+          [[ "$FFMPEG_ARCHITECTURES" == *arm64* ]]

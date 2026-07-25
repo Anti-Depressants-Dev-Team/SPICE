@@ -208,6 +208,21 @@ test('SPICE topbar search dismisses on an outside pointer press', () => {
   assert.match(spiceApp, /className="app-topbar__search-shell" ref=\{topbarSearchShellRef\}/);
 });
 
+test('SPICE topbar layout is user-selectable and keeps search with its provider', () => {
+  const spiceApp = read('apps/backend/app/spice-app.tsx');
+  const styles = read('apps/backend/app/globals.css');
+
+  assert.match(spiceApp, /type TopbarLayout = 'embedded' \| 'floating'/);
+  assert.match(spiceApp, /localStorage\.getItem\('spice_topbar_layout'\)/);
+  assert.match(spiceApp, /localStorage\.setItem\('spice_topbar_layout', e\.target\.value\)/);
+  assert.match(
+    spiceApp,
+    /className="app-topbar__search-shell"[\s\S]*className="app-topbar__search"[\s\S]*className="app-topbar__provider"/,
+  );
+  assert.match(styles, /\.topbar-layout--embedded \.app-topbar\s*\{[\s\S]*border-radius:\s*0/);
+  assert.match(styles, /\.app-topbar__search-shell\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) auto/);
+});
+
 test('restart-based desktop settings validate input and skip no-op restarts', () => {
   const main = read('main.js');
 

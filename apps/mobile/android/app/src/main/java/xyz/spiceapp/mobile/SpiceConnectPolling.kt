@@ -109,6 +109,25 @@ internal fun projectedSpiceConnectProgressMs(
     return durationMs.takeIf { it > 0L }?.let(projected::coerceAtMost) ?: projected
 }
 
+internal fun spiceConnectDeviceStatus(
+    isOnline: Boolean,
+    isPlaying: Boolean,
+    lastSeenSeconds: Long,
+    trackTitle: String?,
+): String {
+    val seconds = lastSeenSeconds.coerceAtLeast(0L)
+    if (!isOnline) {
+        return when {
+            seconds < 60L -> "Offline · last seen just now"
+            seconds < 3_600L -> "Offline · last seen ${seconds / 60L}m ago"
+            seconds < 86_400L -> "Offline · last seen ${seconds / 3_600L}h ago"
+            else -> "Offline · last seen ${seconds / 86_400L}d ago"
+        }
+    }
+    return trackTitle?.let { "${if (isPlaying) "Playing" else "Paused"} · $it" }
+        ?: if (seconds <= 5L) "Online now" else "Online · last seen ${maxOf(1L, seconds / 60L)}m ago"
+}
+
 internal class BoundedSpiceConnectCommandIds(
     private val capacity: Int,
     initialIds: Iterable<String> = emptyList(),

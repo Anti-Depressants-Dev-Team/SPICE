@@ -39,6 +39,12 @@ interface SoundCloudSearchResponse {
   collection?: SoundCloudApiTrack[];
 }
 
+interface SoundCloudApiPlaylist {
+  kind?: 'playlist' | 'system-playlist';
+  title?: string;
+  tracks?: SoundCloudApiTrack[];
+}
+
 interface SoundCloudResolvedStream {
   url: string;
 }
@@ -87,6 +93,40 @@ export async function getSoundCloudTrackMetadata(id: string) {
   const rawId = stripSoundCloudTrackPrefix(id);
   const track = await soundCloudFetchJson<SoundCloudApiTrack>(`/tracks/${encodeURIComponent(rawId)}`);
   return soundCloudTrackToSpiceTrack(track);
+}
+
+export async function resolveSoundCloudUrl(url: string) {
+  const parsed = new URL(url);
+  if (
+    parsed.protocol !== 'https:'
+    || !['soundcloud.com', 'www.soundcloud.com', 'm.soundcloud.com', 'on.soundcloud.com'].includes(parsed.hostname)
+  ) {
+    throw new Error('Only SoundCloud links can be resolved by this endpoint.');
+  }
+
+  const data = await soundCloudFetchJson<SoundCloudApiTrack | SoundCloudApiPlaylist>(
+    `/resolve?url=${encodeURIComponent(parsed.toString())}`,
+  );
+  if ('tracks' in data && Array.isArray(data.tracks)) {
+    return {
+      kind: 'playlist' as const,
+      title: data.title?.trim() || 'SoundCloud playlist',
+      tracks: data.tracks
+        .filter(isPlayableSoundCloudTrack)
+        .map(soundCloudTrackToSpiceTrack),
+    };
+  }
+  if ('id' in data && data.id) {
+    if (!isPlayableSoundCloudTrack(data)) {
+      throw new Error('This SoundCloud track is not available for full playback.');
+    }
+    return {
+      kind: 'track' as const,
+      title: data.title || 'SoundCloud track',
+      tracks: [soundCloudTrackToSpiceTrack(data)],
+    };
+  }
+  throw new Error('The SoundCloud link did not resolve to a track or playlist.');
 }
 
 export async function getSoundCloudTrackDetails(
@@ -182,6 +222,10 @@ function soundCloudTrackToSpiceTrack(track: SoundCloudApiTrack): SoundCloudTrack
     permalinkUrl: track.permalink_url,
     previewOnly: track.policy === 'SNIP',
   };
+}
+
+function isPlayableSoundCloudTrack(track: SoundCloudApiTrack) {
+  return track.streamable !== false && track.policy !== 'BLOCK' && track.policy !== 'SNIP';
 }
 
 async function soundCloudFetchJson<T>(pathOrUrl: string, retry = true): Promise<T> {

@@ -50,6 +50,11 @@ function Resolve-JavaHome {
         return $env:JAVA_HOME
     }
 
+    $androidStudioJbr = "C:\Program Files\Android\Android Studio\jbr"
+    if ((Get-JavaMajor (Join-Path $androidStudioJbr "bin\java.exe")) -ge 21) {
+        return $androidStudioJbr
+    }
+
     $roots = @(
         "C:\Program Files\Eclipse Adoptium",
         "C:\Program Files\Java",

@@ -591,7 +591,8 @@ function isTrustedSpiceWebContents(webContents) {
   try {
     const parsed = new URL(webContents.getURL());
     return (
-      parsed.protocol === "https:" && parsed.hostname === "music.spice-app.xyz"
+      parsed.protocol === "https:"
+      && ["music.spice-app.xyz", "spice-app.xyz", "www.spice-app.xyz"].includes(parsed.hostname)
     ) || (
       parsed.protocol === "http:"
       && (parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost")
