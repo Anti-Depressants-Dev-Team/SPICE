@@ -8,7 +8,7 @@ const ACCENT_THEMES = new Set([
   "deeppurple",
 ]);
 
-const SURFACE_THEMES = new Set(["midnight", "glass", "solid", "aurora"]);
+const SURFACE_THEMES = new Set(["midnight", "glass", "solid", "aurora", "daylight"]);
 
 const DEFAULT_SHELL_THEME = Object.freeze({
   accent: "deeppurple",
@@ -183,6 +183,43 @@ function createLoginItemSettings(
   return settings;
 }
 
+async function collectOfflineLibraryFiles(fileNames, statFile, metadata = {}) {
+  const safeNames = Array.isArray(fileNames)
+    ? fileNames.filter((fileName) => typeof fileName === "string" && fileName)
+    : [];
+  const results = await Promise.all(safeNames.map(async (fileName) => {
+    try {
+      const stat = await statFile(fileName);
+      if (!stat || typeof stat.size !== "number" || !stat.mtime) return null;
+      return {
+        fileName,
+        bytes: Math.max(0, stat.size),
+        updatedAt: new Date(stat.mtime).toISOString(),
+      };
+    } catch (_) {
+      // Files can be moved or deleted between readdir and stat. One missing
+      // song must not make the entire Downloads library disappear.
+      return null;
+    }
+  }));
+  const files = results.filter(Boolean);
+  const existingNames = new Set(files.map((entry) => entry.fileName));
+  const nextMetadata = {};
+  for (const [fileName, value] of Object.entries(
+    metadata && typeof metadata === "object" && !Array.isArray(metadata) ? metadata : {},
+  )) {
+    if (existingNames.has(fileName) && value && typeof value === "object" && !Array.isArray(value)) {
+      nextMetadata[fileName] = value;
+    }
+  }
+  return {
+    files,
+    metadata: nextMetadata,
+    metadataChanged: Object.keys(nextMetadata).length !== Object.keys(metadata || {}).length,
+    missingFileNames: safeNames.filter((fileName) => !existingNames.has(fileName)),
+  };
+}
+
 module.exports = {
   DEFAULT_SHELL_THEME,
   normalizeShellTheme,
@@ -194,4 +231,5 @@ module.exports = {
   shouldQuitWhenLastWindowCloses,
   supportsStartOnBoot,
   createLoginItemSettings,
+  collectOfflineLibraryFiles,
 };

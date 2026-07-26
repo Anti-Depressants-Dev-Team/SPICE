@@ -194,7 +194,7 @@ internal fun selectAndroidUpdate(
     return AppUpdateInfo(
         version = release.tagName.removePrefix("v").removePrefix("V"),
         releaseName = release.name.ifBlank { release.tagName },
-        releaseNotes = release.notes.take(2_000),
+        releaseNotes = release.notes,
         assetName = asset.name,
         downloadUrl = asset.downloadUrl,
         sizeBytes = asset.sizeBytes,

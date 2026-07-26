@@ -187,6 +187,11 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
     private var connectJob: Job? = null
     private var connectRealtimeJob: Job? = null
     private var connectRefreshJob: Job? = null
+    private var handoffAcceptTimeoutJob: Job? = null
+    private var handoffCompleteTimeoutJob: Job? = null
+    private var pendingSpiceConnectHandoff: PendingSpiceConnectHandoff? = null
+    private val preparedSpiceConnectHandoffs = mutableMapOf<String, PreparedSpiceConnectHandoff>()
+    private val likeMutationRevisions = mutableMapOf<String, Long>()
     private var updateCheckJob: Job? = null
     private var updateDownloadJob: Job? = null
     private var autoHistorySyncJob: Job? = null
@@ -206,6 +211,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
     private var optimisticRemoteDeviceId: String? = null
     private var optimisticRemoteStateUntilElapsedMs: Long = 0L
     private var optimisticRemoteTrackChanged: Boolean = false
+    private val optimisticallyForgottenRemoteDeviceIds = mutableSetOf<String>()
     private val appliedRemoteCommandIds = BoundedSpiceConnectCommandIds(
         capacity = MAX_APPLIED_REMOTE_COMMAND_IDS,
         initialIds = loadAppliedRemoteCommandIds(),
@@ -990,6 +996,8 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
     fun toggleLike(track: Track) {
         viewModelScope.launch {
             val liked = libraryRepository.toggleLike(track)
+            val revision = (likeMutationRevisions[track.id] ?: 0L) + 1L
+            likeMutationRevisions[track.id] = revision
             val session = _uiState.value.accountSession
             if (session == null) {
                 _uiState.value = _uiState.value.copy(
@@ -1001,29 +1009,53 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
             runCatching {
                 api.setTrackLiked(session.token, track, liked)
             }.onSuccess {
-                if (libraryRepository.isLiked(track.id) == liked) {
-                    libraryRepository.markLikeMutationSynced(track.id)
-                    _uiState.value = _uiState.value.copy(
-                        message = if (liked) "Saved ${track.title} to Liked." else "Removed ${track.title} from Liked.",
+                when (
+                    resolveLikeMutation(
+                        requestRevision = revision,
+                        latestRevision = likeMutationRevisions[track.id] ?: revision,
+                        requestedLiked = liked,
+                        currentlyLiked = libraryRepository.isLiked(track.id),
+                        succeeded = true,
                     )
-                } else {
-                    // A newer tap changed the desired state while this request
-                    // was in flight. Keep it pending so the bulk sync repairs
-                    // any out-of-order server response.
-                    libraryRepository.markLikeMutationPending(track.id)
+                ) {
+                    LikeMutationResolution.Confirm -> {
+                        libraryRepository.markLikeMutationSynced(track.id)
+                        _uiState.value = _uiState.value.copy(
+                            message = if (liked) "Saved ${track.title} to Liked." else "Removed ${track.title} from Liked.",
+                        )
+                    }
+                    LikeMutationResolution.ReconcileNewerChange -> {
+                        // A newer local or cross-device state won while this
+                        // request was in flight. Keep it pending so cloud sync
+                        // repairs any out-of-order server response.
+                        libraryRepository.markLikeMutationPending(track.id)
+                    }
+                    LikeMutationResolution.RollBack -> Unit
                 }
                 if (libraryRepository.pendingLikedTrackIds().isNotEmpty()) scheduleTasteSync()
             }.onFailure { error ->
-                if (libraryRepository.isLiked(track.id) == liked) {
-                    libraryRepository.setLiked(track, !liked, markPending = false)
-                    libraryRepository.markLikeMutationSynced(track.id)
-                } else {
-                    libraryRepository.markLikeMutationPending(track.id)
-                    scheduleTasteSync()
+                when (
+                    resolveLikeMutation(
+                        requestRevision = revision,
+                        latestRevision = likeMutationRevisions[track.id] ?: revision,
+                        requestedLiked = liked,
+                        currentlyLiked = libraryRepository.isLiked(track.id),
+                        succeeded = false,
+                    )
+                ) {
+                    LikeMutationResolution.RollBack -> {
+                        libraryRepository.setLiked(track, nextLikeState(liked), markPending = false)
+                        libraryRepository.markLikeMutationSynced(track.id)
+                        _uiState.value = _uiState.value.copy(
+                            message = error.message ?: "The Like could not be saved, so the change was restored.",
+                        )
+                    }
+                    LikeMutationResolution.ReconcileNewerChange -> {
+                        libraryRepository.markLikeMutationPending(track.id)
+                        scheduleTasteSync()
+                    }
+                    LikeMutationResolution.Confirm -> Unit
                 }
-                _uiState.value = _uiState.value.copy(
-                    message = error.message ?: "The Like could not be saved, so the change was restored.",
-                )
             }
         }
     }
@@ -1497,6 +1529,8 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
         connectJob?.cancel()
         connectRealtimeJob?.cancel()
         connectRefreshJob?.cancel()
+        clearPendingSpiceConnectHandoff()
+        preparedSpiceConnectHandoffs.clear()
         clearOptimisticRemoteState()
         connectPreferences.edit().remove(KEY_SELECTED_PLAYBACK_DEVICE_ID).apply()
         _uiState.value = _uiState.value.copy(
@@ -2351,17 +2385,45 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
 
     fun forgetSpiceConnectDevice(deviceId: String) {
         if (deviceId.isBlank() || deviceId == remoteDeviceId) return
+        val stateBeforeForget = _uiState.value
+        val removedDevice = stateBeforeForget.remoteDevices.firstOrNull { it.deviceId == deviceId } ?: return
+        val wasSelected = stateBeforeForget.selectedPlaybackDeviceId == deviceId
+        optimisticallyForgottenRemoteDeviceIds += deviceId
+        if (wasSelected) {
+            clearOptimisticRemoteState(deviceId)
+            connectPreferences.edit().remove(KEY_SELECTED_PLAYBACK_DEVICE_ID).apply()
+        }
+        _uiState.value = stateBeforeForget.copy(
+            remoteDevices = stateBeforeForget.remoteDevices.filterNot { it.deviceId == deviceId },
+            selectedPlaybackDeviceId = stateBeforeForget.selectedPlaybackDeviceId.takeUnless { wasSelected }.orEmpty(),
+            connectStatus = "Removing ${removedDevice.displayName} everywhere and revoking its access...",
+        )
         viewModelScope.launch {
             runCatching {
                 withRemoteAccess { token -> api.forgetRemoteDevice(token, remoteDeviceId, deviceId) }
             }.onSuccess {
-                if (_uiState.value.selectedPlaybackDeviceId == deviceId) selectPlaybackDevice(null)
                 _uiState.value = _uiState.value.copy(
                     remoteDevices = _uiState.value.remoteDevices.filterNot { it.deviceId == deviceId },
                     connectStatus = "Removed the device everywhere and revoked its Spice Connect access.",
                 )
+                refreshSpiceConnect()
             }.onFailure { error ->
-                _uiState.value = _uiState.value.copy(message = error.message ?: "Could not forget that device.")
+                optimisticallyForgottenRemoteDeviceIds -= deviceId
+                val current = _uiState.value
+                val restoredDevices = if (current.remoteDevices.any { it.deviceId == deviceId }) {
+                    current.remoteDevices
+                } else {
+                    (current.remoteDevices + removedDevice).sortedByDescending { it.updatedAt }
+                }
+                if (wasSelected) {
+                    connectPreferences.edit().putString(KEY_SELECTED_PLAYBACK_DEVICE_ID, deviceId).apply()
+                }
+                _uiState.value = current.copy(
+                    remoteDevices = restoredDevices,
+                    selectedPlaybackDeviceId = if (wasSelected) deviceId else current.selectedPlaybackDeviceId,
+                    connectStatus = "The device could not be removed, so it was restored.",
+                    message = error.message ?: "Could not forget that device.",
+                )
             }
         }
     }
@@ -2374,48 +2436,85 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.value = state.copy(message = "Play something on this phone, then choose another online device.")
             return
         }
-        val player = playerState.value
-        val sourceWasPlaying = player.isPlaying
-        val queue = normalizeQueue(state.playbackQueue, track).take(80)
-        val queueIndex = state.queueIndex.coerceIn(0, queue.lastIndex.coerceAtLeast(0))
-        patchRemoteDevice(target.deviceId) {
-            it.copy(
-                currentTrack = track,
-                queue = queue,
-                queueIndex = queueIndex,
-                isPlaying = player.isPlaying,
-                progressMs = player.positionMs,
-                durationMs = player.durationMs.takeIf { value -> value > 0 } ?: track.durationMs,
-                volume = player.volume,
-                shuffleEnabled = player.shuffleEnabled,
-                repeatMode = player.repeatMode,
+
+        pendingSpiceConnectHandoff?.let { pending ->
+            if (pending.phase == SpiceConnectHandoffPhase.WaitingForComplete) {
+                _uiState.value = state.copy(
+                    message = "${pending.targetName} already accepted a transfer. Wait for its playback confirmation.",
+                )
+                return
+            }
+            clearPendingSpiceConnectHandoff()
+            sendRemoteCommand(
+                deviceId = pending.targetDeviceId,
+                command = "handoff_cancel",
+                payload = JSONObject()
+                    .put("transferId", pending.transferId)
+                    .put("reason", "superseded"),
+                quiet = true,
             )
         }
-        if (sourceWasPlaying) playerConnection.pause()
+
+        val transferId = normalizeSpiceConnectTransferId(
+            "$remoteDeviceId:${target.deviceId}:${System.currentTimeMillis().toString(36)}:${UUID.randomUUID()}",
+        )
+        val pending = beginSpiceConnectHandoff(
+            transferId = transferId,
+            targetDeviceId = target.deviceId,
+            targetName = target.displayName,
+            sourceWasPlaying = playerState.value.let { it.isPlaying || it.isBuffering },
+        )
+        pendingSpiceConnectHandoff = pending
+        handoffAcceptTimeoutJob = viewModelScope.launch {
+            delay(SPICE_CONNECT_HANDOFF_ACCEPT_TIMEOUT_MS)
+            if (pendingSpiceConnectHandoff != pending) return@launch
+            clearPendingSpiceConnectHandoff()
+            sendRemoteCommand(
+                deviceId = target.deviceId,
+                command = "handoff_cancel",
+                payload = JSONObject()
+                    .put("transferId", transferId)
+                    .put("reason", "ready_timeout"),
+                quiet = true,
+            )
+            _uiState.value = _uiState.value.copy(
+                connectStatus = "${target.displayName} did not accept the transfer in time. Playback stayed on this phone.",
+                message = "${target.displayName} did not accept the transfer. Playback stayed here.",
+            )
+        }
+
+        _uiState.value = state.copy(
+            connectStatus = "Waiting for ${target.displayName} to accept the playback transfer...",
+        )
         sendRemoteCommand(
             deviceId = target.deviceId,
-            command = "handoff",
-            payload = JSONObject()
-                .put("track", track.toRemoteTrackJson())
-                .put("queue", JSONArray(queue.map { it.toRemoteTrackJson() }))
-                .put("queueIndex", queueIndex)
-                .put("progress", player.positionMs / 1000.0)
-                .put("volume", player.volume.coerceIn(0, 100))
-                .put("isPlaying", player.isPlaying)
-                .put("shuffleEnabled", player.shuffleEnabled)
-                .put("repeatMode", player.repeatMode.remoteValue()),
+            command = "handoff_prepare",
+            payload = JSONObject().put("transferId", transferId),
             onSuccess = {
-                _uiState.value = _uiState.value.copy(
-                    connectStatus = "Playback moved to ${target.displayName}.",
-                    message = "Playback moved to ${target.displayName}.",
-                )
-            },
-            onFailure = {
-                if (sourceWasPlaying && !playerState.value.isPlaying) {
-                    playerConnection.toggle()
+                if (pendingSpiceConnectHandoff == pending) {
+                    _uiState.value = _uiState.value.copy(
+                        connectStatus = "Waiting for ${target.displayName} to accept the playback transfer...",
+                    )
                 }
             },
+            onFailure = {
+                if (pendingSpiceConnectHandoff == pending) {
+                    clearPendingSpiceConnectHandoff()
+                    _uiState.value = _uiState.value.copy(
+                        connectStatus = "Could not ask ${target.displayName} to accept playback. Playback stayed here.",
+                    )
+                }
+            },
+            quiet = true,
         )
+    }
+
+    private fun clearPendingSpiceConnectHandoff() {
+        handoffAcceptTimeoutJob?.cancel()
+        handoffAcceptTimeoutJob = null
+        handoffCompleteTimeoutJob?.cancel()
+        handoffCompleteTimeoutJob = null
+        pendingSpiceConnectHandoff = null
     }
 
     fun refreshSpiceConnect() {
@@ -2452,6 +2551,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
         payload: JSONObject = JSONObject(),
         onSuccess: () -> Unit = {},
         onFailure: (Throwable) -> Unit = {},
+        quiet: Boolean = false,
     ) {
         if (!hasRemoteAccess()) {
             onFailure(IllegalStateException("Sign in or pair this phone to use Spice Connect."))
@@ -2482,18 +2582,26 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }.onSuccess {
                 onSuccess()
-                _uiState.value = _uiState.value.copy(
-                    connectStatus = if (command == "handoff") _uiState.value.connectStatus else "Sent $command through Spice Connect.",
-                )
+                if (!quiet) {
+                    _uiState.value = _uiState.value.copy(
+                        connectStatus = if (command == "handoff") {
+                            _uiState.value.connectStatus
+                        } else {
+                            "Sent $command through Spice Connect."
+                        },
+                    )
+                }
                 Log.i(SPICE_CONNECT_LOG_TAG, "Queued $command from $remoteDeviceId to $deviceId")
                 scheduleRemoteDeviceRefresh()
             }.onFailure { error ->
                 onFailure(error)
                 clearOptimisticRemoteState(deviceId)
-                _uiState.value = _uiState.value.copy(
-                    connectStatus = error.message ?: "Spice Connect command failed.",
-                    message = error.message ?: "Spice Connect command failed.",
-                )
+                if (!quiet) {
+                    _uiState.value = _uiState.value.copy(
+                        connectStatus = error.message ?: "Spice Connect command failed.",
+                        message = error.message ?: "Spice Connect command failed.",
+                    )
+                }
                 Log.e(SPICE_CONNECT_LOG_TAG, "Failed to send $command from $remoteDeviceId to $deviceId", error)
                 refreshSpiceConnect()
             }
@@ -2757,6 +2865,8 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun clearPairedCredential(message: String) {
         pairedCredentialStore.clear()
+        clearPendingSpiceConnectHandoff()
+        preparedSpiceConnectHandoffs.clear()
         clearOptimisticRemoteState()
         val state = _uiState.value
         val accountFallback = state.accountSession != null
@@ -2799,6 +2909,8 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
         connectJob?.cancel()
         connectRealtimeJob?.cancel()
         connectRefreshJob?.cancel()
+        clearPendingSpiceConnectHandoff()
+        preparedSpiceConnectHandoffs.clear()
         connectRealtimeAvailable.set(false)
         while (connectRealtimeWakeups.tryReceive().isSuccess) {
             // Drop wakeups from a credential or receiver generation that ended.
@@ -3006,6 +3118,22 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+    private suspend fun applyIncomingSpiceConnectHandoff(command: RemoteCommand): Boolean {
+        val track = command.payloadTrack ?: return false
+        val queue = normalizeQueue(command.payloadQueue, track)
+        val requestedIndex = command.payloadQueueIndex.takeIf { it in queue.indices }
+        val trackIndex = queue.indexOfFirst { it.queueKey() == track.queueKey() }.takeIf { it >= 0 }
+        selectPlaybackDevice(null)
+        command.volume?.let(playerConnection::setVolume)
+        command.shuffleEnabled?.let(playerConnection::setShuffle)
+        command.repeatMode?.let(playerConnection::setRepeatMode)
+        playQueueIndex(queue, requestedIndex ?: trackIndex ?: 0)
+        playJob?.join()
+        command.seekPositionMs?.let(playerConnection::seekTo)
+        if (command.shouldPlay == false) playerConnection.pause()
+        return true
+    }
+
     private suspend fun applyRemoteCommands(commands: List<RemoteCommand>) {
         commands.forEach { command ->
             if (appliedRemoteCommandIds.contains(command.id)) {
@@ -3017,7 +3145,10 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
                 if (_uiState.value.incomingRemoteControllerDeviceId == command.sourceDeviceId) {
                     _uiState.value = _uiState.value.copy(incomingRemoteControllerDeviceId = "")
                 }
-            } else if (command.sourceDeviceId.isNotBlank()) {
+            } else if (
+                command.sourceDeviceId.isNotBlank() &&
+                command.command !in setOf("handoff_ready", "handoff_complete", "handoff_cancel")
+            ) {
                 _uiState.value = _uiState.value.copy(
                     incomingRemoteControllerDeviceId = command.sourceDeviceId,
                 )
@@ -3038,19 +3169,206 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
                     val trackIndex = queue.indexOfFirst { it.queueKey() == track.queueKey() }.takeIf { it >= 0 }
                     playQueueIndex(queue, requestedIndex ?: trackIndex ?: 0)
                 }
-                "handoff" -> command.payloadTrack?.let { track ->
-                    val queue = normalizeQueue(command.payloadQueue, track)
-                    val requestedIndex = command.payloadQueueIndex.takeIf { it in queue.indices }
-                    val trackIndex = queue.indexOfFirst { it.queueKey() == track.queueKey() }.takeIf { it >= 0 }
-                    selectPlaybackDevice(null)
-                    command.volume?.let(playerConnection::setVolume)
-                    command.shuffleEnabled?.let(playerConnection::setShuffle)
-                    command.repeatMode?.let(playerConnection::setRepeatMode)
-                    playQueueIndex(queue, requestedIndex ?: trackIndex ?: 0)
-                    playJob?.join()
-                    command.seekPositionMs?.let(playerConnection::seekTo)
-                    if (command.shouldPlay == false) playerConnection.pause()
+                "handoff_prepare" -> {
+                    val transferId = normalizeSpiceConnectTransferId(command.transferId)
+                    if (transferId.isNotEmpty()) {
+                        val nowElapsedMs = SystemClock.elapsedRealtime()
+                        preparedSpiceConnectHandoffs.entries.removeAll {
+                            it.value.expiresAtElapsedMs <= nowElapsedMs
+                        }
+                        preparedSpiceConnectHandoffs[transferId] = PreparedSpiceConnectHandoff(
+                            transferId = transferId,
+                            sourceDeviceId = command.sourceDeviceId,
+                            expiresAtElapsedMs = nowElapsedMs + SPICE_CONNECT_HANDOFF_ACCEPT_TIMEOUT_MS,
+                        )
+                        _uiState.value = _uiState.value.copy(
+                            connectStatus = "Another device is preparing to move playback here.",
+                        )
+                        sendRemoteCommand(
+                            deviceId = command.sourceDeviceId,
+                            command = "handoff_ready",
+                            payload = JSONObject().put("transferId", transferId),
+                            quiet = true,
+                        )
+                    }
                 }
+                "handoff_ready" -> {
+                    val currentPlayer = playerState.value
+                    val sourceWasPlaying = currentPlayer.isPlaying || currentPlayer.isBuffering
+                    val accepted = acceptSpiceConnectHandoffReady(
+                        pending = pendingSpiceConnectHandoff,
+                        transferId = normalizeSpiceConnectTransferId(command.transferId),
+                        sourceDeviceId = command.sourceDeviceId,
+                        sourceWasPlaying = sourceWasPlaying,
+                    )
+                    if (accepted != null) {
+                        pendingSpiceConnectHandoff = accepted
+                        handoffAcceptTimeoutJob?.cancel()
+                        handoffAcceptTimeoutJob = null
+
+                        val state = _uiState.value
+                        val track = state.currentTrack
+                        if (track == null) {
+                            clearPendingSpiceConnectHandoff()
+                            sendRemoteCommand(
+                                deviceId = accepted.targetDeviceId,
+                                command = "handoff_cancel",
+                                payload = JSONObject()
+                                    .put("transferId", accepted.transferId)
+                                    .put("reason", "source_track_missing"),
+                                quiet = true,
+                            )
+                        } else {
+                            val queue = normalizeQueue(state.playbackQueue, track).take(80)
+                            val queueIndex = state.queueIndex.coerceIn(0, queue.lastIndex.coerceAtLeast(0))
+                            if (sourceWasPlaying) playerConnection.pause()
+                            patchRemoteDevice(accepted.targetDeviceId) {
+                                it.copy(
+                                    currentTrack = track,
+                                    queue = queue,
+                                    queueIndex = queueIndex,
+                                    isPlaying = sourceWasPlaying,
+                                    progressMs = currentPlayer.positionMs,
+                                    durationMs = currentPlayer.durationMs.takeIf { value -> value > 0 }
+                                        ?: track.durationMs,
+                                    volume = currentPlayer.volume,
+                                    shuffleEnabled = currentPlayer.shuffleEnabled,
+                                    repeatMode = currentPlayer.repeatMode,
+                                )
+                            }
+                            _uiState.value = _uiState.value.copy(
+                                connectStatus = "${accepted.targetName} accepted the transfer. Starting it there now...",
+                            )
+                            sendRemoteCommand(
+                                deviceId = accepted.targetDeviceId,
+                                command = "handoff_commit",
+                                payload = JSONObject()
+                                    .put("transferId", accepted.transferId)
+                                    .put("track", track.toRemoteTrackJson())
+                                    .put("queue", JSONArray(queue.map { it.toRemoteTrackJson() }))
+                                    .put("queueIndex", queueIndex)
+                                    .put("progress", currentPlayer.positionMs / 1000.0)
+                                    .put("volume", currentPlayer.volume.coerceIn(0, 100))
+                                    .put("isPlaying", sourceWasPlaying)
+                                    .put("shuffleEnabled", currentPlayer.shuffleEnabled)
+                                    .put("repeatMode", currentPlayer.repeatMode.remoteValue()),
+                                onSuccess = {
+                                    if (pendingSpiceConnectHandoff == accepted) {
+                                        handoffCompleteTimeoutJob?.cancel()
+                                        handoffCompleteTimeoutJob = viewModelScope.launch {
+                                            delay(SPICE_CONNECT_HANDOFF_COMPLETE_TIMEOUT_MS)
+                                            if (pendingSpiceConnectHandoff != accepted) return@launch
+                                            clearPendingSpiceConnectHandoff()
+                                            _uiState.value = _uiState.value.copy(
+                                                connectStatus = "${accepted.targetName} accepted the transfer but did not confirm playback. This phone remains paused to prevent double playback.",
+                                                message = "Transfer confirmation timed out. Press Play here to recover.",
+                                            )
+                                        }
+                                    }
+                                },
+                                onFailure = {
+                                    if (pendingSpiceConnectHandoff == accepted) {
+                                        clearPendingSpiceConnectHandoff()
+                                        sendRemoteCommand(
+                                            deviceId = accepted.targetDeviceId,
+                                            command = "handoff_cancel",
+                                            payload = JSONObject()
+                                                .put("transferId", accepted.transferId)
+                                                .put("reason", "commit_failed"),
+                                            quiet = true,
+                                        )
+                                        _uiState.value = _uiState.value.copy(
+                                            connectStatus = "Transfer delivery to ${accepted.targetName} could not be confirmed. This phone remains paused to prevent double playback.",
+                                            message = "Transfer delivery is uncertain. Press Play here to recover.",
+                                        )
+                                    }
+                                },
+                                quiet = true,
+                            )
+                        }
+                    }
+                }
+                "handoff_commit" -> {
+                    val transferId = normalizeSpiceConnectTransferId(command.transferId)
+                    val prepared = preparedSpiceConnectHandoffs[transferId]
+                    if (
+                        transferId.isNotEmpty() &&
+                        acceptsPreparedSpiceConnectCommit(
+                            prepared = prepared,
+                            transferId = transferId,
+                            sourceDeviceId = command.sourceDeviceId,
+                            nowElapsedMs = SystemClock.elapsedRealtime(),
+                        )
+                    ) {
+                        preparedSpiceConnectHandoffs.remove(transferId)
+                        val applied = runCatching {
+                            applyIncomingSpiceConnectHandoff(command)
+                        }.getOrDefault(false)
+                        if (applied) {
+                            sendRemoteCommand(
+                                deviceId = command.sourceDeviceId,
+                                command = "handoff_complete",
+                                payload = JSONObject().put("transferId", transferId),
+                                quiet = true,
+                            )
+                            _uiState.value = _uiState.value.copy(
+                                connectStatus = "Playback was accepted from another device.",
+                            )
+                        } else {
+                            sendRemoteCommand(
+                                deviceId = command.sourceDeviceId,
+                                command = "handoff_cancel",
+                                payload = JSONObject()
+                                    .put("transferId", transferId)
+                                    .put("reason", "destination_playback_failed"),
+                                quiet = true,
+                            )
+                        }
+                    } else if (transferId.isNotEmpty()) {
+                        sendRemoteCommand(
+                            deviceId = command.sourceDeviceId,
+                            command = "handoff_cancel",
+                            payload = JSONObject()
+                                .put("transferId", transferId)
+                                .put("reason", "transfer_not_prepared"),
+                            quiet = true,
+                        )
+                    }
+                }
+                "handoff_complete" -> {
+                    val transferId = normalizeSpiceConnectTransferId(command.transferId)
+                    val pending = pendingSpiceConnectHandoff
+                    if (completesSpiceConnectHandoff(pending, transferId, command.sourceDeviceId)) {
+                        val targetName = pending?.targetName ?: "the other device"
+                        clearPendingSpiceConnectHandoff()
+                        _uiState.value = _uiState.value.copy(
+                            connectStatus = "Playback moved to $targetName and was confirmed there.",
+                            message = "Playback moved to $targetName.",
+                        )
+                    }
+                }
+                "handoff_cancel" -> {
+                    val transferId = normalizeSpiceConnectTransferId(command.transferId)
+                    preparedSpiceConnectHandoffs.remove(transferId)
+                    val pending = pendingSpiceConnectHandoff
+                    if (
+                        pending != null &&
+                        pending.transferId == transferId &&
+                        pending.targetDeviceId == command.sourceDeviceId
+                    ) {
+                        val shouldResume = shouldResumeSpiceConnectSource(
+                            pending,
+                            destinationConfirmedNoPlayback = true,
+                        )
+                        val targetName = pending.targetName
+                        clearPendingSpiceConnectHandoff()
+                        if (shouldResume && !playerState.value.isPlaying) playerConnection.toggle()
+                        _uiState.value = _uiState.value.copy(
+                            connectStatus = "$targetName could not accept the transfer. Playback is available on this phone.",
+                        )
+                    }
+                }
+                "handoff" -> applyIncomingSpiceConnectHandoff(command)
                 "connect" -> Unit
             }
             appliedRemoteCommandIds.markIfNew(command.id)
@@ -3065,7 +3383,11 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         val state = _uiState.value
         val nowElapsedRealtimeMs = SystemClock.elapsedRealtime()
-        val observedDevices = devices.map { device ->
+        val observedDeviceIds = devices.mapTo(mutableSetOf()) { it.deviceId }
+        optimisticallyForgottenRemoteDeviceIds.removeAll { it !in observedDeviceIds }
+        val observedDevices = devices
+            .filterNot { it.deviceId in optimisticallyForgottenRemoteDeviceIds }
+            .map { device ->
             device.copy(observedAtElapsedRealtimeMs = nowElapsedRealtimeMs)
         }
         if (optimisticRemoteStateUntilElapsedMs <= nowElapsedRealtimeMs) {
@@ -3283,22 +3605,33 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun downloadSource(track: Track): DownloadSource =
-        if (track.sourceId.startsWith("youtube")) {
-            DownloadSource("https://www.youtube.com/watch?v=${track.id}")
-        } else {
-            DownloadSource(api.resolvePlayable(track, _uiState.value.quality).stream.url)
-        }
+        DownloadSource(api.resolvePlayable(track, _uiState.value.quality).stream.url)
 
     private suspend fun downloadOneTrack(track: Track, progressPrefix: String = ""): DownloadedTrack {
         val processId = MediaDownloadClient.newProcessId()
         activeDownloadProcessId = processId
+        _uiState.value = _uiState.value.copy(
+            downloadProgress = listOf(progressPrefix, "Resolving a direct audio stream")
+                .filter(String::isNotBlank)
+                .joinToString(": "),
+        )
         val source = downloadSource(track)
+        _uiState.value = _uiState.value.copy(
+            downloadProgress = listOf(progressPrefix, "Direct stream ready; starting download")
+                .filter(String::isNotBlank)
+                .joinToString(": "),
+        )
         val result = withContext(Dispatchers.IO) {
             val progressHandler: (xyz.spiceapp.mobile.data.download.DownloadProgress) -> Unit = { progress ->
-                val status = if (progress.progress.isFinite() && progress.progress >= 0f) {
-                    "Downloading ${progress.progress.toInt().coerceIn(0, 100)}%"
-                } else {
-                    progress.line.ifBlank { "Downloading..." }.take(80)
+                val status = when {
+                    progress.progress.isFinite() && progress.progress >= 0f ->
+                        "Downloading ${progress.progress.toInt().coerceIn(0, 100)}%"
+                    progress.line.contains("ExtractAudio", ignoreCase = true) ||
+                        progress.line.contains("ffmpeg", ignoreCase = true) ->
+                        "Converting to MP3"
+                    progress.line == xyz.spiceapp.mobile.data.download.DOWNLOAD_TIMEOUT_ERROR ->
+                        progress.line
+                    else -> "Downloading audio"
                 }
                 _uiState.value = _uiState.value.copy(
                     downloadProgress = listOf(progressPrefix, status).filter(String::isNotBlank).joinToString(": "),
@@ -3469,6 +3802,8 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
         connectJob?.cancel()
         connectRealtimeJob?.cancel()
         connectRefreshJob?.cancel()
+        handoffAcceptTimeoutJob?.cancel()
+        handoffCompleteTimeoutJob?.cancel()
         updateCheckJob?.cancel()
         updateDownloadJob?.cancel()
         autoHistorySyncJob?.cancel()

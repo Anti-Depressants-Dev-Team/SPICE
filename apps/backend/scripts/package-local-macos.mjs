@@ -15,6 +15,20 @@ import { fileURLToPath } from 'node:url';
 process.env.SPICE_LOCAL_PACKAGE_PLATFORM = 'macos';
 await import('./package-local-windows.mjs');
 await installMissingDarwinArchitectures();
+await markUniversalMacosManifest();
+
+async function markUniversalMacosManifest() {
+  const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const manifestPath = path.join(
+    appRoot,
+    'dist',
+    'spice-local-macos',
+    'spice-local-manifest.json',
+  );
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+  manifest.architectures = ['arm64', 'x64'];
+  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+}
 
 async function installMissingDarwinArchitectures() {
   const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');

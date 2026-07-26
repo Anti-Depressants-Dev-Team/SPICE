@@ -437,3 +437,31 @@ export async function getPlaylistTracks(playlistId: string) {
     tracks
   };
 }
+
+export async function getAlbumTracks(albumId: string) {
+  const yt = await getYouTube();
+  const album = await yt.music.getAlbum(albumId);
+  const tracks: SpiceTrack[] = [];
+  const seen = new Set<string>();
+
+  for (const item of album.contents ?? []) {
+    const track = musicItemToTrack(item);
+    if (!track || seen.has(track.id)) continue;
+    seen.add(track.id);
+    tracks.push(track);
+  }
+
+  if (tracks.length === 0) {
+    throw new Error('This YouTube Music album does not expose any playable tracks.');
+  }
+
+  const header = album.header;
+  const description = 'description' in (header ?? {})
+    ? String((header as { description?: unknown }).description ?? '').trim()
+    : '';
+  return {
+    title: header?.title?.toString().trim() || 'YouTube Music album',
+    description: description || 'YouTube Music album import',
+    tracks,
+  };
+}

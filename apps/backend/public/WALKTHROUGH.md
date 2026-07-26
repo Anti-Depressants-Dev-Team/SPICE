@@ -1,5 +1,20 @@
 # SPICE Walkthrough
 
+## v1.0.154
+
+- [Spice.Connect main] Complete acknowledged playback handoff across desktop and Android so the source pauses only after the receiver is ready, the full queue and playback state move together, and ambiguous completion can never create two active players.
+- [Spice.Connect main] Make forgotten devices disappear immediately, revoke their exact authorization generation, clear queued and live state, and block delayed Redis heartbeats from restoring stale pairings.
+- [Spice.Connect main] Move expiring presence, command delivery, wakeups, handoff coordination, and short-lived authorization lookups through Upstash Redis while retaining bounded PostgreSQL checkpoints and explicit outage diagnostics.
+- [Spice.Downloads main] Repair desktop detection, persisted folder controls, missing-file cleanup, storage totals, folder opening, and strictly local downloaded-only playback queues.
+- [Spice.Desktop main] Prepare universal Intel and Apple Silicon macOS local runtimes with executable permissions, quarantine recovery, readiness checks, and actionable launch failures while preserving Windows behavior.
+- [Spice.Search main] Resolve pasted YouTube, YouTube Music, and SoundCloud track, playlist, and album variants inside SPICE, including shortened and redirected links with hostile redirect rejection.
+- [Spice.Mobile main] Serialize Android Like mutations with optimistic rollback and stale-response protection so the Liked library remains deduplicated and synchronized across devices.
+- [Spice.Mobile main] Download Android music from pre-resolved direct audio streams instead of YouTube pages, bound network retries and total runtime, publish clean stage progress, and fail with an actionable recovery message instead of hanging on JavaScript challenges.
+- [Spice.Mobile main] Preserve every GitHub release-note character and present the complete Android update changelog inside a clearly labeled, bounded scroll area.
+- [Spice.Desktop main] Replace the generic Windows setup artwork with deterministic SPICE-branded purple wizard and uninstaller surfaces for both standard and Native packages.
+- [Spice.Music main] Finish the reference-video embedded header, retain the floating layout, add responsive account controls and a real profile menu, and verify both layouts in dark and daylight themes.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.154`.
+
 ## v1.0.153
 
 - [Spice.Connect main] Put live device presence and successful remote-command queues fully on Upstash Redis, with bounded expiry and automatic PostgreSQL recovery when Redis is unavailable.

@@ -72,4 +72,15 @@ class LibrarySyncMergeTest {
 
         assertEquals(listOf("desktop-new"), merged.map { it.id })
     }
+
+    @Test
+    fun crossDeviceLikesNeverCreateDuplicateLibraryRows() {
+        val merged = mergeSyncLikes(
+            remote = listOf(desktopNewest, desktopNewest, shared),
+            local = listOf(desktopNewest, mobilePending, mobilePending),
+            initialReconciliation = true,
+        )
+
+        assertEquals(listOf("desktop-new", "shared", "mobile-new"), merged.map { it.id })
+    }
 }

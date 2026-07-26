@@ -205,6 +205,8 @@ data class RemoteCommand(
     val repeatMode: RepeatMode? = null,
     val shouldPlay: Boolean? = null,
     val connected: Boolean? = null,
+    val transferId: String = "",
+    val failureReason: String = "",
 )
 
 enum class RepeatMode {

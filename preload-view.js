@@ -437,6 +437,7 @@ function installSpiceDesktopOfflineLibraryBridge() {
             const bytes = await blob.arrayBuffer();
             return ipcRenderer.invoke('spice-offline-library-save', { fileName, bytes, track });
         },
+        exists: (fileName) => ipcRenderer.invoke('spice-offline-library-exists', fileName),
         remove: (fileName) => ipcRenderer.invoke('spice-offline-library-remove', fileName),
         show: (fileName) => ipcRenderer.invoke('spice-offline-library-show', fileName),
     };
@@ -460,7 +461,7 @@ function installSpiceDesktopUiBridge() {
     const validAccents = new Set([
         'pink', 'blue', 'orange', 'green', 'gold', 'crimson', 'deeppurple'
     ]);
-    const validSurfaces = new Set(['midnight', 'glass', 'solid', 'aurora']);
+    const validSurfaces = new Set(['midnight', 'glass', 'solid', 'aurora', 'daylight']);
     let lastThemeSignature = '';
     const defaultCustomPalette = {
         primary: '#a855f7',

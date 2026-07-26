@@ -11,7 +11,7 @@ The desktop app includes ad blocking, Discord Rich Presence, Last.fm and ListenB
 ## Repository layout
 
 - The repository root contains the CommonJS Electron desktop app (`main.js`, `preload.js`, and the desktop HTML/CSS files).
-- `apps/backend` contains the Next.js backend and the build scripts for local Windows and Linux runtimes.
+- `apps/backend` contains the Next.js backend and the build scripts for local Windows, Linux, and universal macOS runtimes.
 - `apps/mobile` contains the native Android client and its npm command wrappers.
 - `native-runtime` receives a prepared local runtime for native Electron builds. Its generated contents are not source files.
 - `test` contains the desktop Node test suite.
@@ -40,16 +40,22 @@ Use `npm install` when intentionally changing dependencies and updating `package
 npm start                 # Standard Electron wrapper
 npm run start:native      # SPICE-only desktop development mode
 npm test                  # Desktop Node tests
+npm run installer:assets  # Regenerate the branded Windows installer artwork
 npm run dist              # Standard desktop package
 npm run dist:mac          # Universal Apple Silicon + Intel macOS package
 npm run dist:native       # Native package on a supported Windows/Linux host
 npm run dist:native:windows
 npm run dist:native:linux
+npm run dist:native:mac   # Universal Apple Silicon + Intel Native package
 ```
 
 Native builds use distinct application metadata and update channels, so publishing a native build does not replace the classic desktop updater release.
 
-The standard macOS app ships the same desktop and SPICE Music features as the Windows wrapper and is packaged universally for Apple Silicon and Intel. The bundled local-runtime Native mode remains Windows/Linux-only; macOS uses the hosted SPICE Music runtime because no macOS local-runtime artifact is currently produced.
+Standard and Native Windows packages use the same SPICE-branded assisted installer artwork while retaining separate product names, shortcuts, update channels, and uninstall identities.
+
+The standard and Native macOS apps are packaged universally for Apple Silicon and Intel. Native includes the universal local runtime and FFmpeg payload, and release CI checks both architecture slices before publishing. The runtime manager restores executable permissions, clears quarantine metadata on its separately installed runtime, waits for the local readiness endpoint, and surfaces a recovery message when macOS blocks startup.
+
+Public macOS artifacts are signed or notarized only when the release environment supplies valid Apple signing credentials. Without those credentials, Gatekeeper can still require Finder → Open or approval under System Settings → Privacy & Security on first launch; the app reports this limitation instead of silently failing.
 
 ## Backend commands
 
@@ -64,13 +70,14 @@ npm run backend:build:local
 npm run backend:build:vercel
 npm run backend:package:local:windows
 npm run backend:package:local:linux
+npm run backend:package:local:macos
 ```
 
 The Vercel project root remains `apps/backend` inside this unified repository.
 
 ## Local runtime preparation
 
-`npm run native:prepare-runtime` now builds and packages `apps/backend` from this repository by default, then copies the result into `native-runtime/spice-local-windows` or `native-runtime/spice-local-linux`. `dist:native:*` already invokes this preparation step; do not run it separately before a native distribution command.
+`npm run native:prepare-runtime` builds and packages `apps/backend` from this repository by default, then copies the platform runtime into `native-runtime/spice-local-windows`, `native-runtime/spice-local-linux`, or `native-runtime/spice-local-macos`. `dist:native:*` already invokes this preparation step; do not run it separately before a native distribution command.
 
 For an intentional external backend checkout, set `SPICE_BACKEND_REPO` to that repository root. If no usable checkout is available, preparation can download the matching artifact from the dedicated [`spice-local-runtime`](https://github.com/Anti-Depressants-Dev-Team/spice/releases/tag/spice-local-runtime) release. `SPICE_NATIVE_RUNTIME_ZIP_URL` can override that artifact URL for testing.
 

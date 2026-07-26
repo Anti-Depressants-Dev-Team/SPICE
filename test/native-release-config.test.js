@@ -89,6 +89,32 @@ test("desktop packages use the dark-purple single-note icon", () => {
   assert.equal(iconPng.readUInt32BE(20), 512);
 });
 
+test("Windows installers use deterministic SPICE-branded wizard artwork", () => {
+  const root = path.join(__dirname, "..");
+  const sidebarPath = path.join(root, wrapperConfig.nsis.installerSidebar);
+  const headerPath = path.join(root, wrapperConfig.nsis.installerHeader);
+  const readBmpSize = (filePath) => {
+    const image = fs.readFileSync(filePath);
+    assert.equal(image.toString("ascii", 0, 2), "BM");
+    assert.equal(image.readUInt16LE(28), 24);
+    return {
+      width: image.readInt32LE(18),
+      height: image.readInt32LE(22),
+    };
+  };
+
+  assert.equal(packageConfig.scripts["installer:assets"], "node scripts/generate-installer-assets.js");
+  assert.equal(wrapperConfig.nsis.oneClick, false);
+  assert.equal(wrapperConfig.nsis.allowToChangeInstallationDirectory, true);
+  assert.equal(wrapperConfig.nsis.shortcutName, "Spice");
+  assert.equal(wrapperConfig.nsis.uninstallDisplayName, "Spice");
+  assert.equal(wrapperConfig.nsis.uninstallerSidebar, wrapperConfig.nsis.installerSidebar);
+  assert.deepEqual(readBmpSize(sidebarPath), { width: 164, height: 314 });
+  assert.deepEqual(readBmpSize(headerPath), { width: 150, height: 57 });
+  assert.equal(nativeConfig.nsis.installerSidebar, wrapperConfig.nsis.installerSidebar);
+  assert.equal(nativeConfig.nsis.installerHeader, wrapperConfig.nsis.installerHeader);
+});
+
 test("wrapper and Native releases externalize the complete uBlock extension", () => {
   assert.deepEqual(wrapperConfig.extraResources, [uBlockResource]);
   assert.deepEqual(nativeConfig.extraResources[0], uBlockResource);
@@ -225,6 +251,7 @@ test("native macOS releases bundle a universal local runtime", () => {
   assert.match(macPackageSource, /`--cpu=\$\{architecture\}`/);
   assert.match(macPackageSource, /--ignore-scripts/);
   assert.match(macPackageSource, /--force/);
+  assert.match(macPackageSource, /manifest\.architectures = \['arm64', 'x64'\]/);
   assert.match(nativeWorkflow, /build-native-macos:[\s\S]*runs-on: macos-latest/);
   assert.match(nativeWorkflow, /npm run dist:native:mac -- --publish always/);
   assert.match(ciWorkflow, /local-macos-package:[\s\S]*ffmpeg:macos-universal/);

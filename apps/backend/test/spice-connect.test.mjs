@@ -28,6 +28,14 @@ import {
   SPICE_CONNECT_OPTIMISTIC_STATE_WINDOW_MS,
   SPICE_CONNECT_STALE_DEVICE_SECONDS,
 } from '../lib/spice-connect.ts';
+import {
+  commitSpiceConnectHandoffDestination,
+  createSpiceConnectTransferId,
+  prepareSpiceConnectHandoffDestination,
+  SPICE_CONNECT_HANDOFF_ACCEPT_TIMEOUT_MS,
+  startSpiceConnectHandoffSource,
+  transitionSpiceConnectHandoffSource,
+} from '../lib/spice-connect-handoff.ts';
 
 test('Spice Connect device normalization bounds client-reported playback state', () => {
   const queue = Array.from({ length: 100 }, (_, index) => ({ id: `track-${index}` }));
@@ -118,6 +126,127 @@ test('Spice Connect accepts an atomic playback handoff snapshot', () => {
   assert.ok(!('error' in input));
   assert.equal(input.command, 'handoff');
   assert.equal(JSON.parse(input.payloadJson).progress, 42.5);
+});
+
+test('Spice Connect accepts every phase of the acknowledged handoff protocol', () => {
+  for (const command of [
+    'handoff_prepare',
+    'handoff_ready',
+    'handoff_commit',
+    'handoff_complete',
+    'handoff_cancel',
+  ]) {
+    const input = normalizeSpiceConnectCommandInput({
+      sourceDeviceId: 'desktop',
+      targetDeviceId: 'phone',
+      command,
+      payload: { transferId: 'desktop:phone:transfer-1' },
+    });
+    assert.ok(!('error' in input));
+    assert.equal(input.command, command);
+  }
+});
+
+test('acknowledged handoff never pauses the source before the destination is ready', () => {
+  const transferId = createSpiceConnectTransferId('desktop', 'phone', 1234, 'test');
+  const started = startSpiceConnectHandoffSource(transferId, 'phone', true);
+  assert.equal(started.state.phase, 'waiting_for_ready');
+  assert.equal(started.sourcePlayback, 'continue');
+
+  const destination = prepareSpiceConnectHandoffDestination(transferId, 'desktop');
+  assert.equal(destination.startPlayback, false);
+  assert.equal(destination.outbound, 'ready');
+
+  const accepted = transitionSpiceConnectHandoffSource(started.state, {
+    type: 'ready',
+    transferId,
+    sourceDeviceId: 'phone',
+  });
+  assert.equal(accepted.state.phase, 'waiting_for_complete');
+  assert.equal(accepted.sourcePlayback, 'pause');
+  assert.equal(accepted.outbound, 'commit');
+
+  const committed = commitSpiceConnectHandoffDestination(
+    destination.state,
+    transferId,
+    'desktop',
+  );
+  assert.equal(committed.startPlayback, true);
+  assert.equal(committed.outbound, 'complete');
+
+  const completed = transitionSpiceConnectHandoffSource(accepted.state, {
+    type: 'complete',
+    transferId,
+    sourceDeviceId: 'phone',
+  });
+  assert.equal(completed.state.phase, 'completed');
+  assert.equal(completed.sourcePlayback, 'unchanged');
+});
+
+test('handoff timeouts preserve playback before acceptance and prevent overlap after acceptance', () => {
+  const started = startSpiceConnectHandoffSource('transfer-2', 'phone', true);
+  const beforeAcceptance = transitionSpiceConnectHandoffSource(started.state, {
+    type: 'ready_timeout',
+  });
+  assert.equal(beforeAcceptance.state.phase, 'failed');
+  assert.equal(beforeAcceptance.sourcePlayback, 'resume');
+  assert.equal(beforeAcceptance.outbound, 'cancel');
+
+  const accepted = transitionSpiceConnectHandoffSource(started.state, {
+    type: 'ready',
+    transferId: 'transfer-2',
+    sourceDeviceId: 'phone',
+  });
+  const afterAcceptance = transitionSpiceConnectHandoffSource(accepted.state, {
+    type: 'complete_timeout',
+  });
+  assert.equal(afterAcceptance.state.phase, 'uncertain');
+  assert.equal(afterAcceptance.sourcePlayback, 'pause');
+  assert.equal(afterAcceptance.outbound, null);
+
+  const ambiguousCommit = transitionSpiceConnectHandoffSource(accepted.state, {
+    type: 'commit_failed',
+  });
+  assert.equal(ambiguousCommit.state.phase, 'uncertain');
+  assert.equal(ambiguousCommit.sourcePlayback, 'pause');
+  assert.equal(ambiguousCommit.outbound, 'cancel');
+
+  const destinationRejected = transitionSpiceConnectHandoffSource(accepted.state, {
+    type: 'destination_failed',
+  });
+  assert.equal(destinationRejected.state.phase, 'failed');
+  assert.equal(destinationRejected.sourcePlayback, 'resume');
+
+  const staleReadyTimeout = transitionSpiceConnectHandoffSource(accepted.state, {
+    type: 'ready_timeout',
+  });
+  assert.equal(staleReadyTimeout.state, accepted.state);
+  assert.equal(staleReadyTimeout.sourcePlayback, 'unchanged');
+  assert.equal(staleReadyTimeout.outbound, null);
+});
+
+test('a handoff commit is rejected unless this destination acknowledged its prepare', () => {
+  const unprepared = commitSpiceConnectHandoffDestination(
+    null,
+    'late-transfer',
+    'desktop',
+  );
+  assert.equal(unprepared.startPlayback, false);
+  assert.equal(unprepared.outbound, null);
+
+  const prepared = prepareSpiceConnectHandoffDestination(
+    'expired-transfer',
+    'desktop',
+    1_000,
+  );
+  const expired = commitSpiceConnectHandoffDestination(
+    prepared.state,
+    'expired-transfer',
+    'desktop',
+    1_000 + SPICE_CONNECT_HANDOFF_ACCEPT_TIMEOUT_MS,
+  );
+  assert.equal(expired.startPlayback, false);
+  assert.equal(expired.outbound, null);
 });
 
 test('Spice Connect command normalization accepts idempotent shuffle and repeat payloads', () => {

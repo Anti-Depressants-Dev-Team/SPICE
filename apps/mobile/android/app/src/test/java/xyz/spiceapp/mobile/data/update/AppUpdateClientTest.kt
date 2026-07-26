@@ -60,6 +60,38 @@ class AppUpdateClientTest {
     }
 
     @Test
+    fun preservesTheCompleteReleaseChangelog() {
+        val fullNotes = buildString {
+            repeat(160) { index ->
+                appendLine("- Change ${index + 1}: a complete release-note entry")
+            }
+            append("Final release note")
+        }
+        val release = GitHubRelease(
+            tagName = "v1.4.55",
+            name = "SPICE 1.4.55",
+            notes = fullNotes,
+            draft = false,
+            prerelease = false,
+            assets = listOf(
+                GitHubReleaseAsset(
+                    name = "Spice-Android-v1.4.55-release-signed.apk",
+                    downloadUrl = "https://github.com/Anti-Depressants-Dev-Team/SPICE/releases/download/v1.4.55/Spice-Android-v1.4.55-release-signed.apk",
+                    sizeBytes = 123,
+                ),
+            ),
+        )
+
+        val update = requireNotNull(
+            selectAndroidUpdate(release, requireNotNull(parseSemanticVersion("1.4.54"))),
+        )
+
+        assertTrue(fullNotes.length > 2_000)
+        assertEquals(fullNotes, update.releaseNotes)
+        assertTrue(update.releaseNotes.endsWith("Final release note"))
+    }
+
+    @Test
     fun rejectsWrongAssetPathsEmptyPackagesAndNonApkContent() {
         fun release(asset: GitHubReleaseAsset) = GitHubRelease(
             tagName = "v1.4.10",

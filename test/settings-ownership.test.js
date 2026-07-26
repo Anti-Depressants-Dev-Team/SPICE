@@ -145,6 +145,15 @@ test('desktop offline library is an explicit Spice-only file bridge', () => {
   assert.match(main, /parsed\.searchParams\.get\("access"\) !== offlineLibraryProtocolToken\(\)/);
   assert.match(viewPreload, /if \(!IS_SPICE_MUSIC \|\| window\.spiceDesktopOfflineLibrary\) return/);
   assert.match(viewPreload, /spice-offline-library-save/);
+  assert.match(viewPreload, /spice-offline-library-exists/);
+  assert.match(spiceApp, /offlineLibraryEntries\.reduce\(\(total, entry\).*entry\.bytes/s);
+  assert.match(spiceApp, /await bridge\.exists\(entry\.fileName\)/);
+  assert.match(
+    spiceApp,
+    /startTrackOnActiveReceiver\(\s*entry\.track,\s*offlineLibraryEntries\.map\(\(item\) => item\.track\),\s*'offline-library'/s,
+  );
+  assert.match(spiceApp, /Change folder/);
+  assert.match(spiceApp, /Open folder/);
   assert.match(spiceApp, /Library → Downloads/);
   assert.match(spiceApp, /Download playlist/);
 });
@@ -221,6 +230,31 @@ test('SPICE topbar layout is user-selectable and keeps search with its provider'
   );
   assert.match(styles, /\.topbar-layout--embedded \.app-topbar\s*\{[\s\S]*border-radius:\s*0/);
   assert.match(styles, /\.app-topbar__search-shell\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) auto/);
+});
+
+test('SPICE embedded header keeps an accessible profile menu and compact breakpoints', () => {
+  const spiceApp = read('apps/backend/app/spice-app.tsx');
+  const styles = read('apps/backend/app/globals.css');
+
+  assert.match(spiceApp, /aria-haspopup="menu"/);
+  assert.match(spiceApp, /aria-expanded=\{profileMenuOpen\}/);
+  assert.match(spiceApp, /className="app-topbar__profile-menu" role="menu"/);
+  assert.match(spiceApp, /document\.addEventListener\('keydown', dismissProfileMenuWithKeyboard\)/);
+  assert.match(spiceApp, /event\.key === 'Escape'/);
+  assert.match(spiceApp, /aria-label="Header layout"/);
+  assert.match(spiceApp, /aria-label="Surface style"/);
+  assert.match(styles, /@media \(max-width: 1500px\) and \(min-width: 1181px\)/);
+  assert.match(
+    styles,
+    /grid-template-columns:\s*minmax\(250px, 1fr\) minmax\(280px, 780px\) minmax\(250px, 1fr\)/,
+  );
+  assert.match(styles, /@media \(max-width: 820px\) and \(min-width: 601px\)/);
+  assert.match(styles, /\.app-topbar__profile,\s*\.topbar-layout--embedded \.app-topbar__profile/);
+  assert.match(styles, /@media \(prefers-reduced-motion: reduce\)/);
+  assert.match(styles, /\.app-topbar__profile-menu\s*\{[\s\S]*var\(--bg-primary\)/);
+  assert.match(spiceApp, /type VisualSurface = [^;]*'daylight'/);
+  assert.match(spiceApp, /daylight:\s*`[\s\S]*--text-primary:\s*#19151f/);
+  assert.match(spiceApp, /surface--\$\{visualSurface\}/);
 });
 
 test('restart-based desktop settings validate input and skip no-op restarts', () => {
@@ -310,6 +344,7 @@ test('Native launcher summary cards contain long account and runtime values', ()
   assert.match(launcher, /class="theme-home-bg native-launch"/);
   assert.match(launcher, /native-launch__metric-value--email/);
   assert.match(launcher, /title=\$\{account && account\.user/);
+  assert.match(launcher, /Apple Silicon \+ Intel/);
   assert.match(styles, /\.native-launch__metric\s*\{[^}]*min-width:\s*0/s);
   assert.match(styles, /\.native-launch__metric-value\s*\{[^}]*overflow-wrap:\s*anywhere/s);
   assert.match(styles, /\.native-launch__metrics\s*\{[^}]*repeat\(3, minmax\(0, 1fr\)\)/s);

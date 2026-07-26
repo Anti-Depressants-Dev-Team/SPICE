@@ -547,6 +547,16 @@ private fun AppUpdateDialog(
                 readableNotes
                     .takeIf(String::isNotEmpty)
                     ?.let { notes ->
+                        Text(
+                            "Full changelog",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            "Scroll to read every change in this release.",
+                            color = SpiceTextMuted,
+                            fontSize = 12.sp,
+                        )
                         Surface(
                             shape = RoundedCornerShape(8.dp),
                             color = SpiceSurfaceHigh,
@@ -2638,7 +2648,13 @@ private fun SpiceConnectReceiverMenu(
                                         isPlaying = device.isPlaying,
                                         lastSeenSeconds = device.lastSeenSeconds,
                                         trackTitle = device.currentTrack?.title,
-                                    ),
+                                    ).let { status ->
+                                        if (uiState.selectedPlaybackDeviceId == device.deviceId) {
+                                            "Currently connected - $status"
+                                        } else {
+                                            status
+                                        }
+                                    },
                                     color = SpiceTextMuted,
                                     fontSize = 12.sp,
                                     maxLines = 1,

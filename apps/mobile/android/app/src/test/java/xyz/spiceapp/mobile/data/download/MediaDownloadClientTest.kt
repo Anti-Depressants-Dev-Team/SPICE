@@ -2,14 +2,38 @@ package xyz.spiceapp.mobile.data.download
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Test
 import java.io.File
+import java.net.URL
 import java.nio.file.Files
 
 class MediaDownloadClientTest {
     @Test
     fun convertsDownloadsToMp3() {
         assertEquals("mp3", DOWNLOAD_AUDIO_FORMAT)
+        assertEquals(20, DOWNLOAD_SOCKET_TIMEOUT_SECONDS)
+        assertEquals(15L, DOWNLOAD_MAX_RUNTIME_MINUTES)
+    }
+
+    @Test
+    fun acceptsDirectAudioUrlsButRejectsYouTubePagesBeforeYtDlpRuns() {
+        val direct = "https://rr1---sn.example.googlevideo.com/videoplayback?id=abc"
+
+        assertEquals(direct, requireDirectAudioSource(direct))
+        assertThrows(IllegalArgumentException::class.java) {
+            requireDirectAudioSource("https://www.youtube.com/watch?v=abc")
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            requireDirectAudioSource("https://youtu.be/abc")
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            requireDirectAudioSource("file:///storage/emulated/0/not-remote.mp3")
+        }
+        assertEquals(false, isYouTubePageUrl(URL(direct)))
+        assertEquals(DIRECT_AUDIO_SOURCE_ERROR, runCatching {
+            requireDirectAudioSource("https://music.youtube.com/watch?v=abc")
+        }.exceptionOrNull()?.message)
     }
 
     @Test

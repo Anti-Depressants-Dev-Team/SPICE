@@ -96,12 +96,15 @@ export async function getSoundCloudTrackMetadata(id: string) {
 }
 
 export async function resolveSoundCloudUrl(url: string) {
-  const parsed = new URL(url);
+  let parsed = new URL(url);
   if (
     parsed.protocol !== 'https:'
     || !['soundcloud.com', 'www.soundcloud.com', 'm.soundcloud.com', 'on.soundcloud.com'].includes(parsed.hostname)
   ) {
     throw new Error('Only SoundCloud links can be resolved by this endpoint.');
+  }
+  if (parsed.hostname === 'on.soundcloud.com') {
+    parsed = await expandSoundCloudShortUrl(parsed.toString());
   }
 
   const data = await soundCloudFetchJson<SoundCloudApiTrack | SoundCloudApiPlaylist>(
@@ -127,6 +130,87 @@ export async function resolveSoundCloudUrl(url: string) {
     };
   }
   throw new Error('The SoundCloud link did not resolve to a track or playlist.');
+}
+
+export async function expandSoundCloudShortUrl(
+  url: string,
+  fetchImpl: typeof fetch = fetch,
+) {
+  const initial = new URL(url);
+  if (initial.protocol !== 'https:' || initial.hostname !== 'on.soundcloud.com') {
+    throw new Error('Only SoundCloud short links can be expanded.');
+  }
+
+  const allowedHosts = new Set([
+    'on.soundcloud.com',
+    'soundcloud.com',
+    'www.soundcloud.com',
+    'm.soundcloud.com',
+  ]);
+  let current = initial;
+
+  try {
+    for (let redirectCount = 0; redirectCount < 6; redirectCount += 1) {
+      let response = await fetchImpl(current, {
+        method: 'HEAD',
+        redirect: 'manual',
+        headers: { 'User-Agent': 'SPICE-Music-Player/1.0' },
+        signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+      });
+      if (response.status === 405 || response.status === 501) {
+        void response.body?.cancel().catch(() => undefined);
+        response = await fetchImpl(current, {
+          method: 'GET',
+          redirect: 'manual',
+          headers: { 'User-Agent': 'SPICE-Music-Player/1.0' },
+          signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+        });
+      }
+
+      const location = response.headers?.get('location');
+      if (response.status >= 300 && response.status < 400 && location) {
+        const next = new URL(location, current);
+        void response.body?.cancel().catch(() => undefined);
+        if (
+          next.protocol !== 'https:'
+          || next.username
+          || next.password
+          || !allowedHosts.has(next.hostname.toLowerCase())
+        ) {
+          throw new Error('The SoundCloud short link redirected to an unsupported or unavailable page.');
+        }
+        current = next;
+        continue;
+      }
+
+      const resolved = new URL(response.url || current.toString());
+      void response.body?.cancel().catch(() => undefined);
+      if (
+        !response.ok
+        || resolved.protocol !== 'https:'
+        || resolved.username
+        || resolved.password
+        || !['soundcloud.com', 'www.soundcloud.com', 'm.soundcloud.com'].includes(resolved.hostname.toLowerCase())
+      ) {
+        throw new Error('The SoundCloud short link redirected to an unsupported or unavailable page.');
+      }
+      return resolved;
+    }
+  } catch (error) {
+    if (
+      error instanceof Error
+      && error.message === 'The SoundCloud short link redirected to an unsupported or unavailable page.'
+    ) {
+      throw error;
+    }
+    throw new Error(
+      `The SoundCloud short link could not be expanded. ${
+        error instanceof Error ? error.message : 'Check the connection and retry.'
+      }`,
+    );
+  }
+
+  throw new Error('The SoundCloud short link redirected too many times.');
 }
 
 export async function getSoundCloudTrackDetails(

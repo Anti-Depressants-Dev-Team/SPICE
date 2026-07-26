@@ -206,8 +206,15 @@ export async function GET(request: Request) {
     // Vercel. Keep the original Neon transport as a compatibility fallback
     // until Redis credentials are configured in every deployment environment.
     if (isSpiceConnectRedisConfigured()) {
-      const redisResponse = redisRealtimeResponse(request, principal.userId, deviceId);
-      if (redisResponse) return redisResponse;
+      try {
+        const redisResponse = redisRealtimeResponse(request, principal.userId, deviceId);
+        if (redisResponse) return redisResponse;
+      } catch (redisError) {
+        console.warn(
+          '[Spice Connect] Redis realtime subscription could not start; using PostgreSQL LISTEN fallback.',
+          redisError,
+        );
+      }
     }
 
     const { Client } = await import('@neondatabase/serverless');

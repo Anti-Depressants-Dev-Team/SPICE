@@ -16,8 +16,17 @@ import xyz.spiceapp.mobile.model.Track
 import java.io.File
 import java.net.URL
 import java.util.UUID
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 internal const val DOWNLOAD_AUDIO_FORMAT = "mp3"
+internal const val DOWNLOAD_SOCKET_TIMEOUT_SECONDS = 20
+internal const val DOWNLOAD_MAX_RUNTIME_MINUTES = 15L
+internal const val DIRECT_AUDIO_SOURCE_ERROR =
+    "SPICE could not resolve a direct audio stream for this track. Try again or choose another source."
+internal const val DOWNLOAD_TIMEOUT_ERROR =
+    "The audio download did not finish within 15 minutes. Check your connection and try again."
 
 class MediaDownloadClient(
     private val context: Context,
@@ -34,6 +43,7 @@ class MediaDownloadClient(
         progress(DownloadProgress(-1f, -1, "Preparing MP3 download..."))
         ensureInitialized(context)
         outputDirectory.mkdirs()
+        val directSourceUrl = requireDirectAudioSource(sourceUrl)
 
         val startedAt = System.currentTimeMillis()
         val fileStem = uniqueDownloadFileStem(outputDirectory, safeFileStem("${track.artist} - ${track.title}"))
@@ -41,23 +51,48 @@ class MediaDownloadClient(
             outputDirectory,
             "$fileStem.%(ext)s",
         ).absolutePath
-        val request = YoutubeDLRequest(sourceUrl)
+        val request = YoutubeDLRequest(directSourceUrl)
             .addOption("--no-playlist")
             .addOption("--extract-audio")
             .addOption("--audio-format", DOWNLOAD_AUDIO_FORMAT)
             .addOption("--audio-quality", "0")
             .addOption("--no-mtime")
             .addOption("--embed-metadata")
+            .addOption("--newline")
+            .addOption("--socket-timeout", DOWNLOAD_SOCKET_TIMEOUT_SECONDS.toString())
+            .addOption("--retries", "3")
+            .addOption("--fragment-retries", "3")
+            .addOption("--file-access-retries", "3")
+            .addOption("--concurrent-fragments", "3")
             .addOption("-o", outputTemplate)
 
-        var response = YoutubeDL.getInstance().execute(request, processId) { progressValue, eta, line ->
-            progress(DownloadProgress(progressValue, eta, line))
-        }
-        if (response.exitCode != 0 && isYouTubeUrl(sourceUrl) && updateYoutubeDlOnce(context)) {
-            progress(DownloadProgress(-1f, -1, "Updated yt-dlp; retrying download..."))
-            response = YoutubeDL.getInstance().execute(request, processId) { progressValue, eta, line ->
+        val processActive = AtomicBoolean(true)
+        val timedOut = AtomicBoolean(false)
+        val timeoutTask = downloadTimeoutExecutor.schedule({
+            if (!processActive.compareAndSet(true, false)) return@schedule
+            timedOut.set(true)
+            progress(DownloadProgress(-1f, -1, DOWNLOAD_TIMEOUT_ERROR))
+            runCatching { YoutubeDL.getInstance().destroyProcessById(processId) }
+        }, DOWNLOAD_MAX_RUNTIME_MINUTES, TimeUnit.MINUTES)
+        val response = try {
+            val completedResponse = YoutubeDL.getInstance().execute(request, processId) { progressValue, eta, line ->
                 progress(DownloadProgress(progressValue, eta, line))
             }
+            processActive.compareAndSet(true, false)
+            completedResponse
+        } catch (error: Exception) {
+            if (timedOut.get()) {
+                cleanupFailedDownloadFiles(outputDirectory, fileStem, startedAt)
+                throw IllegalStateException(DOWNLOAD_TIMEOUT_ERROR, error)
+            }
+            throw error
+        } finally {
+            processActive.set(false)
+            timeoutTask.cancel(false)
+        }
+        if (timedOut.get()) {
+            cleanupFailedDownloadFiles(outputDirectory, fileStem, startedAt)
+            throw IllegalStateException(DOWNLOAD_TIMEOUT_ERROR)
         }
         val outputFile = completedDownloadFile(outputDirectory, fileStem, startedAt)
         val published = if (response.exitCode == 0 && outputFile != null) {
@@ -67,6 +102,7 @@ class MediaDownloadClient(
                 bytes = outputFile.length().coerceAtLeast(0),
             )
         } else {
+            cleanupFailedDownloadFiles(outputDirectory, fileStem, startedAt)
             null
         }
 
@@ -158,7 +194,9 @@ class MediaDownloadClient(
     companion object {
         private val initializationLock = Any()
         @Volatile private var initialized = false
-        @Volatile private var updateAttempted = false
+        private val downloadTimeoutExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
+            Thread(runnable, "spice-download-timeout").apply { isDaemon = true }
+        }
 
         fun newProcessId(): String = "spice-download-${UUID.randomUUID()}"
 
@@ -171,21 +209,6 @@ class MediaDownloadClient(
                 FFmpeg.getInstance().init(applicationContext)
                 Aria2c.getInstance().init(applicationContext)
                 initialized = true
-            }
-        }
-
-        private fun updateYoutubeDlOnce(context: Context): Boolean {
-            if (updateAttempted) return false
-            synchronized(initializationLock) {
-                if (updateAttempted) return false
-                updateAttempted = true
-                return runCatching {
-                    YoutubeDL.getInstance().updateYoutubeDL(
-                        context.applicationContext,
-                        YoutubeDL.UpdateChannel.STABLE,
-                    )
-                    true
-                }.getOrDefault(false)
             }
         }
     }
@@ -247,7 +270,28 @@ internal fun uniqueDownloadFileStem(directory: File, fileStem: String): String {
     return candidate
 }
 
-private fun isYouTubeUrl(url: String): Boolean =
-    runCatching { URL(url).host.lowercase() }
-        .getOrDefault("")
-        .let { it == "youtu.be" || it == "youtube.com" || it.endsWith(".youtube.com") }
+internal fun requireDirectAudioSource(url: String): String {
+    val parsed = runCatching { URL(url) }.getOrNull()
+        ?: throw IllegalArgumentException(DIRECT_AUDIO_SOURCE_ERROR)
+    if (parsed.protocol.lowercase() !in setOf("http", "https") || isYouTubePageUrl(parsed)) {
+        throw IllegalArgumentException(DIRECT_AUDIO_SOURCE_ERROR)
+    }
+    return parsed.toString()
+}
+
+internal fun isYouTubePageUrl(url: URL): Boolean {
+    val host = url.host.lowercase()
+    return host == "youtu.be" || host == "youtube.com" || host.endsWith(".youtube.com")
+}
+
+private fun cleanupFailedDownloadFiles(outputDirectory: File, fileStem: String, startedAt: Long) {
+    outputDirectory
+        .listFiles()
+        .orEmpty()
+        .filter { file ->
+            file.isFile &&
+                (file.nameWithoutExtension == fileStem || file.nameWithoutExtension.startsWith("$fileStem.")) &&
+                file.lastModified() >= startedAt - 5_000
+        }
+        .forEach { file -> runCatching { file.delete() } }
+}

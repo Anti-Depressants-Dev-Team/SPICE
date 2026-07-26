@@ -126,6 +126,18 @@ import {
   SPICE_CONNECT_REALTIME_RECONNECT_MAX_MS,
   SPICE_CONNECT_REALTIME_RECONNECT_MIN_MS,
 } from '@/lib/spice-connect-realtime';
+import {
+  commitSpiceConnectHandoffDestination,
+  createSpiceConnectTransferId,
+  normalizeSpiceConnectTransferId,
+  prepareSpiceConnectHandoffDestination,
+  startSpiceConnectHandoffSource,
+  transitionSpiceConnectHandoffSource,
+  SPICE_CONNECT_HANDOFF_ACCEPT_TIMEOUT_MS,
+  SPICE_CONNECT_HANDOFF_COMPLETE_TIMEOUT_MS,
+  type SpiceConnectHandoffDestinationState,
+  type SpiceConnectHandoffSourceState,
+} from '@/lib/spice-connect-handoff';
 import { SPICE_MEDIA_CORE_VERSION, RELEASE_NOTIFICATION_STORAGE_KEY, type ReleaseNotification } from '@/lib/release-notifications';
 import {
   accountBoundProfiles,
@@ -759,7 +771,7 @@ type SearchProvider = 'hybrid' | 'youtube_music' | 'youtube_videos' | 'soundclou
 type StreamProtocol = 'proxy' | 'web' | 'embed';
 type ProfileSyncStatus = 'idle' | 'playing' | 'scrobbled' | 'error';
 type AccentTheme = 'pink' | 'blue' | 'orange' | 'green' | 'gold' | 'crimson' | 'deeppurple';
-type VisualSurface = 'midnight' | 'glass' | 'solid' | 'aurora';
+type VisualSurface = 'midnight' | 'glass' | 'solid' | 'aurora' | 'daylight';
 type ArtworkShape = 'rounded' | 'soft' | 'circle';
 type MotionLevel = 'full' | 'calm' | 'off';
 type InterfaceScale = 'compact' | 'comfortable' | 'spacious';
@@ -828,14 +840,16 @@ interface SpiceDesktopOfflineLibraryBridge {
   chooseDirectory: () => Promise<{ canceled: boolean; directory: string }>;
   list: () => Promise<{ directory: string; tracks: DesktopOfflineLibraryEntry[] }>;
   save: (fileName: string, blob: Blob, track: Track) => Promise<{ success: boolean; directory: string; fileName: string }>;
+  exists: (fileName: string) => Promise<{ exists: boolean; fileName: string }>;
   remove: (fileName: string) => Promise<{ success: boolean }>;
-  show: (fileName?: string) => Promise<{ success: boolean }>;
+  show: (fileName?: string) => Promise<{ success: boolean; missing?: boolean }>;
 }
 
 interface SpiceDesktopRuntimeStatus {
   supported: boolean;
   installed: boolean;
   running: boolean;
+  architectures?: Array<'arm64' | 'x64'>;
 }
 
 interface SpiceDesktopRuntimeBridge {
@@ -941,6 +955,7 @@ const VISUAL_SURFACE_LABELS: Record<VisualSurface, string> = {
   glass: 'Soft Glass',
   solid: 'Flat Graphite',
   aurora: 'Aurora Glow',
+  daylight: 'Daylight',
 };
 
 const ARTWORK_SHAPE_LABELS: Record<ArtworkShape, string> = {
@@ -1214,6 +1229,11 @@ type RemoteCommandType =
   | 'repeat'
   | 'play_track'
   | 'handoff'
+  | 'handoff_prepare'
+  | 'handoff_ready'
+  | 'handoff_commit'
+  | 'handoff_complete'
+  | 'handoff_cancel'
   | 'connect';
 
 interface RemoteDevice {
@@ -1258,8 +1278,17 @@ interface RemoteCommand {
     shuffleEnabled?: boolean;
     repeatMode?: 'none' | 'all' | 'one';
     connected?: boolean;
+    transferId?: string;
+    reason?: string;
   };
   createdAt: string;
+}
+
+interface PendingSpiceConnectHandoff {
+  state: SpiceConnectHandoffSourceState;
+  targetName: string;
+  acceptTimeoutId: number | null;
+  completeTimeoutId: number | null;
 }
 
 interface UserProfile {
@@ -1382,7 +1411,11 @@ const isAccentTheme = (value: string | null): value is AccentTheme =>
   value === 'pink' || value === 'blue' || value === 'orange' || value === 'green' || value === 'gold' || value === 'crimson' || value === 'deeppurple';
 
 const isVisualSurface = (value: string | null): value is VisualSurface =>
-  value === 'midnight' || value === 'glass' || value === 'solid' || value === 'aurora';
+  value === 'midnight'
+  || value === 'glass'
+  || value === 'solid'
+  || value === 'aurora'
+  || value === 'daylight';
 
 const isArtworkShape = (value: string | null): value is ArtworkShape =>
   value === 'rounded' || value === 'soft' || value === 'circle';
@@ -2431,6 +2464,26 @@ export default function SpiceApp() {
   const [libraryView, setLibraryView] = useState<'list' | 'grid'>('list');
   const [libraryFilter, setLibraryFilter] = useState<'playlists' | 'shared' | 'liked' | 'history' | 'downloads'>('playlists');
 
+  useEffect(() => {
+    if (libraryFilter !== 'downloads' || offlineLibraryBridgeState !== 'available') return;
+    const refreshVisibleLibrary = () => {
+      if (document.visibilityState === 'visible') {
+        void refreshOfflineLibrary().catch((refreshError) => {
+          logDebug(
+            'error',
+            `Offline library refresh failed: ${refreshError instanceof Error ? refreshError.message : refreshError}`,
+          );
+        });
+      }
+    };
+    const refreshInterval = window.setInterval(refreshVisibleLibrary, 15_000);
+    window.addEventListener('focus', refreshVisibleLibrary);
+    return () => {
+      window.clearInterval(refreshInterval);
+      window.removeEventListener('focus', refreshVisibleLibrary);
+    };
+  }, [libraryFilter, logDebug, offlineLibraryBridgeState, refreshOfflineLibrary]);
+
   // Sync profile details when changing profile
   const [editName, setEditName] = useState(activeProfile.displayName);
   const [editBio, setEditBio] = useState(activeProfile.bio);
@@ -2540,6 +2593,7 @@ export default function SpiceApp() {
   const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([]);
   const [pendingInvitesLoading, setPendingInvitesLoading] = useState(false);
   const [notificationTrayOpen, setNotificationTrayOpen] = useState(false);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [selectedReleaseNotification, setSelectedReleaseNotification] = useState<ReleaseNotification | null>(null);
   const [readReleaseNotificationIds, setReadReleaseNotificationIds] = useState<string[]>(() => {
     if (typeof window === 'undefined') return [];
@@ -2685,6 +2739,7 @@ export default function SpiceApp() {
   const [isSearchingTopbarUsers, setIsSearchingTopbarUsers] = useState(false);
   const [recentSearchEntries, setRecentSearchEntries] = useState<ReturnType<typeof getRecentCachedSearches>>([]);
   const topbarSearchShellRef = useRef<HTMLDivElement | null>(null);
+  const topbarProfileShellRef = useRef<HTMLDivElement | null>(null);
   const [error, setError] = useState<string>();
 
   useEffect(() => {
@@ -2699,6 +2754,26 @@ export default function SpiceApp() {
     document.addEventListener('pointerdown', dismissTopbarSearch);
     return () => document.removeEventListener('pointerdown', dismissTopbarSearch);
   }, [topbarSearchTrayOpen]);
+
+  useEffect(() => {
+    if (!profileMenuOpen) return;
+
+    const dismissProfileMenu = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && topbarProfileShellRef.current?.contains(target)) return;
+      setProfileMenuOpen(false);
+    };
+    const dismissProfileMenuWithKeyboard = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setProfileMenuOpen(false);
+    };
+
+    document.addEventListener('pointerdown', dismissProfileMenu);
+    document.addEventListener('keydown', dismissProfileMenuWithKeyboard);
+    return () => {
+      document.removeEventListener('pointerdown', dismissProfileMenu);
+      document.removeEventListener('keydown', dismissProfileMenuWithKeyboard);
+    };
+  }, [profileMenuOpen]);
 
   const [selfTestRunning, setSelfTestRunning] = useState(false);
   const [selfTestResults, setSelfTestResults] = useState<{
@@ -2926,6 +3001,8 @@ export default function SpiceApp() {
   const forgettingRemoteDeviceIdsRef = useRef<Set<string>>(new Set());
   const remoteDeviceListRevisionRef = useRef(0);
   const remoteRequestGenerationRef = useRef(0);
+  const pendingSpiceConnectHandoffRef = useRef<PendingSpiceConnectHandoff | null>(null);
+  const preparedSpiceConnectHandoffsRef = useRef<Map<string, SpiceConnectHandoffDestinationState>>(new Map());
 
   const handleAudioEndedRef = useRef<(
     slot?: 0 | 1,
@@ -5626,6 +5703,8 @@ export default function SpiceApp() {
       clearTimeout(remoteTargetRefreshTimeoutRef.current);
       remoteTargetRefreshTimeoutRef.current = null;
     }
+    clearPendingSpiceConnectHandoffTimers();
+    preparedSpiceConnectHandoffsRef.current.clear();
   }, []);
 
   async function submitProfileListen(
@@ -6966,6 +7045,224 @@ export default function SpiceApp() {
     return true;
   };
 
+  function clearPendingSpiceConnectHandoffTimers(
+    pending = pendingSpiceConnectHandoffRef.current,
+  ) {
+    if (!pending) return;
+    if (pending.acceptTimeoutId !== null) {
+      window.clearTimeout(pending.acceptTimeoutId);
+      pending.acceptTimeoutId = null;
+    }
+    if (pending.completeTimeoutId !== null) {
+      window.clearTimeout(pending.completeTimeoutId);
+      pending.completeTimeoutId = null;
+    }
+  }
+
+  const clearPendingSpiceConnectHandoff = () => {
+    clearPendingSpiceConnectHandoffTimers();
+    pendingSpiceConnectHandoffRef.current = null;
+  };
+
+  const currentSpiceConnectHandoffPayload = (
+    transferId: string,
+  ): NonNullable<RemoteCommand['payload']> => {
+    const sourceTrack = currentTrackRef.current;
+    const sourceQueue = queueRef.current.length > 0 ? queueRef.current : [sourceTrack];
+    return {
+      transferId,
+      track: sourceTrack,
+      queue: sourceQueue.slice(0, 80),
+      queueIndex: queueIndexRef.current,
+      progress: progressRef.current,
+      volume: Math.min(100, volumeRef.current),
+      isPlaying: isPlayingRef.current || isLoadingStreamRef.current,
+      shuffleEnabled: isShuffleRef.current,
+      repeatMode: repeatModeRef.current,
+    };
+  };
+
+  const handleSpiceConnectHandoffReady = async (command: RemoteCommand) => {
+    const pending = pendingSpiceConnectHandoffRef.current;
+    if (!pending) return;
+
+    pending.state = {
+      ...pending.state,
+      sourceWasPlaying: isPlayingRef.current || isLoadingStreamRef.current,
+    };
+    const transition = transitionSpiceConnectHandoffSource(pending.state, {
+      type: 'ready',
+      transferId: command.payload?.transferId || '',
+      sourceDeviceId: command.sourceDeviceId,
+    });
+    if (transition.outbound !== 'commit') return;
+
+    if (pending.acceptTimeoutId !== null) {
+      window.clearTimeout(pending.acceptTimeoutId);
+      pending.acceptTimeoutId = null;
+    }
+    pending.state = transition.state;
+    if (transition.sourcePlayback === 'pause' && (isPlayingRef.current || isLoadingStreamRef.current)) {
+      pauseCurrentPlayback();
+    }
+
+    const payload = currentSpiceConnectHandoffPayload(pending.state.transferId);
+    payload.isPlaying = pending.state.sourceWasPlaying;
+    setRemoteStatus(`${pending.targetName} accepted the transfer. Starting it there now...`);
+    const committed = await sendRemoteCommand(
+      'handoff_commit',
+      payload,
+      pending.state.targetDeviceId,
+      true,
+    );
+    if (pendingSpiceConnectHandoffRef.current !== pending) return;
+
+    if (!committed) {
+      const failed = transitionSpiceConnectHandoffSource(pending.state, { type: 'commit_failed' });
+      clearPendingSpiceConnectHandoff();
+      if (failed.sourcePlayback === 'resume' && !isPlayingRef.current) resumeCurrentPlayback();
+      void sendRemoteCommand(
+        'handoff_cancel',
+        { transferId: pending.state.transferId, reason: 'commit_failed' },
+        pending.state.targetDeviceId,
+        true,
+      );
+      setRemoteStatus(
+        `Transfer delivery to ${pending.targetName} could not be confirmed. This device remains paused to prevent double playback; press Play here to recover.`,
+      );
+      return;
+    }
+
+    const payloadTrack = payload.track;
+    patchRemoteDevice(pending.state.targetDeviceId, {
+      currentTrack: payloadTrack,
+      queue: payload.queue,
+      queueIndex: Number(payload.queueIndex) || 0,
+      progress: Number(payload.progress) || 0,
+      duration: durationRef.current,
+      volume: Number(payload.volume) || 0,
+      isPlaying: payload.isPlaying !== false,
+      shuffleEnabled: payload.shuffleEnabled === true,
+      repeatMode: isRepeatMode(payload.repeatMode) ? payload.repeatMode : 'none',
+    });
+
+    pending.completeTimeoutId = window.setTimeout(() => {
+      if (pendingSpiceConnectHandoffRef.current !== pending) return;
+      const incomplete = transitionSpiceConnectHandoffSource(pending.state, { type: 'complete_timeout' });
+      pending.state = incomplete.state;
+      pending.completeTimeoutId = null;
+      setRemoteStatus(
+        `${pending.targetName} accepted the transfer but did not confirm playback. This device remains paused to prevent double playback; press Play here to recover.`,
+      );
+      pendingSpiceConnectHandoffRef.current = null;
+    }, SPICE_CONNECT_HANDOFF_COMPLETE_TIMEOUT_MS);
+  };
+
+  const handleSpiceConnectHandoffComplete = (command: RemoteCommand) => {
+    const pending = pendingSpiceConnectHandoffRef.current;
+    if (!pending) return;
+    const transition = transitionSpiceConnectHandoffSource(pending.state, {
+      type: 'complete',
+      transferId: command.payload?.transferId || '',
+      sourceDeviceId: command.sourceDeviceId,
+    });
+    if (transition.state.phase !== 'completed') return;
+
+    clearPendingSpiceConnectHandoff();
+    setRemoteStatus(`Playback moved to ${pending.targetName} and was confirmed there.`);
+    scheduleRemoteTargetRefresh(SPICE_CONNECT_POST_COMMAND_SYNC_DELAY_MS);
+  };
+
+  const applySpiceConnectHandoffCommit = async (command: RemoteCommand) => {
+    const transferId = normalizeSpiceConnectTransferId(command.payload?.transferId);
+    const payloadTrack = command.payload?.track;
+    if (!transferId || !payloadTrack || typeof payloadTrack !== 'object' || !payloadTrack.id) {
+      void sendRemoteCommand(
+        'handoff_cancel',
+        { transferId, reason: 'invalid_commit' },
+        command.sourceDeviceId,
+        true,
+      );
+      return;
+    }
+
+    const prepared = preparedSpiceConnectHandoffsRef.current.get(transferId);
+    const committed = commitSpiceConnectHandoffDestination(
+      prepared ?? null,
+      transferId,
+      command.sourceDeviceId,
+      currentTimestampMs(),
+    );
+    if (!committed.matchesPrepared) {
+      preparedSpiceConnectHandoffsRef.current.delete(transferId);
+      void sendRemoteCommand(
+        'handoff_cancel',
+        { transferId, reason: 'transfer_not_prepared' },
+        command.sourceDeviceId,
+        true,
+      );
+      return;
+    }
+    preparedSpiceConnectHandoffsRef.current.delete(transferId);
+
+    const hydratedTrack = enrichTrackSnapshot(payloadTrack as Track);
+    const hydratedQueue = Array.isArray(command.payload?.queue)
+      ? enrichTrackSnapshots(command.payload.queue)
+      : [hydratedTrack];
+    const queueIndexHint = Number(command.payload?.queueIndex);
+    const targetProgress = Number(command.payload?.progress);
+    const targetVolume = Number(command.payload?.volume);
+
+    setSelectedRemoteDeviceId('');
+    localStorage.setItem('spice_remote_selected_device', '');
+    if (typeof command.payload?.shuffleEnabled === 'boolean') {
+      applyLocalShuffleMode(command.payload.shuffleEnabled);
+    }
+    if (isRepeatMode(command.payload?.repeatMode)) {
+      applyLocalRepeatMode(command.payload.repeatMode);
+    }
+    if (Number.isFinite(targetVolume)) {
+      const safeVolume = Math.max(0, Math.min(100, Math.round(targetVolume)));
+      volumeRef.current = safeVolume;
+      setVolume(safeVolume);
+    }
+
+    try {
+      await playTrack(
+        hydratedTrack,
+        hydratedQueue.length > 0 ? hydratedQueue : [hydratedTrack],
+        Number.isInteger(queueIndexHint) ? queueIndexHint : undefined,
+      );
+      if (Number.isFinite(targetProgress) && targetProgress >= 0) seekToPosition(targetProgress);
+      if (command.payload?.isPlaying === false) pauseCurrentPlayback();
+      else resumeCurrentPlayback();
+
+      const confirmed = await sendRemoteCommand(
+        'handoff_complete',
+        { transferId },
+        command.sourceDeviceId,
+        true,
+      );
+      const sourceName = remoteDevices.find((device) => device.deviceId === command.sourceDeviceId)?.displayName
+        || 'the other device';
+      setRemoteStatus(
+        confirmed
+          ? `Playback accepted from ${sourceName}.`
+          : `Playback started here, but ${sourceName} could not be sent the confirmation.`,
+      );
+      scheduleRemoteDeviceSync(1_400);
+    } catch (handoffError) {
+      const message = handoffError instanceof Error ? handoffError.message : 'Playback could not start.';
+      void sendRemoteCommand(
+        'handoff_cancel',
+        { transferId, reason: 'destination_playback_failed' },
+        command.sourceDeviceId,
+        true,
+      );
+      setRemoteStatus(`Transfer failed on this device: ${message}`);
+    }
+  };
+
   const shouldIgnoreRemoteCommand = (command: RemoteCommand, now: number) => {
     const createdAt = new Date(command.createdAt).getTime();
     if (!Number.isFinite(createdAt)) return true;
@@ -6985,7 +7282,11 @@ export default function SpiceApp() {
       setIncomingRemoteControllerId((controllerId) => (
         controllerId === command.sourceDeviceId ? '' : controllerId
       ));
-    } else {
+    } else if (
+      command.command !== 'handoff_ready'
+      && command.command !== 'handoff_complete'
+      && command.command !== 'handoff_cancel'
+    ) {
       setIncomingRemoteControllerId(command.sourceDeviceId);
     }
 
@@ -7045,6 +7346,53 @@ export default function SpiceApp() {
           );
         }
         break;
+      }
+      case 'handoff_prepare': {
+        const transferId = normalizeSpiceConnectTransferId(command.payload?.transferId);
+        if (!transferId) return;
+        const preparedHandoffs = preparedSpiceConnectHandoffsRef.current;
+        for (const [preparedId, prepared] of preparedHandoffs) {
+          if (prepared.expiresAt <= now) preparedHandoffs.delete(preparedId);
+        }
+        const prepared = prepareSpiceConnectHandoffDestination(
+          transferId,
+          command.sourceDeviceId,
+          now,
+        );
+        preparedHandoffs.set(transferId, prepared.state);
+        setRemoteStatus('Another device is preparing to move playback here. Waiting for its final commit...');
+        void sendRemoteCommand(
+          'handoff_ready',
+          { transferId },
+          command.sourceDeviceId,
+          true,
+        );
+        return;
+      }
+      case 'handoff_ready':
+        void handleSpiceConnectHandoffReady(command);
+        return;
+      case 'handoff_commit':
+        void applySpiceConnectHandoffCommit(command);
+        return;
+      case 'handoff_complete':
+        handleSpiceConnectHandoffComplete(command);
+        return;
+      case 'handoff_cancel': {
+        const transferId = normalizeSpiceConnectTransferId(command.payload?.transferId);
+        if (transferId) preparedSpiceConnectHandoffsRef.current.delete(transferId);
+        const pending = pendingSpiceConnectHandoffRef.current;
+        if (
+          pending
+          && pending.state.transferId === transferId
+          && pending.state.targetDeviceId === command.sourceDeviceId
+        ) {
+          const failed = transitionSpiceConnectHandoffSource(pending.state, { type: 'destination_failed' });
+          clearPendingSpiceConnectHandoff();
+          if (failed.sourcePlayback === 'resume' && !isPlayingRef.current) resumeCurrentPlayback();
+          setRemoteStatus(`${pending.targetName} could not accept the transfer. Playback is available on this device.`);
+        }
+        return;
       }
       case 'handoff': {
         const payloadTrack = command.payload?.track;
@@ -7140,11 +7488,12 @@ export default function SpiceApp() {
     }
   };
 
-  const sendRemoteCommand = async (
+  async function sendRemoteCommand(
     command: RemoteCommandType,
     payload: RemoteCommand['payload'] = {},
     targetDeviceId = selectedRemoteDeviceId,
-  ) => {
+    quiet = false,
+  ) {
     if (!remoteAuthToken) {
       setRemoteStatus('Sign in or pair this device to use Spice Connect.');
       return false;
@@ -7194,7 +7543,7 @@ export default function SpiceApp() {
       if (data.transport === 'redis' || data.transport === 'postgresql') {
         setRemoteTransport(data.transport);
       }
-      setRemoteStatus(`Sent ${command} through Spice Connect.`);
+      if (!quiet) setRemoteStatus(`Sent ${command} through Spice Connect.`);
       console.info(`[Spice Connect] queued ${command} from ${remoteDeviceId} to ${targetDeviceId}`);
       scheduleRemoteTargetRefresh();
       return true;
@@ -7208,7 +7557,7 @@ export default function SpiceApp() {
       void loadRemoteDevices();
       return false;
     }
-  };
+  }
 
   const handleEmailVerificationSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -7940,7 +8289,9 @@ export default function SpiceApp() {
       const response = mediaLink.provider === 'youtube'
         ? mediaLink.kind === 'track'
           ? await spiceFetch('local', `/yt/track/${encodeURIComponent(mediaLink.id)}`)
-          : await spiceFetch('local', `/yt/playlist/${encodeURIComponent(mediaLink.id)}`)
+          : mediaLink.kind === 'album'
+            ? await spiceFetch('local', `/yt/album/${encodeURIComponent(mediaLink.id)}`)
+            : await spiceFetch('local', `/yt/playlist/${encodeURIComponent(mediaLink.id)}`)
         : await spiceFetch('local', '/sc/resolve', undefined, { url: mediaLink.url });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
@@ -8033,6 +8384,7 @@ export default function SpiceApp() {
     setSelectedUser(null);
     setTopbarSearchTrayOpen(true);
     setNotificationTrayOpen(false);
+    setProfileMenuOpen(false);
     setRecentSearchEntries(getRecentCachedSearches());
 
     if (provider !== searchProvider) {
@@ -8048,6 +8400,7 @@ export default function SpiceApp() {
     if (quickSearchTab === 'users') {
       setTopbarSearchTrayOpen(Boolean(topbarSearchQuery.trim()));
       setNotificationTrayOpen(false);
+      setProfileMenuOpen(false);
     }
     void resolvePastedMediaLink(topbarSearchQuery).then((handled) => {
       if (!handled) runTopbarSearch(topbarSearchQuery, searchProvider);
@@ -8061,6 +8414,7 @@ export default function SpiceApp() {
     if (!topbarSearchTrayOpen && (e.target.value.trim() || recent.length > 0)) {
       setTopbarSearchTrayOpen(true);
       setNotificationTrayOpen(false);
+      setProfileMenuOpen(false);
     }
   };
 
@@ -8074,6 +8428,7 @@ export default function SpiceApp() {
     setSelectedPlaylist(null);
     setSelectedUser(null);
     setNotificationTrayOpen(false);
+    setProfileMenuOpen(false);
     setCurrentPage('account');
   };
 
@@ -8081,6 +8436,7 @@ export default function SpiceApp() {
     setSelectedPlaylist(null);
     setSelectedUser(null);
     setNotificationTrayOpen(false);
+    setProfileMenuOpen(false);
     setTopbarSearchTrayOpen(false);
     setCurrentPage('settings');
   };
@@ -9707,7 +10063,7 @@ export default function SpiceApp() {
     }
   };
 
-  const patchRemoteDevice = (deviceId: string, updates: Partial<RemoteDevice>) => {
+  function patchRemoteDevice(deviceId: string, updates: Partial<RemoteDevice>) {
     if (!deviceId) return;
     const previousOptimisticState = optimisticRemoteDeviceStateRef.current;
     const previousUpdates = previousOptimisticState?.deviceId === deviceId
@@ -9731,7 +10087,7 @@ export default function SpiceApp() {
         }
         : device
     )));
-  };
+  }
 
   const patchSelectedRemoteDevice = (updates: Partial<RemoteDevice>) => {
     patchRemoteDevice(selectedRemoteDeviceId, updates);
@@ -9768,37 +10124,75 @@ export default function SpiceApp() {
       return false;
     }
     if (!canControlSelectedRemoteReceiver('handoff', targetDevice)) return false;
-    const sourceQueue = queueRef.current.length > 0 ? queueRef.current : [sourceTrack];
-    const sourceWasPlaying = isPlayingRef.current;
-    if (sourceWasPlaying || isLoadingStreamRef.current) {
-      pauseCurrentPlayback();
-    }
-    const sent = await sendRemoteCommand('handoff', {
-      track: sourceTrack,
-      queue: sourceQueue.slice(0, 80),
-      queueIndex: queueIndexRef.current,
-      progress: progressRef.current,
-      volume: Math.min(100, volumeRef.current),
-      isPlaying: sourceWasPlaying,
-      shuffleEnabled: isShuffleRef.current,
-      repeatMode: repeatModeRef.current,
-    }, targetDevice.deviceId);
-    if (!sent) {
-      if (sourceWasPlaying) resumeCurrentPlayback();
+
+    const existingHandoff = pendingSpiceConnectHandoffRef.current;
+    if (existingHandoff?.state.phase === 'waiting_for_complete') {
+      setRemoteStatus(
+        `${existingHandoff.targetName} already accepted a transfer. Wait for its playback confirmation before moving again.`,
+      );
       return false;
     }
-    patchRemoteDevice(targetDevice.deviceId, {
-      currentTrack: sourceTrack,
-      queue: sourceQueue.slice(0, 80),
-      queueIndex: queueIndexRef.current,
-      progress: progressRef.current,
-      duration: durationRef.current,
-      volume: Math.min(100, volumeRef.current),
-      isPlaying: sourceWasPlaying,
-      shuffleEnabled: isShuffleRef.current,
-      repeatMode: repeatModeRef.current,
-    });
-    setRemoteStatus(`Playback moved to ${targetDevice.displayName} at ${formatTime(progressRef.current)}.`);
+    if (existingHandoff) {
+      clearPendingSpiceConnectHandoff();
+      void sendRemoteCommand(
+        'handoff_cancel',
+        { transferId: existingHandoff.state.transferId, reason: 'superseded' },
+        existingHandoff.state.targetDeviceId,
+        true,
+      );
+    }
+
+    const transferId = createSpiceConnectTransferId(
+      remoteDeviceId,
+      targetDevice.deviceId,
+      currentTimestampMs(),
+      createRemoteDeviceId(),
+    );
+    const started = startSpiceConnectHandoffSource(
+      transferId,
+      targetDevice.deviceId,
+      isPlayingRef.current || isLoadingStreamRef.current,
+    );
+    const pending: PendingSpiceConnectHandoff = {
+      state: started.state,
+      targetName: targetDevice.displayName,
+      acceptTimeoutId: null,
+      completeTimeoutId: null,
+    };
+    pendingSpiceConnectHandoffRef.current = pending;
+    pending.acceptTimeoutId = window.setTimeout(() => {
+      if (pendingSpiceConnectHandoffRef.current !== pending) return;
+      const timedOut = transitionSpiceConnectHandoffSource(pending.state, { type: 'ready_timeout' });
+      clearPendingSpiceConnectHandoff();
+      if (timedOut.sourcePlayback === 'resume' && !isPlayingRef.current) resumeCurrentPlayback();
+      void sendRemoteCommand(
+        'handoff_cancel',
+        { transferId, reason: 'ready_timeout' },
+        targetDevice.deviceId,
+        true,
+      );
+      setRemoteStatus(
+        `${targetDevice.displayName} did not accept the transfer in time. Playback stayed on this device.`,
+      );
+    }, SPICE_CONNECT_HANDOFF_ACCEPT_TIMEOUT_MS);
+
+    setRemoteStatus(`Waiting for ${targetDevice.displayName} to accept the playback transfer...`);
+    const prepared = await sendRemoteCommand(
+      'handoff_prepare',
+      { transferId },
+      targetDevice.deviceId,
+      true,
+    );
+    if (pendingSpiceConnectHandoffRef.current !== pending) {
+      return pending.state.phase === 'completed' || pending.state.phase === 'waiting_for_complete';
+    }
+    if (!prepared) {
+      const failed = transitionSpiceConnectHandoffSource(pending.state, { type: 'prepare_failed' });
+      clearPendingSpiceConnectHandoff();
+      if (failed.sourcePlayback === 'resume' && !isPlayingRef.current) resumeCurrentPlayback();
+      setRemoteStatus(`Could not ask ${targetDevice.displayName} to accept playback. Playback stayed here.`);
+      return false;
+    }
     return true;
   };
 
@@ -9848,6 +10242,54 @@ export default function SpiceApp() {
     }
 
     playTrack(track, newQueue, undefined, false, false, false, playlistQueueOriginId);
+  };
+
+  const playOfflineLibraryEntry = async (entry: DesktopOfflineLibraryEntry) => {
+    const bridge = getSpiceDesktopOfflineLibraryBridge();
+    if (bridge) {
+      try {
+        const availability = await bridge.exists(entry.fileName);
+        if (!availability.exists) {
+          setOfflineLibraryEntries((entries) => entries.filter(
+            (candidate) => candidate.fileName !== entry.fileName,
+          ));
+          await refreshOfflineLibrary();
+          showSpiceNotice(
+            `"${entry.track.title}" was moved or deleted outside SPICE, so it was removed from Downloads.`,
+            'warning',
+          );
+          return;
+        }
+      } catch (availabilityError) {
+        showSpiceNotice(
+          availabilityError instanceof Error
+            ? availabilityError.message
+            : 'SPICE could not verify that downloaded file.',
+          'warning',
+        );
+        return;
+      }
+    }
+
+    startTrackOnActiveReceiver(
+      entry.track,
+      offlineLibraryEntries.map((item) => item.track),
+      'offline-library',
+    );
+  };
+
+  const showOfflineLibraryEntry = async (entry: DesktopOfflineLibraryEntry) => {
+    const result = await getSpiceDesktopOfflineLibraryBridge()?.show(entry.fileName);
+    if (result?.missing) {
+      setOfflineLibraryEntries((entries) => entries.filter(
+        (candidate) => candidate.fileName !== entry.fileName,
+      ));
+      await refreshOfflineLibrary();
+      showSpiceNotice(
+        `"${entry.track.title}" is no longer in the selected offline folder.`,
+        'warning',
+      );
+    }
   };
 
   const handleReceiverPrev = () => {
@@ -10880,6 +11322,25 @@ const getMaskedEmail = (email: string) => {
         --spice-app-background: radial-gradient(circle at 16% 10%, rgba(var(--accent-pink-rgb), 0.22), transparent 28%), radial-gradient(circle at 86% 20%, rgba(168, 85, 247, 0.16), transparent 34%), #030305;
         --spice-panel-filter: blur(24px);
       `,
+      daylight: `
+        color-scheme: light;
+        --body-bg: #f5f3f8;
+        --card-bg: rgba(255, 255, 255, 0.94);
+        --border-color: rgba(32, 24, 45, 0.14);
+        --bg-primary: #f7f5fa;
+        --bg-surface: #ffffff;
+        --bg-surface-hover: #ece8f1;
+        --bg-surface-active: #e4deea;
+        --bg-glass: rgba(255, 255, 255, 0.86);
+        --bg-glass-hover: rgba(255, 255, 255, 0.96);
+        --text-primary: #19151f;
+        --text-secondary: #625b6b;
+        --text-muted: #8b8394;
+        --border-subtle: rgba(32, 24, 45, 0.11);
+        --border-glass: rgba(32, 24, 45, 0.12);
+        --spice-app-background: radial-gradient(circle at 16% 8%, rgba(var(--accent-pink-rgb), 0.1), transparent 30%), #f7f5fa;
+        --spice-panel-filter: blur(22px);
+      `,
     };
     const artRadiusByShape: Record<ArtworkShape, string> = {
       rounded: '10px',
@@ -11243,7 +11704,7 @@ const getMaskedEmail = (email: string) => {
 
   return (
     <div
-      className={`app ${sidebarHidden ? 'app--sidebar-hidden' : ''} topbar-layout--${topbarLayout} player-style--${playerVisualStyle} player-placement--${playerPlacement}`}
+      className={`app ${sidebarHidden ? 'app--sidebar-hidden' : ''} surface--${visualSurface} topbar-layout--${topbarLayout} player-style--${playerVisualStyle} player-placement--${playerPlacement}`}
       style={customThemeEnabled ? createThemeCssVariables(customThemePalette) as React.CSSProperties : undefined}
     >
       <style dangerouslySetInnerHTML={{ __html: getAccentStyles() }} />
@@ -12222,6 +12683,7 @@ const getMaskedEmail = (email: string) => {
                   onClick={() => {
                     setNotificationTrayOpen((open) => !open);
                     setTopbarSearchTrayOpen(false);
+                    setProfileMenuOpen(false);
                   }}
                   aria-label={`Open notifications${notificationCount > 0 ? ` (${notificationCount} waiting)` : ''}`}
                   aria-expanded={notificationTrayOpen}
@@ -12373,24 +12835,62 @@ const getMaskedEmail = (email: string) => {
               >
                 {Icons.settings}
               </button>
-              <button
-                className="app-topbar__profile"
-                type="button"
-                onClick={openAccountFromTopbar}
-                aria-label={`Open profile for ${activeProfile.displayName}`}
-              >
-                <span className="app-topbar__avatar" style={{ background: activeProfile.avatarUrl ? 'transparent' : activeProfile.gradient }}>
-                  {activeProfile.avatarUrl ? (
-                    <img src={activeProfile.avatarUrl} alt="" />
-                  ) : (
-                    activeProfile.displayName.charAt(0).toUpperCase()
-                  )}
-                </span>
-                <span className="app-topbar__profile-copy">
-                  <strong>{activeProfile.displayName}</strong>
-                  <small>{isMounted && cloudUser?.accountRole ? `${cloudUser.accountRole} account` : 'Local profile'}</small>
-                </span>
-              </button>
+              <div className="app-topbar__profile-shell" ref={topbarProfileShellRef}>
+                <button
+                  className={`app-topbar__profile ${profileMenuOpen ? 'active' : ''}`}
+                  type="button"
+                  onClick={() => {
+                    setProfileMenuOpen((open) => !open);
+                    setNotificationTrayOpen(false);
+                    setTopbarSearchTrayOpen(false);
+                  }}
+                  aria-label={`Open profile menu for ${activeProfile.displayName}`}
+                  aria-haspopup="menu"
+                  aria-expanded={profileMenuOpen}
+                >
+                  <span className="app-topbar__avatar" style={{ background: activeProfile.avatarUrl ? 'transparent' : activeProfile.gradient }}>
+                    {activeProfile.avatarUrl ? (
+                      <img src={activeProfile.avatarUrl} alt="" />
+                    ) : (
+                      activeProfile.displayName.charAt(0).toUpperCase()
+                    )}
+                  </span>
+                  <span className="app-topbar__profile-copy">
+                    <strong>{activeProfile.displayName}</strong>
+                    <small>{isMounted && cloudUser?.accountRole ? `${cloudUser.accountRole} account` : 'Local profile'}</small>
+                  </span>
+                </button>
+                {profileMenuOpen && (
+                  <div className="app-topbar__profile-menu" role="menu" aria-label="Profile actions">
+                    <div className="app-topbar__profile-menu-identity">
+                      <strong>{activeProfile.displayName}</strong>
+                      <span>{cloudUsername ? `@${cloudUsername}` : 'Stored on this device'}</span>
+                    </div>
+                    <button type="button" role="menuitem" onClick={openAccountFromTopbar}>
+                      {Icons.account}
+                      <span>Account and profile</span>
+                    </button>
+                    <button type="button" role="menuitem" onClick={openSettingsFromTopbar}>
+                      {Icons.settings}
+                      <span>Settings</span>
+                    </button>
+                    {cloudToken && (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="app-topbar__profile-menu-signout"
+                        onClick={() => {
+                          setProfileMenuOpen(false);
+                          handleLogout();
+                        }}
+                      >
+                        {Icons.close}
+                        <span>Sign out of SPICE Cloud</span>
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           </header>
 
@@ -13764,11 +14264,7 @@ const getMaskedEmail = (email: string) => {
                           <div
                             key={entry.fileName}
                             className="library-item animate-in"
-                            onClick={() => startTrackOnActiveReceiver(
-                              entry.track,
-                              offlineLibraryEntries.map((item) => item.track),
-                              'offline-library',
-                            )}
+                            onClick={() => void playOfflineLibraryEntry(entry)}
                           >
                             <img className="library-item__art" src={entry.track.artworkUrl || '/icon.svg'} alt={entry.track.title} />
                             <div className="library-item__info">
@@ -13782,7 +14278,7 @@ const getMaskedEmail = (email: string) => {
                               style={{ opacity: 1 }}
                               onClick={(event) => {
                                 event.stopPropagation();
-                                void getSpiceDesktopOfflineLibraryBridge()?.show(entry.fileName);
+                                void showOfflineLibraryEntry(entry);
                               }}
                               title="Show audio file in folder"
                             >
@@ -14539,7 +15035,7 @@ const getMaskedEmail = (email: string) => {
 
                     {/* Theme Accent Settings */}
                     <div id="theme-accent" style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
-                    <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.palette} Global Accent Colors</h3>
+                    <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.palette} Global Accent Colors</h3>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0 0 20px 0', lineHeight: 1.4 }}>
                       Select a dynamic accent theme color to instantly paint application highlights, glow animations, button hovers, and dividers.
                     </p>
@@ -14568,7 +15064,7 @@ const getMaskedEmail = (email: string) => {
                             style={{ background: 'var(--body-bg)', border: isCurrent ? `2px solid ${t.color}` : '1px solid var(--border-color)', padding: '16px', borderRadius: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', minWidth: '180px', flex: '1 1 auto', transition: 'all 0.15s ease', font: 'inherit', textAlign: 'left' }}
                           >
                             <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: t.gradient, flexShrink: 0, boxShadow: isCurrent ? `0 0 10px ${t.color}` : 'none' }}></div>
-                            <span style={{ fontSize: '0.85rem', fontWeight: 600, color: isCurrent ? t.color : '#fff' }}>{t.name}</span>
+                            <span style={{ fontSize: '0.85rem', fontWeight: 600, color: isCurrent ? t.color : 'var(--text-primary)' }}>{t.name}</span>
                           </button>
                         );
                       })}
@@ -14587,7 +15083,7 @@ const getMaskedEmail = (email: string) => {
 
                   {/* Visual Customization */}
                   <div id="visual-customization" style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
-                    <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.palette} Visual Customization</h3>
+                    <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.palette} Visual Customization</h3>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0 0 20px 0', lineHeight: 1.4 }}>
                       Tune the header, app surface, cover shape, motion level, and layout density. These preferences save locally and apply instantly.
                     </p>
@@ -14615,13 +15111,14 @@ const getMaskedEmail = (email: string) => {
                         <div>
                           <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>Surface Style</label>
                           <select
+                            aria-label="Surface style"
                             value={visualSurface}
                             onChange={(e) => {
                               if (!isVisualSurface(e.target.value)) return;
                               setVisualSurface(e.target.value);
                               localStorage.setItem('spice_visual_surface', e.target.value);
                             }}
-                            style={{ width: '100%', padding: '10px 14px', background: '#0a0a0a', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', outline: 'none', cursor: 'pointer' }}
+                            style={{ width: '100%', padding: '10px 14px', background: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', outline: 'none', cursor: 'pointer' }}
                           >
                             {(Object.entries(VISUAL_SURFACE_LABELS) as [VisualSurface, string][]).map(([id, label]) => (
                               <option key={id} value={id}>{label}</option>
@@ -14632,13 +15129,14 @@ const getMaskedEmail = (email: string) => {
                         <div>
                           <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>Artwork Shape</label>
                           <select
+                            aria-label="Artwork shape"
                             value={artworkShape}
                             onChange={(e) => {
                               if (!isArtworkShape(e.target.value)) return;
                               setArtworkShape(e.target.value);
                               localStorage.setItem('spice_artwork_shape', e.target.value);
                             }}
-                            style={{ width: '100%', padding: '10px 14px', background: '#0a0a0a', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', outline: 'none', cursor: 'pointer' }}
+                            style={{ width: '100%', padding: '10px 14px', background: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', outline: 'none', cursor: 'pointer' }}
                           >
                             {(Object.entries(ARTWORK_SHAPE_LABELS) as [ArtworkShape, string][]).map(([id, label]) => (
                               <option key={id} value={id}>{label}</option>
@@ -14655,7 +15153,7 @@ const getMaskedEmail = (email: string) => {
                               setMotionLevel(e.target.value);
                               localStorage.setItem('spice_motion_level', e.target.value);
                             }}
-                            style={{ width: '100%', padding: '10px 14px', background: '#0a0a0a', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', outline: 'none', cursor: 'pointer' }}
+                            style={{ width: '100%', padding: '10px 14px', background: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', outline: 'none', cursor: 'pointer' }}
                           >
                             {(Object.entries(MOTION_LEVEL_LABELS) as [MotionLevel, string][]).map(([id, label]) => (
                               <option key={id} value={id}>{label}</option>
@@ -14672,7 +15170,7 @@ const getMaskedEmail = (email: string) => {
                               setInterfaceScale(e.target.value);
                               localStorage.setItem('spice_interface_scale', e.target.value);
                             }}
-                            style={{ width: '100%', padding: '10px 14px', background: '#0a0a0a', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', outline: 'none', cursor: 'pointer' }}
+                            style={{ width: '100%', padding: '10px 14px', background: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', outline: 'none', cursor: 'pointer' }}
                           >
                             {(Object.entries(INTERFACE_SCALE_LABELS) as [InterfaceScale, string][]).map(([id, label]) => (
                               <option key={id} value={id}>{label}</option>
@@ -14681,11 +15179,11 @@ const getMaskedEmail = (email: string) => {
                         </div>
                       </div>
 
-                      <div style={{ border: '1px solid var(--border-color)', borderRadius: '14px', padding: '16px', background: 'linear-gradient(135deg, rgba(var(--accent-pink-rgb), 0.12), rgba(255,255,255,0.03))', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: '178px' }}>
+                      <div style={{ border: '1px solid var(--border-color)', borderRadius: '14px', padding: '16px', background: 'linear-gradient(135deg, rgba(var(--accent-pink-rgb), 0.12), color-mix(in srgb, var(--text-primary) 3%, transparent))', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: '178px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
                           <div style={{ width: '52px', height: '52px', borderRadius: 'var(--spice-art-radius)', background: 'var(--accent-gradient)', boxShadow: '0 10px 28px rgba(var(--accent-pink-rgb), 0.28)' }} />
                           <div style={{ minWidth: 0 }}>
-                            <div style={{ color: '#fff', fontWeight: 800, fontSize: '0.95rem' }}>Live Preview</div>
+                            <div style={{ color: 'var(--text-primary)', fontWeight: 800, fontSize: '0.95rem' }}>Live Preview</div>
                             <div style={{ color: 'var(--text-secondary)', fontSize: '0.78rem' }}>{TOPBAR_LAYOUT_LABELS[topbarLayout]} / {VISUAL_SURFACE_LABELS[visualSurface]} / {INTERFACE_SCALE_LABELS[interfaceScale]}</div>
                           </div>
                         </div>
@@ -14703,12 +15201,12 @@ const getMaskedEmail = (email: string) => {
 
                   {/* Profile Privacy Settings */}
                   <div id="profile-privacy" style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
-                    <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>👤 Profile Privacy</h3>
+                    <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>👤 Profile Privacy</h3>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0 0 20px 0', lineHeight: 1.4 }}>
                       Control how other listeners see your SPICE profile. Private profiles hide your bio, streaming counts, liked tracks, and custom playlists from search results and profiles.
                     </p>
 
-                    <label style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '14px', background: '#070707', cursor: 'pointer' }}>
+                    <label style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '14px', background: 'var(--bg-surface)', cursor: 'pointer' }}>
                       <input
                         type="checkbox"
                         checked={activeProfile.isPrivate === true}
@@ -14718,7 +15216,7 @@ const getMaskedEmail = (email: string) => {
                         style={{ accentColor: 'var(--accent-pink)', marginTop: '3px' }}
                       />
                       <span>
-                        <span style={{ display: 'block', color: '#fff', fontWeight: 800, fontSize: '0.9rem' }}>Private Profile</span>
+                        <span style={{ display: 'block', color: 'var(--text-primary)', fontWeight: 800, fontSize: '0.9rem' }}>Private Profile</span>
                         <span style={{ display: 'block', color: 'var(--text-secondary)', fontSize: '0.74rem', lineHeight: 1.4, marginTop: '4px' }}>
                           When enabled, other users can only see your avatar, username, and join date. Your bio, stats, and playlists will be hidden.
                         </span>
@@ -14728,13 +15226,13 @@ const getMaskedEmail = (email: string) => {
 
                   {/* Sidebar Controls */}
                   <div id="sidebar-controls" style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
-                    <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.library} Sidebar Controls</h3>
+                    <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.library} Sidebar Controls</h3>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0 0 20px 0', lineHeight: 1.4 }}>
                       Collapse the SPICE Music sidebar into an icon rail or trim optional sidebar tabs. Topbar search and the profile button stay available.
                     </p>
 
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '14px' }}>
-                      <label style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '14px', background: '#070707', cursor: 'pointer' }}>
+                      <label style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '14px', background: 'var(--bg-surface)', cursor: 'pointer' }}>
                         <input
                           type="checkbox"
                           checked={!sidebarHidden}
@@ -14742,14 +15240,14 @@ const getMaskedEmail = (email: string) => {
                           style={{ accentColor: 'var(--accent-pink)', marginTop: '3px' }}
                         />
                         <span>
-                          <span style={{ display: 'block', color: '#fff', fontWeight: 800, fontSize: '0.9rem' }}>Expanded sidebar</span>
+                          <span style={{ display: 'block', color: 'var(--text-primary)', fontWeight: 800, fontSize: '0.9rem' }}>Expanded sidebar</span>
                           <span style={{ display: 'block', color: 'var(--text-secondary)', fontSize: '0.74rem', lineHeight: 1.4, marginTop: '4px' }}>
                             Turn this off to keep navigation icons visible in a compact rail while widening the player and content area.
                           </span>
                         </span>
                       </label>
 
-                      <label style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '14px', background: '#070707', cursor: 'pointer' }}>
+                      <label style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '14px', background: 'var(--bg-surface)', cursor: 'pointer' }}>
                         <input
                           type="checkbox"
                           checked={sidebarSearchEnabled}
@@ -14757,14 +15255,14 @@ const getMaskedEmail = (email: string) => {
                           style={{ accentColor: 'var(--accent-pink)', marginTop: '3px' }}
                         />
                         <span>
-                          <span style={{ display: 'block', color: '#fff', fontWeight: 800, fontSize: '0.9rem' }}>Search tab</span>
+                          <span style={{ display: 'block', color: 'var(--text-primary)', fontWeight: 800, fontSize: '0.9rem' }}>Search tab</span>
                           <span style={{ display: 'block', color: 'var(--text-secondary)', fontSize: '0.74rem', lineHeight: 1.4, marginTop: '4px' }}>
                             Show Search in the sidebar. Global topbar search remains enabled.
                           </span>
                         </span>
                       </label>
 
-                      <label style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '14px', background: '#070707', cursor: 'pointer' }}>
+                      <label style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '14px', background: 'var(--bg-surface)', cursor: 'pointer' }}>
                         <input
                           type="checkbox"
                           checked={sidebarProfileEnabled}
@@ -14772,14 +15270,14 @@ const getMaskedEmail = (email: string) => {
                           style={{ accentColor: 'var(--accent-pink)', marginTop: '3px' }}
                         />
                         <span>
-                          <span style={{ display: 'block', color: '#fff', fontWeight: 800, fontSize: '0.9rem' }}>Profile tab</span>
+                          <span style={{ display: 'block', color: 'var(--text-primary)', fontWeight: 800, fontSize: '0.9rem' }}>Profile tab</span>
                           <span style={{ display: 'block', color: 'var(--text-secondary)', fontSize: '0.74rem', lineHeight: 1.4, marginTop: '4px' }}>
                             Show Profile in the sidebar. The topbar avatar still opens your account page.
                           </span>
                         </span>
                       </label>
 
-                      <label style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '14px', background: '#070707', cursor: 'pointer' }}>
+                      <label style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '14px', background: 'var(--bg-surface)', cursor: 'pointer' }}>
                         <input
                           type="checkbox"
                           checked={sidebarSettingsEnabled}
@@ -14787,7 +15285,7 @@ const getMaskedEmail = (email: string) => {
                           style={{ accentColor: 'var(--accent-pink)', marginTop: '3px' }}
                         />
                         <span>
-                          <span style={{ display: 'block', color: '#fff', fontWeight: 800, fontSize: '0.9rem' }}>Settings tab</span>
+                          <span style={{ display: 'block', color: 'var(--text-primary)', fontWeight: 800, fontSize: '0.9rem' }}>Settings tab</span>
                           <span style={{ display: 'block', color: 'var(--text-secondary)', fontSize: '0.74rem', lineHeight: 1.4, marginTop: '4px' }}>
                             Show Settings in the sidebar. The topbar settings button always remains available.
                           </span>
@@ -15052,7 +15550,7 @@ const getMaskedEmail = (email: string) => {
 
                   {/* Audio Settings */}
                   <div id="audio-streaming" style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
-                    <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.headphones} Audio & Streaming Preferences</h3>
+                    <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.headphones} Audio & Streaming Preferences</h3>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0 0 20px 0', lineHeight: 1.4 }}>
                       Fine-tune streaming codecs and bitrates to match your current network speed or data constraints.
                     </p>
@@ -15066,7 +15564,7 @@ const getMaskedEmail = (email: string) => {
                             setAudioQuality(e.target.value as any);
                             localStorage.setItem('spice_audio_quality', e.target.value);
                           }}
-                          style={{ width: '100%', padding: '10px 14px', background: '#0a0a0a', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', outline: 'none', cursor: 'pointer' }}
+                          style={{ width: '100%', padding: '10px 14px', background: 'var(--body-bg)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', outline: 'none', cursor: 'pointer' }}
                         >
                           <option value="high">High Definition (Best Available AAC)</option>
                           <option value="standard">Standard Balanced (Browser Compatible)</option>
@@ -15087,7 +15585,7 @@ const getMaskedEmail = (email: string) => {
                               localStorage.setItem('spice_stream_embed_migration_v1034', 'true');
                             }
                           }}
-                          style={{ width: '100%', padding: '10px 14px', background: '#0a0a0a', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', outline: 'none', cursor: 'pointer' }}
+                          style={{ width: '100%', padding: '10px 14px', background: 'var(--body-bg)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', outline: 'none', cursor: 'pointer' }}
                         >
                           <option value="proxy">Signed Direct Audio Proxy (Recommended)</option>
                           <option value="web">YouTube InnerTube Web Stream (Attestation)</option>
@@ -15102,7 +15600,7 @@ const getMaskedEmail = (email: string) => {
                   <div id="profile-sync" style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
                     <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '16px', marginBottom: '18px' }}>
                       <div>
-                        <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.database} Listening Profile Sync</h3>
+                        <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.database} Listening Profile Sync</h3>
                         <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: 0, lineHeight: 1.4 }}>
                           Update your Last.fm and ListenBrainz profiles from playback. Search stays focused on playable providers.
                         </p>
@@ -15268,7 +15766,7 @@ const getMaskedEmail = (email: string) => {
 
                   {/* Player View & Position Settings */}
                   <div id="player-layout" style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
-                    <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.monitor} Player Layout & Viewing Options</h3>
+                    <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.monitor} Player Layout & Viewing Options</h3>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0 0 20px 0', lineHeight: 1.4 }}>
                       Customize the now-playing bar placement, open the immersive full-screen player, or collapse it into a floating picture-in-picture widget.
                     </p>
@@ -15342,7 +15840,7 @@ const getMaskedEmail = (email: string) => {
                   </div>
 
                   <div id="playback-profiles" style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
-                    <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif' }}>Playback Profiles & Smart Queue</h3>
+                    <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'Outfit, sans-serif' }}>Playback Profiles & Smart Queue</h3>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0 0 20px 0', lineHeight: 1.4 }}>
                       Save multiple listening behaviors, smooth direct-audio transitions, and rebuild the queue with repeat-avoidance and artist/source diversity.
                     </p>
@@ -15356,14 +15854,14 @@ const getMaskedEmail = (email: string) => {
 
                   {/* Spice Connect Settings */}
                   <div id="spice-connect" style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
-                    <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.monitor} Spice Connect Setup</h3>
+                    <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.monitor} Spice Connect Setup</h3>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0 0 20px 0', lineHeight: 1.4 }}>
                       This desktop registers as soon as you sign in or pair it. Every receiver shows its live status and last connection time; removing a paired device also revokes its access.
                     </p>
 
                     <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 0.85fr) minmax(0, 1.15fr)', gap: '20px', alignItems: 'start' }}>
-                      <div style={{ border: '1px solid var(--border-color)', borderRadius: '12px', padding: '16px', background: '#070707' }}>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#fff', fontSize: '0.85rem', fontWeight: 700, marginBottom: '14px' }}>
+                      <div style={{ border: '1px solid var(--border-color)', borderRadius: '12px', padding: '16px', background: 'var(--body-bg)' }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '10px', color: 'var(--text-primary)', fontSize: '0.85rem', fontWeight: 700, marginBottom: '14px' }}>
                           <input
                             type="checkbox"
                             checked={remoteControlEnabled}
@@ -15386,7 +15884,7 @@ const getMaskedEmail = (email: string) => {
                             localStorage.setItem('spice_remote_device_name', e.target.value);
                           }}
                           placeholder="Living room speaker"
-                          style={{ width: '100%', padding: '10px 14px', background: '#0a0a0a', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', outline: 'none', marginBottom: '12px' }}
+                          style={{ width: '100%', padding: '10px 14px', background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', outline: 'none', marginBottom: '12px' }}
                         />
 
                         <p style={{ color: 'var(--text-secondary)', fontSize: '0.74rem', lineHeight: 1.4, margin: 0 }}>
@@ -15418,10 +15916,10 @@ const getMaskedEmail = (email: string) => {
                         </div>
                       </div>
 
-                      <div style={{ border: '1px solid var(--border-color)', borderRadius: '12px', padding: '16px', background: '#070707' }}>
+                      <div style={{ border: '1px solid var(--border-color)', borderRadius: '12px', padding: '16px', background: 'var(--body-bg)' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
                           <div>
-                            <div style={{ color: '#fff', fontWeight: 800, fontSize: '0.92rem' }}>Player Receiver</div>
+                            <div style={{ color: 'var(--text-primary)', fontWeight: 800, fontSize: '0.92rem' }}>Player Receiver</div>
                             <p style={{ color: 'var(--text-secondary)', fontSize: '0.74rem', lineHeight: 1.4, margin: '4px 0 0 0' }}>
                               {remoteAuthToken ? `${remoteTargetDevices.length} other Spice Connect device(s) visible. The player uses this same receiver.` : 'Sign in or pair this device to see Spice Connect devices.'}
                             </p>
@@ -15445,7 +15943,7 @@ const getMaskedEmail = (email: string) => {
                           value={selectedRemoteDeviceId}
                           onChange={(e) => selectSpiceConnectReceiver(e.target.value)}
                           disabled={!remoteAuthToken}
-                          style={{ width: '100%', padding: '10px 14px', background: '#0a0a0a', border: '1px solid var(--border-color)', borderRadius: '8px', color: '#fff', outline: 'none', cursor: 'pointer', marginBottom: '14px' }}
+                          style={{ width: '100%', padding: '10px 14px', background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', outline: 'none', cursor: 'pointer', marginBottom: '14px' }}
                         >
                           <option value="">This device (current browser)</option>
                           {remoteTargetDevices.map((device) => (
@@ -15462,7 +15960,11 @@ const getMaskedEmail = (email: string) => {
                                 <span style={{ color: device.isOnline === false ? 'var(--text-muted)' : 'var(--accent-pink)', display: 'inline-flex' }}>{Icons.monitor}</span>
                                 <span style={{ minWidth: 0, flex: 1 }}>
                                   <strong className="truncate" style={{ display: 'block', color: 'var(--text-primary)', fontSize: '0.8rem' }}>{device.displayName}</strong>
-                                  <small style={{ color: 'var(--text-secondary)' }}>{receiverStatusLabel(device)}</small>
+                                  <small style={{ color: 'var(--text-secondary)' }}>
+                                    {device.deviceId === selectedRemoteDeviceId
+                                      ? `Currently connected - ${receiverStatusLabel(device)}`
+                                      : receiverStatusLabel(device)}
+                                  </small>
                                 </span>
                                 <button className="btn btn--ghost" style={{ padding: '6px 9px' }} onClick={() => void forgetSpiceConnectDevice(device.deviceId)} title={`Forget ${device.displayName}`} aria-label={`Forget ${device.displayName}`}>
                                   {Icons.close}
@@ -15483,14 +15985,14 @@ const getMaskedEmail = (email: string) => {
                             >
                               Move this playback to {selectedRemoteDevice.displayName}
                             </button>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.08)', background: '#0a0a0a' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', borderRadius: '12px', border: '1px solid var(--border-color)', background: 'var(--card-bg)' }}>
                               <img
                                 src={selectedRemoteDevice.currentTrack?.artworkUrl || '/icon.svg'}
                                 alt=""
                                 style={{ width: '48px', height: '48px', borderRadius: '10px', objectFit: 'cover', flexShrink: 0 }}
                               />
                               <div style={{ minWidth: 0, flex: 1 }}>
-                                <div className="truncate" style={{ color: '#fff', fontWeight: 800, fontSize: '0.86rem' }}>
+                                <div className="truncate" style={{ color: 'var(--text-primary)', fontWeight: 800, fontSize: '0.86rem' }}>
                                   {selectedRemoteDevice.currentTrack?.title || 'No active track'}
                                 </div>
                                 <div className="truncate" style={{ color: 'var(--text-secondary)', fontSize: '0.74rem', marginTop: '2px' }}>
@@ -15558,7 +16060,7 @@ const getMaskedEmail = (email: string) => {
                   </div>
 
                   <div id="offline-runtime" style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
-                    <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif' }}>Offline Shell & Runtime Diagnostics</h3>
+                    <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'Outfit, sans-serif' }}>Offline Shell & Runtime Diagnostics</h3>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0 0 20px 0', lineHeight: 1.4 }}>
                       Keep the application shell available without a connection, inspect the local runtime, and rebuild stale caches safely.
                     </p>
@@ -15567,7 +16069,7 @@ const getMaskedEmail = (email: string) => {
 
                   {/* User Feedback & Suggestions */}
                   <div id="feedback-support" style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
-                    <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="18" height="18">
                         <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
                       </svg>
@@ -15664,7 +16166,7 @@ const getMaskedEmail = (email: string) => {
 
                   {/* Cache & Safety Controls */}
                   <div id="storage-safety" style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
-                    <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.shield} Caches & System Integrity</h3>
+                    <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.shield} Caches & System Integrity</h3>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0 0 20px 0', lineHeight: 1.4 }}>
                       Reset local session states, clear playback history logs, or completely purge LocalStorage profile registries with a single command.
                     </p>
@@ -15714,7 +16216,7 @@ const getMaskedEmail = (email: string) => {
                   {/* System diagnostics & Monospace Live Log Terminal */}
                   <div id="system-diagnostics" style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '40px', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
-                      <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 800, color: '#fff', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 800, color: 'var(--text-primary)', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>
                         {Icons.tool} System Diagnostics & Live Terminal
                       </h3>
                       <span style={{ fontSize: '0.75rem', background: 'rgba(255,255,255,0.04)', color: 'var(--text-secondary)', padding: '4px 10px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.06)' }}>
