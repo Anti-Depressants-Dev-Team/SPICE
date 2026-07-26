@@ -11654,9 +11654,6 @@ const getMaskedEmail = (email: string) => {
       label: 'Desktop',
       items: [
         ...(desktopUpdaterAvailable ? [{ id: 'desktop-updates', label: 'Desktop App', icon: Icons.monitor }] : []),
-        ...(offlineLibraryBridgeState === 'available'
-          ? [{ id: 'offline-library', label: 'Offline Music', icon: Icons.download }]
-          : []),
         ...(nativeShellAvailable ? [
           { id: 'native-shell', label: 'Native Desktop', icon: Icons.monitor },
           { id: 'discord-activity', label: 'Discord Activity', icon: Icons.account },
@@ -11682,6 +11679,9 @@ const getMaskedEmail = (email: string) => {
     {
       label: 'Support',
       items: [
+        ...(offlineLibraryBridgeState === 'available'
+          ? [{ id: 'offline-library', label: 'Downloads Folder', icon: Icons.folder }]
+          : []),
         { id: 'offline-runtime', label: 'Offline Runtime', icon: Icons.download },
         { id: 'feedback-support', label: 'Feedback', icon: Icons.account },
         { id: 'storage-safety', label: 'Storage & Safety', icon: Icons.shield },
@@ -15498,10 +15498,10 @@ const getMaskedEmail = (email: string) => {
                   {getSpiceDesktopOfflineLibraryBridge() && (
                     <div id="offline-library" style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
                       <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        {Icons.download} Offline Music Folder
+                        {Icons.folder} Downloads Folder
                       </h3>
                       <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0 0 16px 0', lineHeight: 1.4 }}>
-                        Downloads are ordinary MP3 files in this folder. Copy files in or out whenever you like; supported audio files you add are available in Library → Downloads.
+                        Songs download to your system Downloads folder by default. Choose another folder here whenever you want; supported audio files in it appear in Library → Downloads.
                       </p>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
                         <code className="truncate" style={{ flex: '1 1 320px', padding: '10px 12px', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-secondary)', background: 'var(--body-bg)' }}>

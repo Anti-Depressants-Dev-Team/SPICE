@@ -2,9 +2,11 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const sharp = require("sharp");
 
 const projectRoot = path.join(__dirname, "..");
 const outputDirectory = path.join(projectRoot, "assets", "installer");
+const appIconPath = path.join(projectRoot, "icon.png");
 
 const palette = {
   ink: [8, 5, 18],
@@ -113,41 +115,19 @@ function roundedRect(canvas, x, y, width, height, radius, color, alpha = 1) {
   fillCircle(canvas, x + width - radius - 1, y + height - radius - 1, radius, color, alpha);
 }
 
-function drawMusicNote(canvas, centerX, centerY, scale) {
-  radialGlow(canvas, centerX, centerY, 30 * scale, palette.purple, 0.48);
-  roundedRect(
-    canvas,
-    Math.round(centerX - 29 * scale),
-    Math.round(centerY - 29 * scale),
-    Math.round(58 * scale),
-    Math.round(58 * scale),
-    Math.max(3, Math.round(13 * scale)),
-    palette.violet,
-    0.94,
-  );
-  fillRect(
-    canvas,
-    Math.round(centerX + 4 * scale),
-    Math.round(centerY - 17 * scale),
-    Math.max(2, Math.round(5 * scale)),
-    Math.round(28 * scale),
-    palette.white,
-  );
-  fillRect(
-    canvas,
-    Math.round(centerX - 10 * scale),
-    Math.round(centerY - 17 * scale),
-    Math.round(19 * scale),
-    Math.max(2, Math.round(5 * scale)),
-    palette.white,
-  );
-  fillCircle(
-    canvas,
-    Math.round(centerX - 4 * scale),
-    Math.round(centerY + 13 * scale),
-    Math.max(3, Math.round(8 * scale)),
-    palette.white,
-  );
+function drawAppIcon(canvas, icon, left, top) {
+  for (let y = 0; y < icon.height; y += 1) {
+    for (let x = 0; x < icon.width; x += 1) {
+      const offset = (y * icon.width + x) * 4;
+      blendPixel(
+        canvas,
+        left + x,
+        top + y,
+        [icon.pixels[offset], icon.pixels[offset + 1], icon.pixels[offset + 2]],
+        icon.pixels[offset + 3] / 255,
+      );
+    }
+  }
 }
 
 const glyphs = {
@@ -237,13 +217,13 @@ function encodeBmp24(canvas) {
   return output;
 }
 
-function createSidebar() {
+function createSidebar(icon) {
   const canvas = createCanvas(164, 314);
   fillGradient(canvas, palette.ink, palette.midnight);
   radialGlow(canvas, 115, 64, 135, palette.violet, 0.48);
   radialGlow(canvas, 18, 264, 100, palette.purple, 0.2);
   addTexture(canvas);
-  drawMusicNote(canvas, 82, 91, 1);
+  drawAppIcon(canvas, icon, Math.round((canvas.width - icon.width) / 2), 62);
   drawWord(canvas, "SPICE", 22, 175, 4, palette.white);
   fillRect(canvas, 22, 202, 116, 2, palette.purple, 0.82);
   drawWaveform(canvas, 266, palette.lavender);
@@ -251,20 +231,45 @@ function createSidebar() {
   return canvas;
 }
 
-function createHeader() {
+function createHeader(icon) {
   const canvas = createCanvas(150, 57);
   fillGradient(canvas, palette.ink, palette.midnight);
   radialGlow(canvas, 28, 27, 50, palette.violet, 0.58);
   radialGlow(canvas, 132, 10, 48, palette.purple, 0.28);
   addTexture(canvas);
-  drawMusicNote(canvas, 25, 28, 0.58);
+  drawAppIcon(canvas, icon, 8, Math.round((canvas.height - icon.height) / 2));
   drawWord(canvas, "SPICE", 49, 17, 3, palette.white);
   fillRect(canvas, 49, 45, 88, 2, palette.purple, 0.82);
   return canvas;
 }
 
-fs.mkdirSync(outputDirectory, { recursive: true });
-fs.writeFileSync(path.join(outputDirectory, "installerSidebar.bmp"), encodeBmp24(createSidebar()));
-fs.writeFileSync(path.join(outputDirectory, "installerHeader.bmp"), encodeBmp24(createHeader()));
+async function resizedAppIcon(size) {
+  const { data, info } = await sharp(appIconPath)
+    .resize(size, size, { fit: "contain" })
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  return { width: info.width, height: info.height, pixels: data };
+}
 
-process.stdout.write(`Generated branded installer artwork in ${outputDirectory}\n`);
+async function main() {
+  const [sidebarIcon, headerIcon] = await Promise.all([
+    resizedAppIcon(58),
+    resizedAppIcon(34),
+  ]);
+  fs.mkdirSync(outputDirectory, { recursive: true });
+  fs.writeFileSync(
+    path.join(outputDirectory, "installerSidebar.bmp"),
+    encodeBmp24(createSidebar(sidebarIcon)),
+  );
+  fs.writeFileSync(
+    path.join(outputDirectory, "installerHeader.bmp"),
+    encodeBmp24(createHeader(headerIcon)),
+  );
+  process.stdout.write(`Generated branded installer artwork in ${outputDirectory}\n`);
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

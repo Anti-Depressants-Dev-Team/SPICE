@@ -138,7 +138,7 @@ test('desktop offline library is an explicit Spice-only file bridge', () => {
   const viewPreload = read('preload-view.js');
   const spiceApp = read('apps/backend/app/spice-app.tsx');
 
-  assert.match(main, /path\.join\(app\.getPath\("music"\), "Spice"\)/);
+  assert.match(main, /return app\.getPath\("downloads"\)/);
   assert.match(main, /requireTrustedSpiceSender\(event\)/);
   assert.match(main, /path\.basename\(fileName\) !== fileName/);
   assert.match(main, /protocol\.handle\("spice-offline"/);
@@ -153,6 +153,8 @@ test('desktop offline library is an explicit Spice-only file bridge', () => {
     /startTrackOnActiveReceiver\(\s*entry\.track,\s*offlineLibraryEntries\.map\(\(item\) => item\.track\),\s*'offline-library'/s,
   );
   assert.match(spiceApp, /Change folder/);
+  assert.match(spiceApp, /Downloads Folder/);
+  assert.match(spiceApp, /Songs download to your system Downloads folder by default/);
   assert.match(spiceApp, /Open folder/);
   assert.match(spiceApp, /Library → Downloads/);
   assert.match(spiceApp, /Download playlist/);

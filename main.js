@@ -568,7 +568,7 @@ function offlineLibraryProtocolToken() {
 }
 
 function defaultOfflineLibraryDirectory() {
-  return path.join(app.getPath("music"), "Spice");
+  return app.getPath("downloads");
 }
 
 function offlineLibraryDirectory() {

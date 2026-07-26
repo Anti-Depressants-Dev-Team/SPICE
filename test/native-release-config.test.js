@@ -104,6 +104,13 @@ test("Windows installers use deterministic SPICE-branded wizard artwork", () => 
   };
 
   assert.equal(packageConfig.scripts["installer:assets"], "node scripts/generate-installer-assets.js");
+  const installerAssetSource = fs.readFileSync(
+    path.join(root, "scripts", "generate-installer-assets.js"),
+    "utf8",
+  );
+  assert.match(installerAssetSource, /const appIconPath = path\.join\(projectRoot, "icon\.png"\)/);
+  assert.match(installerAssetSource, /sharp\(appIconPath\)/);
+  assert.match(installerAssetSource, /drawAppIcon\(canvas, icon/);
   assert.equal(wrapperConfig.nsis.oneClick, false);
   assert.equal(wrapperConfig.nsis.allowToChangeInstallationDirectory, true);
   assert.equal(wrapperConfig.nsis.shortcutName, "Spice");
