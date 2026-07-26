@@ -224,6 +224,7 @@ test("native macOS releases bundle a universal local runtime", () => {
   assert.match(macPackageSource, /--os=darwin/);
   assert.match(macPackageSource, /`--cpu=\$\{architecture\}`/);
   assert.match(macPackageSource, /--ignore-scripts/);
+  assert.match(macPackageSource, /--force/);
   assert.match(nativeWorkflow, /build-native-macos:[\s\S]*runs-on: macos-latest/);
   assert.match(nativeWorkflow, /npm run dist:native:mac -- --publish always/);
   assert.match(ciWorkflow, /local-macos-package:[\s\S]*ffmpeg:macos-universal/);

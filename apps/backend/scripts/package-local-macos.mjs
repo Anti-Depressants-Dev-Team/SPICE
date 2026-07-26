@@ -113,6 +113,10 @@ async function runNpmInstall(cwd, architecture) {
     '--no-package-lock',
     '--include=optional',
     '--install-strategy=hoisted',
+    // npm still applies the host CPU check to direct native packages in some
+    // releases. This scratch install is lock-pinned and scripts are disabled,
+    // so force only permits the intentional opposite-architecture payload.
+    '--force',
     '--os=darwin',
     `--cpu=${architecture}`,
   ];
