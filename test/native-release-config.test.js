@@ -209,8 +209,21 @@ test("native macOS releases bundle a universal local runtime", () => {
     path.join(root, ".github", "workflows", "ci.yml"),
     "utf8",
   );
+  const macPackageSource = fs.readFileSync(
+    path.join(root, "apps", "backend", "scripts", "package-local-macos.mjs"),
+    "utf8",
+  );
 
   assert.match(packageConfig.scripts["dist:native:mac"], /--mac --universal/);
+  assert.equal(
+    nativeConfig.mac.x64ArchFiles,
+    "Contents/Resources/native-runtime/**/*",
+  );
+  assert.match(macPackageSource, /darwin-arm64/);
+  assert.match(macPackageSource, /darwin-x64/);
+  assert.match(macPackageSource, /--os=darwin/);
+  assert.match(macPackageSource, /`--cpu=\$\{architecture\}`/);
+  assert.match(macPackageSource, /--ignore-scripts/);
   assert.match(nativeWorkflow, /build-native-macos:[\s\S]*runs-on: macos-latest/);
   assert.match(nativeWorkflow, /npm run dist:native:mac -- --publish always/);
   assert.match(ciWorkflow, /local-macos-package:[\s\S]*ffmpeg:macos-universal/);

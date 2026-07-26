@@ -29,6 +29,14 @@ module.exports = {
   directories: {
     output: "dist-native",
   },
+  mac: {
+    ...baseBuild.mac,
+    // The bundled local runtime is prepared with both Darwin architectures.
+    // Both temporary Electron apps therefore contain the same runtime payload,
+    // so @electron/universal should preserve it instead of trying to lipo each
+    // architecture-specific Node module a second time.
+    x64ArchFiles: "Contents/Resources/native-runtime/**/*",
+  },
   linux: {
     ...baseBuild.linux,
     executableName: "spice-native",
