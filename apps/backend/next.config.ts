@@ -19,8 +19,10 @@ const publicApiPaths = [
   "/api/notifications/release",
   "/api/updates/local-windows",
   "/api/updates/local-linux",
+  "/api/updates/local-macos",
   "/api/downloads/local-windows",
   "/api/downloads/local-linux",
+  "/api/downloads/local-macos",
 ];
 const publicApiCorsHeaders = [
   { key: "Access-Control-Allow-Origin", value: "*" },

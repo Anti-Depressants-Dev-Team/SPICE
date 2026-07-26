@@ -1,5 +1,16 @@
 # SPICE Walkthrough
 
+## v1.0.153
+
+- [Spice.Connect main] Put live device presence and successful remote-command queues fully on Upstash Redis, with bounded expiry and automatic PostgreSQL recovery when Redis is unavailable.
+- [Spice.Connect main] Show whether the Redis fast path is active, report receiver last-seen times, move playback automatically when a receiver is selected, and revoke paired access when a device is forgotten.
+- [Spice.Music main] Add the edge-integrated header shown in the reference video as the new default while keeping the rounded floating header as a selectable layout.
+- [Spice.Music main] Open pasted YouTube, YouTube Music, and SoundCloud track or playlist links directly inside search.
+- [Spice.Downloads main] Add a reliable desktop offline-library summary, folder controls, local-only queue playback, and managed local media runtime support for universal macOS builds.
+- [Spice.Mobile main] Save Like changes immediately to the signed-in account, repair out-of-order taps safely, and keep Android Spice Connect handoff and controller presence aligned with desktop.
+- [Spice.Desktop main] Publish universal Intel and Apple Silicon Native apps with a universal bundled FFmpeg runtime, update manifests, and startup diagnostics.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.153`.
+
 ## v1.0.152
 
 - [Spice.Connect main] Move connected-device wakeups, presence snapshots, and short-lived paired-access lookups onto Upstash Redis so normal remote control avoids constant Neon polling.

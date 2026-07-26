@@ -152,6 +152,7 @@ data class SpiceUiState(
     val remoteDeviceId: String = "",
     val remoteDevices: List<RemoteDevice> = emptyList(),
     val selectedPlaybackDeviceId: String = "",
+    val incomingRemoteControllerDeviceId: String = "",
     val connectLoading: Boolean = false,
     val connectStatus: String = "",
     val appUpdate: AppUpdateUiState = AppUpdateUiState(),
@@ -988,8 +989,42 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
 
     fun toggleLike(track: Track) {
         viewModelScope.launch {
-            libraryRepository.toggleLike(track)
-            scheduleTasteSync()
+            val liked = libraryRepository.toggleLike(track)
+            val session = _uiState.value.accountSession
+            if (session == null) {
+                _uiState.value = _uiState.value.copy(
+                    message = if (liked) "Saved ${track.title} to Liked." else "Removed ${track.title} from Liked.",
+                )
+                return@launch
+            }
+
+            runCatching {
+                api.setTrackLiked(session.token, track, liked)
+            }.onSuccess {
+                if (libraryRepository.isLiked(track.id) == liked) {
+                    libraryRepository.markLikeMutationSynced(track.id)
+                    _uiState.value = _uiState.value.copy(
+                        message = if (liked) "Saved ${track.title} to Liked." else "Removed ${track.title} from Liked.",
+                    )
+                } else {
+                    // A newer tap changed the desired state while this request
+                    // was in flight. Keep it pending so the bulk sync repairs
+                    // any out-of-order server response.
+                    libraryRepository.markLikeMutationPending(track.id)
+                }
+                if (libraryRepository.pendingLikedTrackIds().isNotEmpty()) scheduleTasteSync()
+            }.onFailure { error ->
+                if (libraryRepository.isLiked(track.id) == liked) {
+                    libraryRepository.setLiked(track, !liked, markPending = false)
+                    libraryRepository.markLikeMutationSynced(track.id)
+                } else {
+                    libraryRepository.markLikeMutationPending(track.id)
+                    scheduleTasteSync()
+                }
+                _uiState.value = _uiState.value.copy(
+                    message = error.message ?: "The Like could not be saved, so the change was restored.",
+                )
+            }
         }
     }
 
@@ -2259,6 +2294,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
             ?.trim()
             ?.takeUnless { it == remoteDeviceId }
             .orEmpty()
+        val previousDeviceId = _uiState.value.selectedPlaybackDeviceId
         if (normalized.isNotEmpty() && !hasRemoteAccess()) {
             _uiState.value = _uiState.value.copy(message = "Sign in or pair this phone to use Spice Connect.")
             return
@@ -2271,6 +2307,13 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
                 selectedPlaybackDeviceId = "",
                 connectStatus = "Player controls now target this phone.",
             )
+            if (previousDeviceId.isNotEmpty()) {
+                sendRemoteCommand(
+                    deviceId = previousDeviceId,
+                    command = "connect",
+                    payload = JSONObject().put("connected", false),
+                )
+            }
             return
         }
 
@@ -2287,6 +2330,23 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
             selectedPlaybackDeviceId = normalized,
             connectStatus = "Player controls now target ${target.displayName}.",
         )
+        if (previousDeviceId.isNotEmpty() && previousDeviceId != normalized) {
+            sendRemoteCommand(
+                deviceId = previousDeviceId,
+                command = "connect",
+                payload = JSONObject().put("connected", false),
+            )
+        }
+        if (previousDeviceId != normalized) {
+            sendRemoteCommand(
+                deviceId = normalized,
+                command = "connect",
+                payload = JSONObject().put("connected", true),
+            )
+        }
+        if (target.isOnline && _uiState.value.currentTrack != null) {
+            handoffPlaybackToSelectedDevice()
+        }
     }
 
     fun forgetSpiceConnectDevice(deviceId: String) {
@@ -2298,7 +2358,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
                 if (_uiState.value.selectedPlaybackDeviceId == deviceId) selectPlaybackDevice(null)
                 _uiState.value = _uiState.value.copy(
                     remoteDevices = _uiState.value.remoteDevices.filterNot { it.deviceId == deviceId },
-                    connectStatus = "Forgot the remembered device. It can appear again if it reconnects.",
+                    connectStatus = "Removed the device everywhere and revoked its Spice Connect access.",
                 )
             }.onFailure { error ->
                 _uiState.value = _uiState.value.copy(message = error.message ?: "Could not forget that device.")
@@ -2315,6 +2375,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         val player = playerState.value
+        val sourceWasPlaying = player.isPlaying
         val queue = normalizeQueue(state.playbackQueue, track).take(80)
         val queueIndex = state.queueIndex.coerceIn(0, queue.lastIndex.coerceAtLeast(0))
         patchRemoteDevice(target.deviceId) {
@@ -2330,10 +2391,11 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
                 repeatMode = player.repeatMode,
             )
         }
+        if (sourceWasPlaying) playerConnection.pause()
         sendRemoteCommand(
-            target.deviceId,
-            "handoff",
-            JSONObject()
+            deviceId = target.deviceId,
+            command = "handoff",
+            payload = JSONObject()
                 .put("track", track.toRemoteTrackJson())
                 .put("queue", JSONArray(queue.map { it.toRemoteTrackJson() }))
                 .put("queueIndex", queueIndex)
@@ -2342,13 +2404,18 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
                 .put("isPlaying", player.isPlaying)
                 .put("shuffleEnabled", player.shuffleEnabled)
                 .put("repeatMode", player.repeatMode.remoteValue()),
-        ) {
-            playerConnection.pause()
-            _uiState.value = _uiState.value.copy(
-                connectStatus = "Playback moved to ${target.displayName}.",
-                message = "Playback moved to ${target.displayName}.",
-            )
-        }
+            onSuccess = {
+                _uiState.value = _uiState.value.copy(
+                    connectStatus = "Playback moved to ${target.displayName}.",
+                    message = "Playback moved to ${target.displayName}.",
+                )
+            },
+            onFailure = {
+                if (sourceWasPlaying && !playerState.value.isPlaying) {
+                    playerConnection.toggle()
+                }
+            },
+        )
     }
 
     fun refreshSpiceConnect() {
@@ -2384,17 +2451,21 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
         command: String,
         payload: JSONObject = JSONObject(),
         onSuccess: () -> Unit = {},
+        onFailure: (Throwable) -> Unit = {},
     ) {
         if (!hasRemoteAccess()) {
+            onFailure(IllegalStateException("Sign in or pair this phone to use Spice Connect."))
             _uiState.value = _uiState.value.copy(message = "Sign in or pair this phone to use Spice Connect.")
             return
         }
         if (deviceId == remoteDeviceId) {
+            onFailure(IllegalArgumentException("Choose another Spice Connect device."))
             _uiState.value = _uiState.value.copy(connectStatus = "Choose another Spice Connect device.")
             return
         }
         val target = _uiState.value.remoteDevices.firstOrNull { it.deviceId == deviceId }
         if (target?.isOnline == false) {
+            onFailure(IllegalStateException("${target.displayName} is offline."))
             _uiState.value = _uiState.value.copy(message = "${target.displayName} is offline.")
             return
         }
@@ -2417,6 +2488,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
                 Log.i(SPICE_CONNECT_LOG_TAG, "Queued $command from $remoteDeviceId to $deviceId")
                 scheduleRemoteDeviceRefresh()
             }.onFailure { error ->
+                onFailure(error)
                 clearOptimisticRemoteState(deviceId)
                 _uiState.value = _uiState.value.copy(
                     connectStatus = error.message ?: "Spice Connect command failed.",
@@ -2941,6 +3013,15 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
                 return@forEach
             }
             Log.i(SPICE_CONNECT_LOG_TAG, "Applying ${command.command} (${command.id}) on $remoteDeviceId")
+            if (command.command == "connect" && command.connected == false) {
+                if (_uiState.value.incomingRemoteControllerDeviceId == command.sourceDeviceId) {
+                    _uiState.value = _uiState.value.copy(incomingRemoteControllerDeviceId = "")
+                }
+            } else if (command.sourceDeviceId.isNotBlank()) {
+                _uiState.value = _uiState.value.copy(
+                    incomingRemoteControllerDeviceId = command.sourceDeviceId,
+                )
+            }
             when (command.command) {
                 "toggle" -> playerConnection.toggle()
                 "pause" -> playerConnection.pause()
@@ -2970,6 +3051,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
                     command.seekPositionMs?.let(playerConnection::seekTo)
                     if (command.shouldPlay == false) playerConnection.pause()
                 }
+                "connect" -> Unit
             }
             appliedRemoteCommandIds.markIfNew(command.id)
             persistAppliedRemoteCommandIds()

@@ -28,11 +28,19 @@ const routeContracts = [
     cacheControl: 'public, max-age=0, s-maxage=900, stale-while-revalidate=3600',
   },
   {
+    path: '../app/api/updates/local-macos/route.ts',
+    cacheControl: 'public, max-age=0, s-maxage=900, stale-while-revalidate=3600',
+  },
+  {
     path: '../app/api/downloads/local-windows/route.ts',
     cacheControl: 'public, max-age=0, s-maxage=900, stale-while-revalidate=3600',
   },
   {
     path: '../app/api/downloads/local-linux/route.ts',
+    cacheControl: 'public, max-age=0, s-maxage=900, stale-while-revalidate=3600',
+  },
+  {
+    path: '../app/api/downloads/local-macos/route.ts',
     cacheControl: 'public, max-age=0, s-maxage=900, stale-while-revalidate=3600',
   },
 ];
@@ -69,8 +77,10 @@ test('Proxy skips only the intended public endpoints', async () => {
     '/api/notifications/release',
     '/api/updates/local-windows',
     '/api/updates/local-linux',
+    '/api/updates/local-macos',
     '/api/downloads/local-windows',
     '/api/downloads/local-linux',
+    '/api/downloads/local-macos',
     '/api/version/',
     '/api/updates/local-windows/',
   ]) {

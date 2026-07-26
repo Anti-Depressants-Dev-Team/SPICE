@@ -182,4 +182,16 @@ class SpiceConnectPollingTest {
         assertTrue(shouldResetSpiceConnectDeviceRegistration(404))
         assertFalse(shouldResetSpiceConnectDeviceRegistration(401))
     }
+
+    @Test
+    fun deviceStatusUsesTheRealLastSeenAge() {
+        assertEquals(
+            "Offline · last seen 4m ago",
+            spiceConnectDeviceStatus(false, false, 245L, null),
+        )
+        assertEquals(
+            "Playing · Test Song",
+            spiceConnectDeviceStatus(true, true, 1L, "Test Song"),
+        )
+    }
 }

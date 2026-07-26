@@ -229,6 +229,24 @@ class SpiceApi(
         )
     }
 
+    suspend fun setTrackLiked(
+        token: String,
+        track: Track,
+        liked: Boolean,
+        profileId: String = "default",
+    ) = withContext(Dispatchers.IO) {
+        requestJson(
+            "/api/sync/likes",
+            method = "PATCH",
+            body = JSONObject()
+                .put("profileId", profileId)
+                .put("liked", liked)
+                .put("track", track.toSnapshotJson()),
+            bearerToken = token,
+        )
+        Unit
+    }
+
     suspend fun syncHistory(
         token: String,
         history: List<Track>,
@@ -1221,6 +1239,7 @@ internal fun parseRemoteDevices(payload: JSONObject): List<RemoteDevice> {
                     durationMs = (item.optDouble("duration", 0.0) * 1000).toLong().coerceAtLeast(0),
                     volume = item.optInt("volume", 70).coerceIn(0, 100),
                     updatedAt = item.optString("updatedAt").trim(),
+                    lastSeenSeconds = item.optLong("lastSeenSeconds", 0L).coerceAtLeast(0L),
                     rememberedUntil = item.optString("rememberedUntil").trim(),
                     isOnline = item.optBoolean("isOnline", true),
                 ),
@@ -1235,6 +1254,7 @@ internal fun parseRemoteCommands(payload: JSONObject): List<RemoteCommand> {
         for (index in 0 until commands.length()) {
             val item = commands.optJSONObject(index) ?: continue
             val id = item.optString("id").trim()
+            val sourceDeviceId = item.optString("sourceDeviceId").trim()
             val command = item.optString("command").trim()
             if (id.isEmpty() || command.isEmpty()) continue
             val commandPayload = item.optJSONObject("payload") ?: JSONObject()
@@ -1266,9 +1286,11 @@ internal fun parseRemoteCommands(payload: JSONObject): List<RemoteCommand> {
             }
             val repeatMode = repeatValue?.let(::parseRemoteRepeatMode)
             val shouldPlay = commandPayload.optBoolean("isPlaying").takeIf { commandPayload.has("isPlaying") }
+            val connected = commandPayload.optBoolean("connected").takeIf { commandPayload.has("connected") }
             add(
                 RemoteCommand(
                     id = id,
+                    sourceDeviceId = sourceDeviceId,
                     command = command,
                     payloadTrack = payloadTrack,
                     payloadQueue = payloadQueue,
@@ -1278,6 +1300,7 @@ internal fun parseRemoteCommands(payload: JSONObject): List<RemoteCommand> {
                     shuffleEnabled = shuffleEnabled,
                     repeatMode = repeatMode,
                     shouldPlay = shouldPlay,
+                    connected = connected,
                 ),
             )
         }

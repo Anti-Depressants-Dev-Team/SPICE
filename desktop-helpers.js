@@ -103,7 +103,12 @@ function parseSupportedServiceUrl(value, options = {}) {
       host === "m.soundcloud.com");
   const isRemoteSpice =
     parsed.protocol === "https:" &&
-    (host === "music.spice-app.xyz" || host === "install.spice-app.xyz");
+    (
+      host === "music.spice-app.xyz"
+      || host === "spice-app.xyz"
+      || host === "www.spice-app.xyz"
+      || host === "install.spice-app.xyz"
+    );
 
   const serviceKey = isYtMusic
     ? "yt"
@@ -154,6 +159,7 @@ function shouldBlockNativeStartupPlayback({
 function resolveLocalRuntimePlatform(platform = process.platform) {
   if (platform === "win32") return "windows";
   if (platform === "linux") return "linux";
+  if (platform === "darwin") return "macos";
   return null;
 }
 

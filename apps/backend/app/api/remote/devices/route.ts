@@ -1,7 +1,7 @@
 import { jsonResponse, optionsResponse } from '@/lib/cors';
 import { db } from '@/db';
-import { remoteDeviceAuthorizations, remoteDevices } from '@/db/schema';
-import { and, desc, eq, lt } from 'drizzle-orm';
+import { remoteCommands, remoteDeviceAuthorizations, remoteDevices } from '@/db/schema';
+import { and, desc, eq, isNull, lt, or } from 'drizzle-orm';
 import {
   isSpiceConnectDeviceRemembered,
   isSpiceConnectRemoteDeviceVisible,
@@ -11,12 +11,16 @@ import {
   projectSpiceConnectProgressMs,
   safeJsonStringify,
   spiceConnectDeviceRememberedUntil,
+  SPICE_CONNECT_MAX_COMMAND_DELIVERY_ATTEMPTS,
   SPICE_CONNECT_DEVICE_RETENTION_MS,
+  SPICE_CONNECT_STALE_DEVICE_SECONDS,
 } from '@/lib/spice-connect';
 import {
   cacheSpiceConnectPairedAuthorization,
   deleteSpiceConnectDeviceState,
   hydrateSpiceConnectDeviceStates,
+  invalidateSpiceConnectPairedAuthorization,
+  isSpiceConnectRedisConfigured,
   publishSpiceConnectRedisSignal,
   readSpiceConnectDeviceStates,
   removeSpiceConnectCommandsForDevice,
@@ -59,6 +63,10 @@ function cachedStateFromStoredDevice(device: StoredRemoteDevice): SpiceConnectCa
 }
 
 function devicePayload(device: SpiceConnectCachedDeviceState, now: Date) {
+  const updatedAtMs = new Date(device.updatedAt).getTime();
+  const lastSeenSeconds = Number.isFinite(updatedAtMs)
+    ? Math.max(0, Math.floor((now.getTime() - updatedAtMs) / 1000))
+    : SPICE_CONNECT_STALE_DEVICE_SECONDS;
   return {
     deviceId: device.deviceId,
     displayName: device.displayName,
@@ -73,6 +81,7 @@ function devicePayload(device: SpiceConnectCachedDeviceState, now: Date) {
     duration: device.durationMs / 1000,
     volume: device.volume,
     updatedAt: device.updatedAt,
+    lastSeenSeconds,
     rememberedUntil: spiceConnectDeviceRememberedUntil(device.updatedAt)?.toISOString() ?? null,
   };
 }
@@ -161,6 +170,10 @@ export async function GET(request: Request) {
       if (visibleCached !== null) {
         return jsonResponse({
           serverTime: now.toISOString(),
+          transport: {
+            state: 'redis',
+            redisConfigured: true,
+          },
           devices: visibleCached.map((device) => devicePayload(device, now)),
         }, { headers: { 'Cache-Control': 'no-store, max-age=0' } }, request);
       }
@@ -216,6 +229,10 @@ export async function GET(request: Request) {
     void hydrateSpiceConnectDeviceStates(principal.userId, visibleStates);
     return jsonResponse({
       serverTime: now.toISOString(),
+      transport: {
+        state: 'postgresql',
+        redisConfigured: isSpiceConnectRedisConfigured(),
+      },
       devices: visibleStates.map((device) => devicePayload(device, now)),
     }, { headers: { 'Cache-Control': 'no-store, max-age=0' } }, request);
   } catch (error) {
@@ -256,20 +273,64 @@ export async function DELETE(request: Request) {
     }
     requirePrincipalDevice(principal, sourceDeviceId);
 
-    const forgotten = await db
-      .delete(remoteDevices)
-      .where(and(
-        eq(remoteDevices.userId, principal.userId),
-        eq(remoteDevices.deviceId, deviceId),
-      ))
-      .returning({ deviceId: remoteDevices.deviceId });
+    const now = new Date();
+    const [forgotten, revokedAuthorizations] = await Promise.all([
+      db
+        .delete(remoteDevices)
+        .where(and(
+          eq(remoteDevices.userId, principal.userId),
+          eq(remoteDevices.deviceId, deviceId),
+        ))
+        .returning({ deviceId: remoteDevices.deviceId }),
+      db
+        .update(remoteDeviceAuthorizations)
+        .set({ revokedAt: now })
+        .where(and(
+          eq(remoteDeviceAuthorizations.userId, principal.userId),
+          eq(remoteDeviceAuthorizations.deviceId, deviceId),
+          isNull(remoteDeviceAuthorizations.revokedAt),
+        ))
+        .returning({
+          deviceId: remoteDeviceAuthorizations.deviceId,
+          tokenHash: remoteDeviceAuthorizations.tokenHash,
+        }),
+      db
+        .update(remoteCommands)
+        .set({
+          consumedAt: now,
+          deliveryAttempts: SPICE_CONNECT_MAX_COMMAND_DELIVERY_ATTEMPTS,
+        })
+        .where(and(
+          eq(remoteCommands.userId, principal.userId),
+          or(
+            eq(remoteCommands.sourceDeviceId, deviceId),
+            eq(remoteCommands.targetDeviceId, deviceId),
+          ),
+        )),
+    ]);
 
-    void Promise.all([
+    await Promise.all([
+      ...revokedAuthorizations.map((authorization) => (
+        invalidateSpiceConnectPairedAuthorization(
+          principal.userId,
+          authorization.deviceId,
+          authorization.tokenHash,
+        )
+      )),
       deleteSpiceConnectDeviceState(principal.userId, deviceId),
       removeSpiceConnectCommandsForDevice(principal.userId, deviceId),
+      publishSpiceConnectRedisSignal(
+        principal.userId,
+        createSpiceConnectDeviceStateSignal(principal.userId, deviceId),
+      ),
     ]);
     return jsonResponse(
-      { success: true, forgotten: forgotten.length > 0, deviceId },
+      {
+        success: true,
+        forgotten: forgotten.length > 0 || revokedAuthorizations.length > 0,
+        revokedAuthorizations: revokedAuthorizations.length,
+        deviceId,
+      },
       { headers: { 'Cache-Control': 'no-store, max-age=0' } },
       request,
     );
@@ -332,7 +393,14 @@ export async function POST(request: Request) {
     }
 
     return jsonResponse(
-      { success: true, updatedAt: updatedAt.toISOString() },
+      {
+        success: true,
+        updatedAt: updatedAt.toISOString(),
+        transport: {
+          state: cached ? 'redis' : 'postgresql',
+          redisConfigured: isSpiceConnectRedisConfigured(),
+        },
+      },
       { headers: { 'Cache-Control': 'no-store, max-age=0' } },
       request,
     );

@@ -59,6 +59,10 @@ test("accepts exact supported service URLs with safe protocols", () => {
     parseSupportedServiceUrl("https://music.spice-app.xyz/playlist").serviceKey,
     "spice_crazy",
   );
+  assert.equal(
+    parseSupportedServiceUrl("https://www.spice-app.xyz/library").serviceKey,
+    "spice_crazy",
+  );
 });
 
 test("rejects hostile suffixes, credentials, and unsafe protocols", () => {
@@ -132,10 +136,10 @@ test("native startup playback yields immediately to an explicit user action", ()
   );
 });
 
-test("maps only supported desktop platforms to managed local runtimes", () => {
+test("maps supported desktop platforms to managed local runtimes", () => {
   assert.equal(resolveLocalRuntimePlatform("win32"), "windows");
   assert.equal(resolveLocalRuntimePlatform("linux"), "linux");
-  assert.equal(resolveLocalRuntimePlatform("darwin"), null);
+  assert.equal(resolveLocalRuntimePlatform("darwin"), "macos");
   assert.equal(resolveLocalRuntimePlatform("freebsd"), null);
 });
 

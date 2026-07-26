@@ -1,6 +1,7 @@
 import { Redis } from '@upstash/redis';
 
 import {
+  SPICE_CONNECT_COMMAND_TTL_MS,
   SPICE_CONNECT_DEVICE_RETENTION_MS,
   isSpiceConnectCommandDeliverable,
   isSpiceConnectCommandFresh,
@@ -21,6 +22,8 @@ const REDIS_NAMESPACE = 'spice:connect:v1';
 const DEVICE_META_FIELD = '__spice_connect_meta__';
 const DEVICE_CHECKPOINT_SECONDS = 15 * 60;
 const AUTH_CACHE_MAX_SECONDS = 60;
+const DEVICE_STATE_TTL_SECONDS = Math.ceil(SPICE_CONNECT_DEVICE_RETENTION_MS / 1000);
+const COMMAND_QUEUE_TTL_SECONDS = Math.ceil(SPICE_CONNECT_COMMAND_TTL_MS / 1000) + 60;
 
 let redisClient: Redis | null | undefined;
 
@@ -224,10 +227,14 @@ export async function writeSpiceConnectDeviceState(
   if (!redis) return false;
 
   try {
-    await redis.hset(deviceStatesKey(userId), {
+    const key = deviceStatesKey(userId);
+    const pipeline = redis.pipeline();
+    pipeline.hset(key, {
       [DEVICE_META_FIELD]: '1',
       [deviceField(state.deviceId)]: JSON.stringify(state),
     });
+    pipeline.expire(key, DEVICE_STATE_TTL_SECONDS);
+    await pipeline.exec();
     return true;
   } catch (error) {
     console.warn('[Spice Connect] Redis device-state write failed; keeping PostgreSQL fallback current.', error);
@@ -246,7 +253,11 @@ export async function hydrateSpiceConnectDeviceStates(
     for (const state of states) {
       entries[deviceField(state.deviceId)] = JSON.stringify(state);
     }
-    await redis.hset(deviceStatesKey(userId), entries);
+    const key = deviceStatesKey(userId);
+    const pipeline = redis.pipeline();
+    pipeline.hset(key, entries);
+    pipeline.expire(key, DEVICE_STATE_TTL_SECONDS);
+    await pipeline.exec();
     return true;
   } catch (error) {
     console.warn('[Spice Connect] Redis device-state hydration failed.', error);
@@ -393,10 +404,15 @@ export async function enqueueSpiceConnectCommand(userId: string, command: SpiceC
   const redis = getSpiceConnectRedis();
   if (!redis) return false;
   try {
-    await redis.hset(commandQueueKey(userId, command.targetDeviceId), {
+    const queueKey = commandQueueKey(userId, command.targetDeviceId);
+    const initializedKey = commandQueueInitializedKey(userId, command.targetDeviceId);
+    const pipeline = redis.pipeline();
+    pipeline.hset(queueKey, {
       [commandField(command.id)]: JSON.stringify(command),
     });
-    await redis.set(commandQueueInitializedKey(userId, command.targetDeviceId), '1', { ex: 60 });
+    pipeline.expire(queueKey, COMMAND_QUEUE_TTL_SECONDS);
+    pipeline.set(initializedKey, '1', { ex: COMMAND_QUEUE_TTL_SECONDS });
+    await pipeline.exec();
     return true;
   } catch (error) {
     console.warn('[Spice Connect] Redis command enqueue failed; PostgreSQL remains authoritative.', error);
@@ -464,10 +480,18 @@ export async function claimSpiceConnectCommands(
       const pipeline = redis.pipeline();
       if (deleteFields.length > 0) pipeline.hdel(queueKey, ...deleteFields);
       if (Object.keys(updates).length > 0) pipeline.hset(queueKey, updates);
-      pipeline.set(commandQueueInitializedKey(userId, deviceId), '1', { ex: 60 });
+      pipeline.set(
+        commandQueueInitializedKey(userId, deviceId),
+        '1',
+        { ex: COMMAND_QUEUE_TTL_SECONDS },
+      );
       await pipeline.exec();
     } else {
-      await redis.set(commandQueueInitializedKey(userId, deviceId), '1', { ex: 60 });
+      await redis.set(
+        commandQueueInitializedKey(userId, deviceId),
+        '1',
+        { ex: COMMAND_QUEUE_TTL_SECONDS },
+      );
     }
     return capped;
   } catch (error) {
@@ -489,8 +513,16 @@ export async function hydrateSpiceConnectCommandQueue(
       entries[commandField(command.id)] = JSON.stringify(command);
     }
     const pipeline = redis.pipeline();
-    if (Object.keys(entries).length > 0) pipeline.hset(commandQueueKey(userId, deviceId), entries);
-    pipeline.set(commandQueueInitializedKey(userId, deviceId), '1', { ex: 60 });
+    const queueKey = commandQueueKey(userId, deviceId);
+    if (Object.keys(entries).length > 0) {
+      pipeline.hset(queueKey, entries);
+      pipeline.expire(queueKey, COMMAND_QUEUE_TTL_SECONDS);
+    }
+    pipeline.set(
+      commandQueueInitializedKey(userId, deviceId),
+      '1',
+      { ex: COMMAND_QUEUE_TTL_SECONDS },
+    );
     await pipeline.exec();
     return true;
   } catch (error) {

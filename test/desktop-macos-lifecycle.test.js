@@ -5,7 +5,7 @@ const path = require("node:path");
 
 const main = fs.readFileSync(path.resolve(__dirname, "..", "main.js"), "utf8");
 
-test("macOS uses hosted classic SPICE instead of a Windows local runtime", () => {
+test("macOS maps to its own managed local runtime without using a Windows package", () => {
   assert.match(
     main,
     /const SPICE_LOCAL_RUNTIME_PLATFORM = resolveLocalRuntimePlatform\(process\.platform\)/,
@@ -13,6 +13,10 @@ test("macOS uses hosted classic SPICE instead of a Windows local runtime", () =>
   assert.match(main, /function bundledNativeRuntimeDir\(\) \{\s*if \(!SPICE_LOCAL_RUNTIME_PLATFORM\) return null;/);
   assert.match(main, /if \(!SPICE_LOCAL_RUNTIME_PLATFORM\) return SPICE_REMOTE_MUSIC_URL;/);
   assert.match(main, /const SPICE_LOCAL_MANIFEST_URL = SPICE_LOCAL_RUNTIME_PLATFORM[\s\S]*?: null;/);
+  assert.match(
+    fs.readFileSync(path.resolve(__dirname, "..", "desktop-helpers.js"), "utf8"),
+    /platform === "darwin"\) return "macos"/,
+  );
 });
 
 test("macOS closes and recreates the shell without tearing down playback services", () => {

@@ -186,6 +186,7 @@ data class RemoteDevice(
     val durationMs: Long = 0,
     val volume: Int = 70,
     val updatedAt: String = "",
+    val lastSeenSeconds: Long = 0L,
     val rememberedUntil: String = "",
     val isOnline: Boolean = true,
     val observedAtElapsedRealtimeMs: Long = 0L,
@@ -193,6 +194,7 @@ data class RemoteDevice(
 
 data class RemoteCommand(
     val id: String,
+    val sourceDeviceId: String,
     val command: String,
     val payloadTrack: Track? = null,
     val payloadQueue: List<Track> = emptyList(),
@@ -202,6 +204,7 @@ data class RemoteCommand(
     val shuffleEnabled: Boolean? = null,
     val repeatMode: RepeatMode? = null,
     val shouldPlay: Boolean? = null,
+    val connected: Boolean? = null,
 )
 
 enum class RepeatMode {

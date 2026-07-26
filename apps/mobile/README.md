@@ -2,6 +2,22 @@
 
 Native Android preview for Spice Music, built with Jetpack Compose and Media3.
 
+## iPhone status
+
+There is no native iPhone target in this repository yet. The current client is Android-specific
+(Jetpack Compose, Room, Media3, Android Keystore, and Android download/install APIs), and a real
+iOS build cannot be compiled or signed from Windows: it requires macOS, Xcode, an Apple signing
+team, bundle provisioning, and device-side validation. Shipping an untested wrapper would also
+break SPICE's background-playback requirement because the Android direct-stream and foreground
+service implementations do not transfer to iOS.
+
+iPhone users can use the hosted SPICE app in Safari and add it to the Home Screen today; account
+sync and Spice Connect remain server-backed, although iOS browser background-playback limits
+still apply. A native iOS client should be a separate SwiftUI target using AVPlayer, Keychain,
+background audio entitlements, a native download store, and the same authenticated sync and
+Spice Connect APIs. It must be built and release-tested on macOS with real Apple provisioning
+before SPICE can honestly label it supported.
+
 ## Current Features
 
 - Native Home, Search, Library, and Settings screens

@@ -155,6 +155,7 @@ import {
   shouldUsePlayerGainPath,
   shouldUseProxyForBoost,
 } from '@/lib/player-audio';
+import { parseSupportedMediaLink } from '@/lib/media-link';
 import {
   IDLE_PLAYER_TRACK,
   profileScrobbleThresholdSeconds,
@@ -762,6 +763,7 @@ type VisualSurface = 'midnight' | 'glass' | 'solid' | 'aurora';
 type ArtworkShape = 'rounded' | 'soft' | 'circle';
 type MotionLevel = 'full' | 'calm' | 'off';
 type InterfaceScale = 'compact' | 'comfortable' | 'spacious';
+type TopbarLayout = 'embedded' | 'floating';
 type PlayerBarDensity = 'standard' | 'slim';
 type PlayerVisualStyle = 'spice' | 'vk';
 type NativeToolbarButtonKey = 'back' | 'reload' | 'home' | 'volume' | 'lyrics' | 'miniPlayer' | 'queue';
@@ -896,6 +898,14 @@ const getSpiceDesktopRuntimeBridge = () => {
   }).spiceDesktopRuntime ?? null;
 };
 
+const formatOfflineLibrarySize = (bytes: number) => {
+  const safeBytes = Math.max(0, Number.isFinite(bytes) ? bytes : 0);
+  if (safeBytes < 1024) return `${Math.round(safeBytes)} B`;
+  if (safeBytes < 1024 * 1024) return `${(safeBytes / 1024).toFixed(1)} KB`;
+  if (safeBytes < 1024 * 1024 * 1024) return `${(safeBytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${(safeBytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
+};
+
 const nativeUpdateStatusMessage = (status: NativeShellUpdateStatus | null) => {
   if (!status) return 'Ready to check for updates.';
   switch (status.status) {
@@ -949,6 +959,11 @@ const INTERFACE_SCALE_LABELS: Record<InterfaceScale, string> = {
   compact: 'Compact',
   comfortable: 'Comfortable',
   spacious: 'Spacious',
+};
+
+const TOPBAR_LAYOUT_LABELS: Record<TopbarLayout, string> = {
+  embedded: 'Embedded Header',
+  floating: 'Floating & Rounded',
 };
 
 const PLAYER_BAR_DENSITY_LABELS: Record<PlayerBarDensity, string> = {
@@ -1198,7 +1213,8 @@ type RemoteCommandType =
   | 'shuffle'
   | 'repeat'
   | 'play_track'
-  | 'handoff';
+  | 'handoff'
+  | 'connect';
 
 interface RemoteDevice {
   deviceId: string;
@@ -1241,6 +1257,7 @@ interface RemoteCommand {
     isPlaying?: boolean;
     shuffleEnabled?: boolean;
     repeatMode?: 'none' | 'all' | 'one';
+    connected?: boolean;
   };
   createdAt: string;
 }
@@ -1375,6 +1392,9 @@ const isMotionLevel = (value: string | null): value is MotionLevel =>
 
 const isInterfaceScale = (value: string | null): value is InterfaceScale =>
   value === 'compact' || value === 'comfortable' || value === 'spacious';
+
+const isTopbarLayout = (value: string | null): value is TopbarLayout =>
+  value === 'embedded' || value === 'floating';
 
 const isPlayerBarDensity = (value: string | null): value is PlayerBarDensity =>
   value === 'standard' || value === 'slim';
@@ -1869,6 +1889,7 @@ export default function SpiceApp() {
   const [artworkShape, setArtworkShape] = useState<ArtworkShape>('rounded');
   const [motionLevel, setMotionLevel] = useState<MotionLevel>('full');
   const [interfaceScale, setInterfaceScale] = useState<InterfaceScale>('comfortable');
+  const [topbarLayout, setTopbarLayout] = useState<TopbarLayout>('embedded');
   const [audioQuality, setAudioQuality] = useState<'standard' | 'high' | 'low'>('standard');
   const [streamProtocol, setStreamProtocol] = useState<StreamProtocol>('proxy');
   const [playbackProfileState, setPlaybackProfileState] = useState<PlaybackProfileState>(() => normalizePlaybackProfileState(null));
@@ -1907,6 +1928,13 @@ export default function SpiceApp() {
   const [songShareDialog, setSongShareDialog] = useState<SongShareDialog | null>(null);
   const [offlineLibraryEntries, setOfflineLibraryEntries] = useState<DesktopOfflineLibraryEntry[]>([]);
   const [offlineLibraryDirectory, setOfflineLibraryDirectory] = useState('');
+  const [offlineLibraryBridgeState, setOfflineLibraryBridgeState] = useState<
+    'checking' | 'available' | 'unavailable' | 'error'
+  >('checking');
+  const offlineLibraryTotalBytes = useMemo(
+    () => offlineLibraryEntries.reduce((total, entry) => total + Math.max(0, entry.bytes || 0), 0),
+    [offlineLibraryEntries],
+  );
   const [offlineDownloadTrackId, setOfflineDownloadTrackId] = useState<string | null>(null);
   const [playlistDownloadProgress, setPlaylistDownloadProgress] = useState<{
     playlistId: string;
@@ -2080,16 +2108,51 @@ export default function SpiceApp() {
 
   const refreshOfflineLibrary = useCallback(async () => {
     const bridge = getSpiceDesktopOfflineLibraryBridge();
-    if (!bridge) return;
-    const snapshot = await bridge.list();
-    setOfflineLibraryDirectory(snapshot.directory);
-    setOfflineLibraryEntries(Array.isArray(snapshot.tracks) ? snapshot.tracks : []);
+    if (!bridge) {
+      setOfflineLibraryBridgeState('unavailable');
+      return false;
+    }
+    try {
+      const snapshot = await bridge.list();
+      setOfflineLibraryDirectory(snapshot.directory);
+      setOfflineLibraryEntries(Array.isArray(snapshot.tracks) ? snapshot.tracks : []);
+      setOfflineLibraryBridgeState('available');
+      return true;
+    } catch (error) {
+      setOfflineLibraryBridgeState('error');
+      throw error;
+    }
   }, []);
 
   useEffect(() => {
-    void refreshOfflineLibrary().catch((error) => {
-      logDebug('error', `Offline library could not be loaded: ${error instanceof Error ? error.message : error}`);
-    });
+    let disposed = false;
+    let attempts = 0;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const detectBridge = () => {
+      if (disposed) return;
+      const bridge = getSpiceDesktopOfflineLibraryBridge();
+      if (bridge) {
+        void refreshOfflineLibrary().catch((error) => {
+          logDebug('error', `Offline library could not be loaded: ${error instanceof Error ? error.message : error}`);
+        });
+        return;
+      }
+      attempts += 1;
+      if (attempts >= 10) {
+        setOfflineLibraryBridgeState('unavailable');
+        return;
+      }
+      retryTimer = setTimeout(detectBridge, 200);
+    };
+    const handleBridgeReady = () => detectBridge();
+    window.addEventListener('spice-desktop-bridge-ready', handleBridgeReady);
+    detectBridge();
+    return () => {
+      disposed = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      window.removeEventListener('spice-desktop-bridge-ready', handleBridgeReady);
+    };
   }, [logDebug, refreshOfflineLibrary]);
 
   const fetchTrackDownloadBlob = useCallback(async (track: Track) => {
@@ -2558,7 +2621,10 @@ export default function SpiceApp() {
   const [selectedRemoteDeviceId, setSelectedRemoteDeviceId] = useState(() => (
     typeof window === 'undefined' ? '' : localStorage.getItem('spice_connect_receiver_id') || ''
   ));
+  const [incomingRemoteControllerId, setIncomingRemoteControllerId] = useState('');
   const [remoteStatus, setRemoteStatus] = useState<string | null>(null);
+  const [remoteTransport, setRemoteTransport] = useState<'unknown' | 'redis' | 'postgresql'>('unknown');
+  const [remoteRedisConfigured, setRemoteRedisConfigured] = useState<boolean | null>(null);
   const [forgettingRemoteDeviceIds, setForgettingRemoteDeviceIds] = useState<Set<string>>(new Set());
   const [receiverMenuOpen, setReceiverMenuOpen] = useState<ReceiverSelectVariant | null>(null);
   const [playerPlacement, setPlayerPlacement] = useState<'bottom' | 'top'>('bottom');
@@ -3353,6 +3419,9 @@ export default function SpiceApp() {
 
       const savedInterfaceScale = localStorage.getItem('spice_interface_scale');
       if (isInterfaceScale(savedInterfaceScale)) setInterfaceScale(savedInterfaceScale);
+
+      const savedTopbarLayout = localStorage.getItem('spice_topbar_layout');
+      if (isTopbarLayout(savedTopbarLayout)) setTopbarLayout(savedTopbarLayout);
 
       const savedQuality = localStorage.getItem('spice_audio_quality');
       if (savedQuality) setAudioQuality(savedQuality as any);
@@ -5019,6 +5088,8 @@ export default function SpiceApp() {
       setCloudToken(data.token);
       setCloudUser(data.user);
       remoteRequestGenerationRef.current += 1;
+      setRemoteTransport('unknown');
+      setRemoteRedisConfigured(null);
       const accountUsername = typeof data.user?.username === 'string'
         ? data.user.username.trim().toLowerCase()
         : '';
@@ -5124,6 +5195,8 @@ export default function SpiceApp() {
     setPairedRemoteCredential(null);
     setRemoteDevices([]);
     setSelectedRemoteDeviceId('');
+    setRemoteTransport('unknown');
+    setRemoteRedisConfigured(null);
     localStorage.removeItem('spice_connect_receiver_id');
     optimisticRemoteDeviceStateRef.current = null;
     cloudTokenRef.current = null;
@@ -6688,6 +6761,8 @@ export default function SpiceApp() {
     setPairedRemoteCredential(null);
     setRemoteDevices([]);
     setSelectedRemoteDeviceId('');
+    setRemoteTransport('unknown');
+    setRemoteRedisConfigured(null);
     optimisticRemoteDeviceStateRef.current = null;
     setRemoteControlEnabled(false);
     localStorage.setItem('spice_remote_control_enabled', 'false');
@@ -6735,6 +6810,13 @@ export default function SpiceApp() {
         if (requestGeneration !== remoteRequestGenerationRef.current) return;
         throw new Error(data.message || `Spice Connect state update failed with status ${response.status}.`);
       }
+      const data = await response.json().catch(() => ({}));
+      if (data.transport?.state === 'redis' || data.transport?.state === 'postgresql') {
+        setRemoteTransport(data.transport.state);
+      }
+      if (typeof data.transport?.redisConfigured === 'boolean') {
+        setRemoteRedisConfigured(data.transport.redisConfigured);
+      }
     } catch (error) {
       if (requestGeneration !== remoteRequestGenerationRef.current) return;
       const message = error instanceof Error ? error.message : 'Spice Connect state update failed.';
@@ -6770,6 +6852,12 @@ export default function SpiceApp() {
       if (requestGeneration !== remoteRequestGenerationRef.current) return;
       if (!response.ok) {
         throw new Error(data.message || `Spice Connect device load failed with status ${response.status}.`);
+      }
+      if (data.transport?.state === 'redis' || data.transport?.state === 'postgresql') {
+        setRemoteTransport(data.transport.state);
+      }
+      if (typeof data.transport?.redisConfigured === 'boolean') {
+        setRemoteRedisConfigured(data.transport.redisConfigured);
       }
       if (listRevision !== remoteDeviceListRevisionRef.current) return;
 
@@ -6893,6 +6981,14 @@ export default function SpiceApp() {
       return;
     }
 
+    if (command.command === 'connect' && command.payload?.connected === false) {
+      setIncomingRemoteControllerId((controllerId) => (
+        controllerId === command.sourceDeviceId ? '' : controllerId
+      ));
+    } else {
+      setIncomingRemoteControllerId(command.sourceDeviceId);
+    }
+
     switch (command.command) {
       case 'play':
         if (!isPlayingRef.current) resumeCurrentPlayback();
@@ -6983,6 +7079,8 @@ export default function SpiceApp() {
         }
         break;
       }
+      case 'connect':
+        break;
     }
 
     setRemoteStatus(`Spice Connect command received: ${command.command}.`);
@@ -7042,16 +7140,20 @@ export default function SpiceApp() {
     }
   };
 
-  const sendRemoteCommand = async (command: RemoteCommandType, payload: RemoteCommand['payload'] = {}) => {
+  const sendRemoteCommand = async (
+    command: RemoteCommandType,
+    payload: RemoteCommand['payload'] = {},
+    targetDeviceId = selectedRemoteDeviceId,
+  ) => {
     if (!remoteAuthToken) {
       setRemoteStatus('Sign in or pair this device to use Spice Connect.');
       return false;
     }
-    if (!selectedRemoteDeviceId) {
+    if (!targetDeviceId) {
       setRemoteStatus('Choose another Spice Connect device first.');
       return false;
     }
-    const targetRemoteDevice = remoteDevices.find((device) => device.deviceId === selectedRemoteDeviceId);
+    const targetRemoteDevice = remoteDevices.find((device) => device.deviceId === targetDeviceId);
     if (
       targetRemoteDevice?.lastSeenSeconds !== undefined
       && targetRemoteDevice.lastSeenSeconds > SPICE_CONNECT_STALE_DEVICE_SECONDS
@@ -7076,7 +7178,7 @@ export default function SpiceApp() {
         },
         body: JSON.stringify({
           sourceDeviceId: remoteDeviceId,
-          targetDeviceId: selectedRemoteDeviceId,
+          targetDeviceId,
           command,
           payload,
         }),
@@ -7089,8 +7191,11 @@ export default function SpiceApp() {
         throw new Error(data.message || `Spice Connect command failed with status ${response.status}.`);
       }
 
+      if (data.transport === 'redis' || data.transport === 'postgresql') {
+        setRemoteTransport(data.transport);
+      }
       setRemoteStatus(`Sent ${command} through Spice Connect.`);
-      console.info(`[Spice Connect] queued ${command} from ${remoteDeviceId} to ${selectedRemoteDeviceId}`);
+      console.info(`[Spice Connect] queued ${command} from ${remoteDeviceId} to ${targetDeviceId}`);
       scheduleRemoteTargetRefresh();
       return true;
     } catch (error) {
@@ -7099,7 +7204,7 @@ export default function SpiceApp() {
       const message = error instanceof Error ? error.message : 'Spice Connect command failed.';
       setRemoteStatus(message);
       logDebug('error', `Spice Connect command send failed: ${message}`);
-      console.error(`[Spice Connect] command send failed from ${remoteDeviceId} to ${selectedRemoteDeviceId}: ${message}`);
+      console.error(`[Spice Connect] command send failed from ${remoteDeviceId} to ${targetDeviceId}: ${message}`);
       void loadRemoteDevices();
       return false;
     }
@@ -7259,6 +7364,8 @@ export default function SpiceApp() {
     setPairedRemoteCredential(credential);
     setRemoteDeviceName(displayName);
     setRemoteControlEnabled(true);
+    setRemoteTransport('unknown');
+    setRemoteRedisConfigured(null);
     setRemoteStatus('Secure pairing completed.');
   };
 
@@ -7303,6 +7410,8 @@ export default function SpiceApp() {
       setPairedRemoteCredential(null);
       setRemoteDevices([]);
       setSelectedRemoteDeviceId('');
+      setRemoteTransport('unknown');
+      setRemoteRedisConfigured(null);
       optimisticRemoteDeviceStateRef.current = null;
     }
   };
@@ -7312,6 +7421,8 @@ export default function SpiceApp() {
     remoteRequestGenerationRef.current += 1;
     optimisticRemoteDeviceStateRef.current = null;
     setPairedRemoteCredential(null);
+    setRemoteTransport('unknown');
+    setRemoteRedisConfigured(null);
     if (!cloudToken) {
       setRemoteControlEnabled(false);
       localStorage.setItem('spice_remote_control_enabled', 'false');
@@ -7598,6 +7709,7 @@ export default function SpiceApp() {
       !track
       || track.id === 'placeholder'
       || track.id === 'spice-connect-placeholder'
+      || isOfflineTrack(track)
       || selectedRemoteDeviceId
       || listenTogetherHostSessionIdRef.current
       || personalizedQueueContinuationSuppressedRef.current === playbackTrackKey(track)
@@ -7799,6 +7911,79 @@ export default function SpiceApp() {
     }, 400);
   };
 
+  const resolvePastedMediaLink = async (query: string) => {
+    const mediaLink = parseSupportedMediaLink(query);
+    if (!mediaLink) return false;
+
+    const requestId = ++searchRequestRef.current;
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+      searchTimeoutRef.current = null;
+    }
+    setIsSearching(true);
+    setIsSearchingTopbarUsers(false);
+    setTopbarUserSearchResults([]);
+    setTopbarSearchTrayOpen(false);
+    setSelectedPlaylist(null);
+    setSelectedUser(null);
+    setSearchTab('tracks');
+    setCurrentPage('search');
+
+    try {
+      const runtimeBridge = getSpiceDesktopRuntimeBridge();
+      if (SPICE_RUNTIME_TARGET === 'vercel' && runtimeBridge && !desktopMediaRuntimeReadyRef.current) {
+        const runtime = await runtimeBridge.prepare();
+        if (!runtime?.running) throw new Error('The SPICE local media runtime could not be started.');
+        desktopMediaRuntimeReadyRef.current = true;
+      }
+
+      const response = mediaLink.provider === 'youtube'
+        ? mediaLink.kind === 'track'
+          ? await spiceFetch('local', `/yt/track/${encodeURIComponent(mediaLink.id)}`)
+          : await spiceFetch('local', `/yt/playlist/${encodeURIComponent(mediaLink.id)}`)
+        : await spiceFetch('local', '/sc/resolve', undefined, { url: mediaLink.url });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.message || `The ${mediaLink.provider === 'youtube' ? 'YouTube' : 'SoundCloud'} link could not be resolved.`);
+      }
+      if (requestId !== searchRequestRef.current) return true;
+
+      const rawTracks = mediaLink.provider === 'youtube' && mediaLink.kind === 'track'
+        ? payload.track ? [payload.track] : []
+        : Array.isArray(payload.tracks) ? payload.tracks : [];
+      const tracks = playableSearchTracks(enrichTrackSnapshots(rawTracks));
+      if (tracks.length === 0) {
+        throw new Error('The link resolved, but it did not contain any playable tracks.');
+      }
+
+      rememberTrackSnapshots(tracks);
+      setSearchQuery(query.trim());
+      setTopbarSearchQuery(query.trim());
+      setSearchResults(tracks);
+      setSearchResultsSource('network');
+      setError(undefined);
+      showSpiceNotice(
+        tracks.length === 1
+          ? `Opened "${tracks[0].title}" inside SPICE.`
+          : `Opened ${tracks.length} tracks from the pasted link.`,
+        'success',
+      );
+    } catch (error) {
+      if (requestId === searchRequestRef.current) {
+        const message = error instanceof Error ? error.message : 'The pasted media link could not be opened.';
+        setSearchResults([]);
+        setSearchResultsSource(null);
+        setError(message);
+        showSpiceNotice(message, 'warning');
+      }
+    } finally {
+      if (requestId === searchRequestRef.current) {
+        setIsSearching(false);
+      }
+    }
+    return true;
+  };
+
   const handleSearchInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     setSearchQuery(e.target.value);
     queueSearch(e.target.value);
@@ -7864,7 +8049,9 @@ export default function SpiceApp() {
       setTopbarSearchTrayOpen(Boolean(topbarSearchQuery.trim()));
       setNotificationTrayOpen(false);
     }
-    runTopbarSearch(topbarSearchQuery, searchProvider);
+    void resolvePastedMediaLink(topbarSearchQuery).then((handled) => {
+      if (!handled) runTopbarSearch(topbarSearchQuery, searchProvider);
+    });
   };
 
   const handleTopbarSearchInput = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -9424,6 +9611,9 @@ export default function SpiceApp() {
 
   const remoteTargetDevices = remoteDevices.filter((device) => device.deviceId !== remoteDeviceId);
   const selectedRemoteDevice = remoteTargetDevices.find((device) => device.deviceId === selectedRemoteDeviceId) || null;
+  const incomingRemoteController = remoteTargetDevices.find(
+    (device) => device.deviceId === incomingRemoteControllerId && device.isOnline !== false,
+  ) || null;
   const isControllingRemoteReceiver = Boolean(selectedRemoteDevice);
   useEffect(() => {
     setRemotePlaybackClock(currentTimestampMs());
@@ -9463,20 +9653,23 @@ export default function SpiceApp() {
   const receiverLabel = selectedRemoteDevice?.displayName || 'This device';
   const receiverSelectDisabled = !remoteAuthToken;
 
-  const canControlSelectedRemoteReceiver = (command: RemoteCommandType) => {
-    if (!selectedRemoteDevice) return false;
+  const canControlSelectedRemoteReceiver = (
+    command: RemoteCommandType,
+    targetDevice: RemoteDevice | null = selectedRemoteDevice,
+  ) => {
+    if (!targetDevice) return false;
     if (
-      selectedRemoteDevice.isOnline === false
+      targetDevice.isOnline === false
       ||
-      selectedRemoteDevice.lastSeenSeconds !== undefined
-      && selectedRemoteDevice.lastSeenSeconds > SPICE_CONNECT_STALE_DEVICE_SECONDS
+      targetDevice.lastSeenSeconds !== undefined
+      && targetDevice.lastSeenSeconds > SPICE_CONNECT_STALE_DEVICE_SECONDS
     ) {
-      setRemoteStatus(`${selectedRemoteDevice.displayName} has not checked in recently. Refresh Spice Connect before controlling it.`);
+      setRemoteStatus(`${targetDevice.displayName} has not checked in recently. Refresh Spice Connect before controlling it.`);
       void loadRemoteDevices(true);
       return false;
     }
-    if (command === 'play' && !selectedRemoteDevice.currentTrack) {
-      setRemoteStatus(`Choose a track for ${selectedRemoteDevice.displayName} before pressing play.`);
+    if (command === 'play' && !targetDevice.currentTrack) {
+      setRemoteStatus(`Choose a track for ${targetDevice.displayName} before pressing play.`);
       return false;
     }
 
@@ -9485,32 +9678,49 @@ export default function SpiceApp() {
 
   const selectSpiceConnectReceiver = (deviceId: string) => {
     const safeDeviceId = deviceId === remoteDeviceId ? '' : deviceId;
+    const receiverChanged = safeDeviceId !== selectedRemoteDeviceId;
+    const previousReceiverId = selectedRemoteDeviceId;
     optimisticRemoteDeviceStateRef.current = null;
     setSelectedRemoteDeviceId(safeDeviceId);
+    if (receiverChanged && previousReceiverId) {
+      void sendRemoteCommand('connect', { connected: false }, previousReceiverId);
+    }
     if (safeDeviceId) {
       localStorage.setItem('spice_connect_receiver_id', safeDeviceId);
       const device = remoteTargetDevices.find((entry) => entry.deviceId === safeDeviceId);
-      setRemoteStatus(`Player controls now target ${device?.displayName || 'selected Spice Connect device'}.`);
+      if (receiverChanged) {
+        void sendRemoteCommand('connect', { connected: true }, safeDeviceId);
+      }
+      if (device && receiverChanged && currentTrackRef.current.id !== 'placeholder') {
+        if (isOfflineTrack(currentTrackRef.current)) {
+          pauseCurrentPlayback();
+          setRemoteStatus('Offline downloads stay on the device that stores them. Choose an online track for this receiver.');
+        } else {
+          void handoffPlaybackToDevice(device);
+        }
+      } else {
+        setRemoteStatus(`Player controls now target ${device?.displayName || 'selected Spice Connect device'}.`);
+      }
     } else {
       localStorage.removeItem('spice_connect_receiver_id');
       setRemoteStatus('Player controls now target this device.');
     }
   };
 
-  const patchSelectedRemoteDevice = (updates: Partial<RemoteDevice>) => {
-    if (!selectedRemoteDeviceId) return;
+  const patchRemoteDevice = (deviceId: string, updates: Partial<RemoteDevice>) => {
+    if (!deviceId) return;
     const previousOptimisticState = optimisticRemoteDeviceStateRef.current;
-    const previousUpdates = previousOptimisticState?.deviceId === selectedRemoteDeviceId
+    const previousUpdates = previousOptimisticState?.deviceId === deviceId
       && previousOptimisticState.expiresAt > currentTimestampMs()
       ? previousOptimisticState.updates
       : {};
     optimisticRemoteDeviceStateRef.current = {
-      deviceId: selectedRemoteDeviceId,
+      deviceId,
       expiresAt: currentTimestampMs() + SPICE_CONNECT_OPTIMISTIC_STATE_WINDOW_MS,
       updates: { ...previousUpdates, ...updates },
     };
     setRemoteDevices((devices) => devices.map((device) => (
-      device.deviceId === selectedRemoteDeviceId
+      device.deviceId === deviceId
         ? {
           ...device,
           ...updates,
@@ -9521,6 +9731,10 @@ export default function SpiceApp() {
         }
         : device
     )));
+  };
+
+  const patchSelectedRemoteDevice = (updates: Partial<RemoteDevice>) => {
+    patchRemoteDevice(selectedRemoteDeviceId, updates);
   };
 
   const patchSelectedRemoteQueueStep = (step: -1 | 1) => {
@@ -9543,15 +9757,22 @@ export default function SpiceApp() {
     });
   };
 
-  const handoffPlaybackToSelectedDevice = async () => {
-    if (!selectedRemoteDevice || currentTrackRef.current.id === 'placeholder') {
+  const handoffPlaybackToDevice = async (targetDevice: RemoteDevice | null) => {
+    if (!targetDevice || currentTrackRef.current.id === 'placeholder') {
       setRemoteStatus('Start a track here, then choose an online device to move playback.');
-      return;
+      return false;
     }
-    if (!canControlSelectedRemoteReceiver('handoff')) return;
     const sourceTrack = currentTrackRef.current;
+    if (isOfflineTrack(sourceTrack)) {
+      setRemoteStatus('Offline downloads cannot be handed off because their audio file exists only on this device.');
+      return false;
+    }
+    if (!canControlSelectedRemoteReceiver('handoff', targetDevice)) return false;
     const sourceQueue = queueRef.current.length > 0 ? queueRef.current : [sourceTrack];
     const sourceWasPlaying = isPlayingRef.current;
+    if (sourceWasPlaying || isLoadingStreamRef.current) {
+      pauseCurrentPlayback();
+    }
     const sent = await sendRemoteCommand('handoff', {
       track: sourceTrack,
       queue: sourceQueue.slice(0, 80),
@@ -9561,9 +9782,12 @@ export default function SpiceApp() {
       isPlaying: sourceWasPlaying,
       shuffleEnabled: isShuffleRef.current,
       repeatMode: repeatModeRef.current,
-    });
-    if (!sent) return;
-    patchSelectedRemoteDevice({
+    }, targetDevice.deviceId);
+    if (!sent) {
+      if (sourceWasPlaying) resumeCurrentPlayback();
+      return false;
+    }
+    patchRemoteDevice(targetDevice.deviceId, {
       currentTrack: sourceTrack,
       queue: sourceQueue.slice(0, 80),
       queueIndex: queueIndexRef.current,
@@ -9574,8 +9798,12 @@ export default function SpiceApp() {
       shuffleEnabled: isShuffleRef.current,
       repeatMode: repeatModeRef.current,
     });
-    pauseCurrentPlayback();
-    setRemoteStatus(`Playback moved to ${selectedRemoteDevice.displayName} at ${formatTime(progressRef.current)}.`);
+    setRemoteStatus(`Playback moved to ${targetDevice.displayName} at ${formatTime(progressRef.current)}.`);
+    return true;
+  };
+
+  const handoffPlaybackToSelectedDevice = async () => {
+    await handoffPlaybackToDevice(selectedRemoteDevice);
   };
 
   const startTrackOnActiveReceiver = (
@@ -9583,6 +9811,20 @@ export default function SpiceApp() {
     newQueue?: Track[],
     playlistQueueOriginId?: string,
   ) => {
+    if (isOfflineTrack(track) && isControllingRemoteReceiver) {
+      selectSpiceConnectReceiver('');
+      playTrack(
+        track,
+        newQueue,
+        undefined,
+        false,
+        false,
+        false,
+        playlistQueueOriginId || 'offline-library',
+      );
+      setRemoteStatus('Offline downloads play on the desktop that stores them.');
+      return;
+    }
     if (isControllingRemoteReceiver) {
       if (!canControlSelectedRemoteReceiver('play_track')) return;
       const queuePayload = newQueue && newQueue.length > 0 ? newQueue : [track];
@@ -9742,14 +9984,17 @@ export default function SpiceApp() {
 
   const receiverStatusLabel = (device: RemoteDevice | null) => {
     if (!device) return 'Local playback';
+    const seconds = Math.max(0, device.lastSeenSeconds ?? 0);
     if (device.isOnline === false) {
-      const hours = Math.floor((device.lastSeenSeconds ?? 0) / 3600);
-      const days = Math.floor(hours / 24);
-      return days > 0 ? `Offline · last seen ${days}d ago` : `Offline · last seen ${Math.max(1, hours)}h ago`;
+      if (seconds < 60) return 'Offline · last seen just now';
+      if (seconds < 3600) return `Offline · last seen ${Math.floor(seconds / 60)}m ago`;
+      if (seconds < 86_400) return `Offline · last seen ${Math.floor(seconds / 3600)}h ago`;
+      return `Offline · last seen ${Math.floor(seconds / 86_400)}d ago`;
     }
-    if (device.lastSeenSeconds === undefined) return 'Remote ready';
-    if (device.lastSeenSeconds <= 5) return device.isPlaying ? 'Live now' : 'Online now';
-    const minutes = Math.floor(device.lastSeenSeconds / 60);
+    if (device.lastSeenSeconds === undefined || seconds <= 5) {
+      return device.isPlaying ? 'Playing now' : 'Online now';
+    }
+    const minutes = Math.floor(seconds / 60);
     return `Last seen ${minutes === 0 ? '<1' : minutes}m ago`;
   };
 
@@ -9782,7 +10027,11 @@ export default function SpiceApp() {
       if (requestGeneration !== remoteRequestGenerationRef.current) return;
       if (!response.ok) throw new Error(payload.message || 'The remembered device could not be forgotten.');
       if (selectedRemoteDeviceId === deviceId) selectSpiceConnectReceiver('');
-      setRemoteStatus('Forgot the remembered Spice Connect device. It can appear again if it reconnects.');
+      setRemoteStatus(
+        payload.revokedAuthorizations > 0
+          ? 'Removed the device everywhere and revoked its Spice Connect authorization.'
+          : 'Removed the device from Spice Connect.',
+      );
     } catch (error) {
       if (requestGeneration !== remoteRequestGenerationRef.current) return;
       if (forgottenDevice) {
@@ -9850,7 +10099,11 @@ export default function SpiceApp() {
     const isMenuOpen = receiverMenuOpen === variant;
     const receiverDetail = receiverSelectDisabled
       ? 'Sign in or pair to choose devices'
-      : receiverStatusLabel(selectedRemoteDevice);
+      : selectedRemoteDevice
+        ? receiverStatusLabel(selectedRemoteDevice)
+        : incomingRemoteController
+          ? `Controlled by ${incomingRemoteController.displayName}`
+          : receiverStatusLabel(null);
 
     return (
       <div
@@ -10056,6 +10309,8 @@ const getMaskedEmail = (email: string) => {
     }
     setRemoteDevices([]);
     setSelectedRemoteDeviceId('');
+    setRemoteTransport('unknown');
+    setRemoteRedisConfigured(null);
     optimisticRemoteDeviceStateRef.current = null;
 
     const nextToken = target.cloudToken || null;
@@ -10938,7 +11193,9 @@ const getMaskedEmail = (email: string) => {
       label: 'Desktop',
       items: [
         ...(desktopUpdaterAvailable ? [{ id: 'desktop-updates', label: 'Desktop App', icon: Icons.monitor }] : []),
-        ...(getSpiceDesktopOfflineLibraryBridge() ? [{ id: 'offline-library', label: 'Offline Music', icon: Icons.download }] : []),
+        ...(offlineLibraryBridgeState === 'available'
+          ? [{ id: 'offline-library', label: 'Offline Music', icon: Icons.download }]
+          : []),
         ...(nativeShellAvailable ? [
           { id: 'native-shell', label: 'Native Desktop', icon: Icons.monitor },
           { id: 'discord-activity', label: 'Discord Activity', icon: Icons.account },
@@ -10986,7 +11243,7 @@ const getMaskedEmail = (email: string) => {
 
   return (
     <div
-      className={`app ${sidebarHidden ? 'app--sidebar-hidden' : ''} player-style--${playerVisualStyle} player-placement--${playerPlacement}`}
+      className={`app ${sidebarHidden ? 'app--sidebar-hidden' : ''} topbar-layout--${topbarLayout} player-style--${playerVisualStyle} player-placement--${playerPlacement}`}
       style={customThemeEnabled ? createThemeCssVariables(customThemePalette) as React.CSSProperties : undefined}
     >
       <style dangerouslySetInnerHTML={{ __html: getAccentStyles() }} />
@@ -11659,7 +11916,9 @@ const getMaskedEmail = (email: string) => {
                 {Icons.search}
                 <input
                   type="search"
-                  placeholder={topbarSearchMode === 'users' ? 'Search users...' : `Search ${SEARCH_PROVIDER_LABELS[searchProvider]}...`}
+                  placeholder={topbarSearchMode === 'users'
+                    ? 'Search users...'
+                    : `Search ${SEARCH_PROVIDER_LABELS[searchProvider]} or paste a link...`}
                   value={topbarSearchQuery}
                   onChange={handleTopbarSearchInput}
                   onFocus={() => {
@@ -11681,6 +11940,17 @@ const getMaskedEmail = (email: string) => {
                   Search
                 </button>
               </form>
+              <select
+                className="app-topbar__provider"
+                value={topbarSearchMode}
+                onChange={handleTopbarSearchModeChange}
+                aria-label="Topbar search mode"
+                title="Search source"
+              >
+                {(Object.entries(TOPBAR_SEARCH_MODE_LABELS) as [TopbarSearchMode, string][]).map(([id, label]) => (
+                  <option key={id} value={id}>{label}</option>
+                ))}
+              </select>
 
               {shouldShowTopbarSearchTray && (
                 <div className="app-topbar__search-tray" role="region" aria-label="Topbar search results">
@@ -11945,17 +12215,6 @@ const getMaskedEmail = (email: string) => {
             </div>
 
             <div className="app-topbar__actions">
-              <select
-                className="app-topbar__provider"
-                value={topbarSearchMode}
-                onChange={handleTopbarSearchModeChange}
-                aria-label="Topbar search mode"
-                title="Search mode"
-              >
-                {(Object.entries(TOPBAR_SEARCH_MODE_LABELS) as [TopbarSearchMode, string][]).map(([id, label]) => (
-                  <option key={id} value={id}>{label}</option>
-                ))}
-              </select>
               <div className="app-topbar__notification-shell">
                 <button
                   className={`app-topbar__notification ${notificationTrayOpen ? 'active' : ''}`}
@@ -12996,9 +13255,17 @@ const getMaskedEmail = (email: string) => {
                           {Icons.search}
                           <input
                             type="text"
-                            placeholder={`Search ${SEARCH_PROVIDER_LABELS[searchProvider]}...`}
+                            placeholder={`Search ${SEARCH_PROVIDER_LABELS[searchProvider]} or paste a media link...`}
                             value={searchQuery}
                             onChange={handleSearchInput}
+                            onKeyDown={(event) => {
+                              if (event.key !== 'Enter') return;
+                              event.preventDefault();
+                              const query = event.currentTarget.value;
+                              void resolvePastedMediaLink(query).then((handled) => {
+                                if (!handled) queueSearch(query, searchProvider);
+                              });
+                            }}
                             autoComplete="off"
                             autoFocus
                           />
@@ -13451,17 +13718,33 @@ const getMaskedEmail = (email: string) => {
                   {/* Desktop offline library */}
                   {libraryFilter === 'downloads' && (
                     <div className="library-list animate-in">
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
-                        <div style={{ minWidth: 0 }}>
-                          <strong style={{ color: 'var(--text-primary)' }}>Offline Music</strong>
-                          <div className="truncate" style={{ color: 'var(--text-secondary)', fontSize: '0.78rem', marginTop: '4px' }}>
-                            {offlineLibraryDirectory || 'Open the Spice desktop app to use its offline library.'}
+                      <div className="offline-library-summary">
+                        <div className="offline-library-summary__copy">
+                          <strong>Offline Music</strong>
+                          <div className="offline-library-summary__metrics">
+                            <span>{offlineLibraryEntries.length} downloaded {offlineLibraryEntries.length === 1 ? 'track' : 'tracks'}</span>
+                            <span>{formatOfflineLibrarySize(offlineLibraryTotalBytes)} stored</span>
+                          </div>
+                          <div className="offline-library-summary__folder" title={offlineLibraryDirectory}>
+                            {offlineLibraryDirectory
+                              || (offlineLibraryBridgeState === 'checking'
+                                ? 'Detecting the Spice desktop library…'
+                                : 'Desktop library is unavailable in this browser.')}
                           </div>
                         </div>
-                        {getSpiceDesktopOfflineLibraryBridge() && (
-                          <div style={{ display: 'flex', gap: '8px' }}>
+                        {offlineLibraryBridgeState === 'available' && (
+                          <div className="offline-library-summary__actions">
                             <button className="btn btn--ghost" onClick={() => void refreshOfflineLibrary()}>
                               {Icons.refresh} Refresh
+                            </button>
+                            <button
+                              className="btn btn--ghost"
+                              onClick={() => void getSpiceDesktopOfflineLibraryBridge()?.chooseDirectory().then((result) => {
+                                if (!result.canceled) setOfflineLibraryDirectory(result.directory);
+                                return refreshOfflineLibrary();
+                              })}
+                            >
+                              Change folder
                             </button>
                             <button className="btn btn--secondary" onClick={() => void getSpiceDesktopOfflineLibraryBridge()?.show()}>
                               {Icons.folder} Open folder
@@ -13484,6 +13767,7 @@ const getMaskedEmail = (email: string) => {
                             onClick={() => startTrackOnActiveReceiver(
                               entry.track,
                               offlineLibraryEntries.map((item) => item.track),
+                              'offline-library',
                             )}
                           >
                             <img className="library-item__art" src={entry.track.artworkUrl || '/icon.svg'} alt={entry.track.title} />
@@ -14305,11 +14589,29 @@ const getMaskedEmail = (email: string) => {
                   <div id="visual-customization" style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
                     <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.palette} Visual Customization</h3>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0 0 20px 0', lineHeight: 1.4 }}>
-                      Tune the app surface, cover shape, motion level, and layout density. These preferences save locally and apply instantly.
+                      Tune the header, app surface, cover shape, motion level, and layout density. These preferences save locally and apply instantly.
                     </p>
 
                     <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.25fr) minmax(220px, 0.75fr)', gap: '20px', alignItems: 'stretch' }}>
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '16px' }}>
+                        <div>
+                          <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>Header Layout</label>
+                          <select
+                            aria-label="Header layout"
+                            value={topbarLayout}
+                            onChange={(e) => {
+                              if (!isTopbarLayout(e.target.value)) return;
+                              setTopbarLayout(e.target.value);
+                              localStorage.setItem('spice_topbar_layout', e.target.value);
+                            }}
+                            style={{ width: '100%', padding: '10px 14px', background: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', outline: 'none', cursor: 'pointer' }}
+                          >
+                            {(Object.entries(TOPBAR_LAYOUT_LABELS) as [TopbarLayout, string][]).map(([id, label]) => (
+                              <option key={id} value={id}>{label}</option>
+                            ))}
+                          </select>
+                        </div>
+
                         <div>
                           <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>Surface Style</label>
                           <select
@@ -14384,7 +14686,7 @@ const getMaskedEmail = (email: string) => {
                           <div style={{ width: '52px', height: '52px', borderRadius: 'var(--spice-art-radius)', background: 'var(--accent-gradient)', boxShadow: '0 10px 28px rgba(var(--accent-pink-rgb), 0.28)' }} />
                           <div style={{ minWidth: 0 }}>
                             <div style={{ color: '#fff', fontWeight: 800, fontSize: '0.95rem' }}>Live Preview</div>
-                            <div style={{ color: 'var(--text-secondary)', fontSize: '0.78rem' }}>{VISUAL_SURFACE_LABELS[visualSurface]} / {INTERFACE_SCALE_LABELS[interfaceScale]}</div>
+                            <div style={{ color: 'var(--text-secondary)', fontSize: '0.78rem' }}>{TOPBAR_LAYOUT_LABELS[topbarLayout]} / {VISUAL_SURFACE_LABELS[visualSurface]} / {INTERFACE_SCALE_LABELS[interfaceScale]}</div>
                           </div>
                         </div>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
@@ -15056,7 +15358,7 @@ const getMaskedEmail = (email: string) => {
                   <div id="spice-connect" style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
                     <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: '#fff', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.monitor} Spice Connect Setup</h3>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0 0 20px 0', lineHeight: 1.4 }}>
-                      This desktop registers on demand as soon as you sign in or pair it—no mobile song needs to be playing. Devices stay remembered for 30 days, while their live online state is shown separately.
+                      This desktop registers as soon as you sign in or pair it. Every receiver shows its live status and last connection time; removing a paired device also revokes its access.
                     </p>
 
                     <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 0.85fr) minmax(0, 1.15fr)', gap: '20px', alignItems: 'start' }}>
@@ -15090,6 +15392,30 @@ const getMaskedEmail = (email: string) => {
                         <p style={{ color: 'var(--text-secondary)', fontSize: '0.74rem', lineHeight: 1.4, margin: 0 }}>
                           Connect ID: {remoteDeviceId.slice(0, 8)}. Sign in on another device with the same account, keep SPICE open, then choose it here.
                         </p>
+                        <div
+                          role="status"
+                          style={{
+                            marginTop: '12px',
+                            padding: '9px 11px',
+                            border: '1px solid var(--border-color)',
+                            borderRadius: '9px',
+                            color: remoteTransport === 'redis'
+                              ? 'var(--accent-green, #4ade80)'
+                              : remoteRedisConfigured === false
+                                ? 'var(--accent-red, #f87171)'
+                                : 'var(--text-secondary)',
+                            background: 'var(--body-bg)',
+                            fontSize: '0.74rem',
+                          }}
+                        >
+                          {remoteTransport === 'redis'
+                            ? 'Redis fast path is active'
+                            : remoteTransport === 'postgresql'
+                              ? remoteRedisConfigured === false
+                                ? 'Redis credentials are missing on this deployment'
+                                : 'Redis is configured; this request used the PostgreSQL fallback'
+                              : 'Refresh devices to test the Redis connection'}
+                        </div>
                       </div>
 
                       <div style={{ border: '1px solid var(--border-color)', borderRadius: '12px', padding: '16px', background: '#070707' }}>

@@ -9,8 +9,13 @@ const { shouldBlockNativeStartupPlayback } = require('./desktop-helpers');
 const IS_SPICE_LOCAL_RUNTIME =
     (window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost') &&
     window.location.port === '3939';
+const SPICE_MUSIC_HOSTS = new Set([
+    'music.spice-app.xyz',
+    'spice-app.xyz',
+    'www.spice-app.xyz',
+]);
 const IS_SPICE_MUSIC =
-    IS_SPICE_LOCAL_RUNTIME || window.location.hostname === 'music.spice-app.xyz';
+    IS_SPICE_LOCAL_RUNTIME || SPICE_MUSIC_HOSTS.has(window.location.hostname);
 
 if (IS_SPICE_LOCAL_RUNTIME) {
     window.__spiceDesktopAudioReady = false;
@@ -442,6 +447,9 @@ function installSpiceDesktopOfflineLibraryBridge() {
         writable: false,
         value: Object.freeze(bridge),
     });
+    window.dispatchEvent(new CustomEvent('spice-desktop-bridge-ready', {
+        detail: { capability: 'offline-library' },
+    }));
 }
 
 installSpiceDesktopOfflineLibraryBridge();

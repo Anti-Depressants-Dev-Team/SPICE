@@ -139,6 +139,10 @@ test("desktop package metadata and backend workspace wrappers stay aligned", () 
       "npm --workspace @spice/backend run package:local:linux",
     "backend:package:local:linux:full":
       "npm --workspace @spice/backend run package:local:linux:full",
+    "backend:package:local:macos":
+      "npm --workspace @spice/backend run package:local:macos",
+    "backend:package:local:macos:full":
+      "npm --workspace @spice/backend run package:local:macos:full",
   };
 
   for (const [name, command] of Object.entries(expectedBackendScripts)) {
@@ -193,6 +197,38 @@ test("native releases use an isolated update channel and cache", () => {
   }
   assert.equal(nativeConfig.detectUpdateChannel, false);
   assert.equal(nativeConfig.generateUpdatesFilesForAllChannels, false);
+});
+
+test("native macOS releases bundle a universal local runtime", () => {
+  const root = path.join(__dirname, "..");
+  const nativeWorkflow = fs.readFileSync(
+    path.join(root, ".github", "workflows", "release-native.yml"),
+    "utf8",
+  );
+  const ciWorkflow = fs.readFileSync(
+    path.join(root, ".github", "workflows", "ci.yml"),
+    "utf8",
+  );
+  const macPackageSource = fs.readFileSync(
+    path.join(root, "apps", "backend", "scripts", "package-local-macos.mjs"),
+    "utf8",
+  );
+
+  assert.match(packageConfig.scripts["dist:native:mac"], /--mac --universal/);
+  assert.equal(
+    nativeConfig.mac.x64ArchFiles,
+    "Contents/Resources/native-runtime/**/*",
+  );
+  assert.match(macPackageSource, /darwin-arm64/);
+  assert.match(macPackageSource, /darwin-x64/);
+  assert.match(macPackageSource, /--os=darwin/);
+  assert.match(macPackageSource, /`--cpu=\$\{architecture\}`/);
+  assert.match(macPackageSource, /--ignore-scripts/);
+  assert.match(macPackageSource, /--force/);
+  assert.match(nativeWorkflow, /build-native-macos:[\s\S]*runs-on: macos-latest/);
+  assert.match(nativeWorkflow, /npm run dist:native:mac -- --publish always/);
+  assert.match(ciWorkflow, /local-macos-package:[\s\S]*ffmpeg:macos-universal/);
+  assert.match(ciWorkflow, /local-macos-package:[\s\S]*lipo -archs[\s\S]*x86_64[\s\S]*arm64/);
 });
 
 test("native installer identity remains separate from the wrapper", () => {

@@ -556,6 +556,7 @@ class SpiceApiParserTest {
                   "commands": [
                     {
                       "id": "command-1",
+                      "sourceDeviceId": "studio-phone",
                       "command": "play_track",
                       "payload": {
                         "track": {"id": "track-2", "title": "Voyager", "artist": "Daft Punk"},
@@ -583,6 +584,12 @@ class SpiceApiParserTest {
                         "shuffleEnabled": true,
                         "repeatMode": "one"
                       }
+                    },
+                    {
+                      "id": "command-7",
+                      "sourceDeviceId": "studio-phone",
+                      "command": "connect",
+                      "payload": {"connected": true}
                     }
                   ]
                 }
@@ -591,6 +598,7 @@ class SpiceApiParserTest {
         )
 
         assertEquals(listOf("track-1", "track-2"), commands.first().payloadQueue.map { it.id })
+        assertEquals("studio-phone", commands.first().sourceDeviceId)
         assertEquals(1, commands.first().payloadQueueIndex)
         assertEquals(42_250L, commands[1].seekPositionMs)
         assertEquals(true, commands[2].shuffleEnabled)
@@ -600,6 +608,7 @@ class SpiceApiParserTest {
         assertEquals(true, commands[5].shouldPlay)
         assertEquals(true, commands[5].shuffleEnabled)
         assertEquals(RepeatMode.One, commands[5].repeatMode)
+        assertEquals(true, commands[6].connected)
         assertEquals("one", RepeatMode.One.toRemoteValue())
         assertEquals(RepeatMode.Off, parseRemoteRepeatMode("invalid"))
     }

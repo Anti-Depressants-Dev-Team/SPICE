@@ -1,6 +1,6 @@
 {
   "name": "spice",
-  "version": "1.4.53",
+  "version": "1.4.54",
   "description": "Unified Electron, web runtime, and Android music client.",
   "workspaces": [
     "apps/backend"
@@ -36,6 +36,9 @@
     "backend:package:local:windows:full": "npm --workspace @spice/backend run package:local:windows:full",
     "backend:package:local:linux": "npm --workspace @spice/backend run package:local:linux",
     "backend:package:local:linux:full": "npm --workspace @spice/backend run package:local:linux:full",
+    "backend:package:local:macos": "npm --workspace @spice/backend run package:local:macos",
+    "backend:package:local:macos:full": "npm --workspace @spice/backend run package:local:macos:full",
+    "backend:prepare:ffmpeg:macos-universal": "npm --workspace @spice/backend run prepare:ffmpeg:macos-universal",
     "start": "electron .",
     "start:native": "node scripts/start-native.js",
     "start:hidden": "npx cross-env ELECTRON_RUN_AS_NODE=1 node -e \"require('child_process').spawn(require('electron'), ['.'], {detached: true, stdio: 'ignore'}).unref()\"",
@@ -46,6 +49,7 @@
     "dist:native": "npm run native:prepare-runtime && electron-builder --config electron-builder.native.cjs",
     "dist:native:windows": "npm run native:prepare-runtime && electron-builder --win --config electron-builder.native.cjs",
     "dist:native:linux": "npm run native:prepare-runtime && electron-builder --linux --config electron-builder.native.cjs",
+    "dist:native:mac": "npm run backend:prepare:ffmpeg:macos-universal && npm run native:prepare-runtime && electron-builder --mac --universal --config electron-builder.native.cjs",
     "test": "node --test test/*.test.js",
     "mobile:test": "npm --prefix apps/mobile test",
     "mobile:build": "npm --prefix apps/mobile run android:debug",
