@@ -1,5 +1,12 @@
 # SPICE Walkthrough
 
+## v1.0.155
+
+- [Spice.Desktop main] Render the actual dark-purple SPICE application icon in the standard and Native Windows installer artwork instead of a generic reconstructed music-note badge.
+- [Spice.Downloads main] Put a discoverable Downloads Folder control in Settings, save songs to the operating system Downloads directory by default, and preserve user-selected folders for later downloads.
+- [Spice.Mobile main] Keep Android downloads in its MediaStore-backed Music/Spice collection because Android scoped storage does not expose a portable desktop-style folder path picker.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.155`.
+
 ## v1.0.154
 
 - [Spice.Connect main] Complete acknowledged playback handoff across desktop and Android so the source pauses only after the receiver is ready, the full queue and playback state move together, and ambiguous completion can never create two active players.
