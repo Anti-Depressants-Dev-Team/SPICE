@@ -66,7 +66,7 @@
 
     function normalizeShellTheme(value) {
         var accents = ['pink', 'blue', 'orange', 'green', 'gold', 'crimson', 'deeppurple'];
-        var surfaces = ['midnight', 'glass', 'solid', 'aurora'];
+        var surfaces = ['midnight', 'glass', 'solid', 'aurora', 'daylight'];
         value = value && typeof value === 'object' ? value : {};
         var theme = {
             accent: accents.includes(value.accent) ? value.accent : 'deeppurple',
@@ -327,8 +327,14 @@
         function runtimeLabel() {
             if (!runtimeStatus) return 'Checking local runtime';
             if (!runtimeStatus.supported) return 'Managed install is unavailable on this platform';
-            if (runtimeStatus.running) return 'Running on 127.0.0.1:3939';
-            if (runtimeStatus.installed) return 'Installed ' + (runtimeStatus.installedVersion || '');
+            var architectures = Array.isArray(runtimeStatus.architectures) ? runtimeStatus.architectures : [];
+            var architectureLabel = architectures.includes('arm64') && architectures.includes('x64')
+                ? ' - Apple Silicon + Intel'
+                : architectures.length > 0
+                    ? ' - ' + architectures.join(' + ')
+                    : '';
+            if (runtimeStatus.running) return 'Running on 127.0.0.1:3939' + architectureLabel;
+            if (runtimeStatus.installed) return 'Installed ' + (runtimeStatus.installedVersion || '') + architectureLabel;
             return 'Not installed';
         }
 

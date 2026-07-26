@@ -24,6 +24,7 @@ const DEVICE_CHECKPOINT_SECONDS = 15 * 60;
 const AUTH_CACHE_MAX_SECONDS = 60;
 const DEVICE_STATE_TTL_SECONDS = Math.ceil(SPICE_CONNECT_DEVICE_RETENTION_MS / 1000);
 const COMMAND_QUEUE_TTL_SECONDS = Math.ceil(SPICE_CONNECT_COMMAND_TTL_MS / 1000) + 60;
+const FORGOTTEN_DEVICE_TTL_SECONDS = DEVICE_STATE_TTL_SECONDS;
 
 let redisClient: Redis | null | undefined;
 
@@ -79,12 +80,24 @@ function deviceStatesKey(userId: string) {
   return `${REDIS_NAMESPACE}:devices:${keyPart(userId)}`;
 }
 
+function forgottenDevicesKey(userId: string) {
+  return `${REDIS_NAMESPACE}:forgotten-devices:${keyPart(userId)}`;
+}
+
+function forgottenDeviceField(deviceId: string, authorizationHash: string) {
+  return `${deviceField(deviceId)}:${keyPart(authorizationHash)}`;
+}
+
 function commandQueueKey(userId: string, deviceId: string) {
   return `${REDIS_NAMESPACE}:commands:${keyPart(userId)}:${keyPart(deviceId)}`;
 }
 
 function commandQueueInitializedKey(userId: string, deviceId: string) {
   return `${REDIS_NAMESPACE}:commands-initialized:${keyPart(userId)}:${keyPart(deviceId)}`;
+}
+
+function commandSourceIndexKey(userId: string, deviceId: string) {
+  return `${REDIS_NAMESPACE}:commands-by-source:${keyPart(userId)}:${keyPart(deviceId)}`;
 }
 
 function deviceCheckpointKey(userId: string, deviceId: string, pairedAuthorizationHash: string | null) {
@@ -131,6 +144,15 @@ export function getSpiceConnectRedis() {
     redisClient = null;
   }
   return redisClient;
+}
+
+/**
+ * Test-only dependency injection keeps the production path on the official
+ * Upstash client while allowing behavioral tests to exercise every Redis
+ * command without network access.
+ */
+export function __setSpiceConnectRedisForTests(client: Redis | null | undefined) {
+  redisClient = client;
 }
 
 function parseStored<T>(value: unknown): T | null {
@@ -191,7 +213,10 @@ export async function readSpiceConnectDeviceStates(userId: string): Promise<Spic
   if (!redis) return null;
 
   try {
-    const stored = await redis.hgetall<Record<string, string>>(deviceStatesKey(userId));
+    const [stored, forgotten] = await Promise.all([
+      redis.hgetall<Record<string, string>>(deviceStatesKey(userId)),
+      redis.hgetall<Record<string, string>>(forgottenDevicesKey(userId)),
+    ]);
     if (!stored || !stored[DEVICE_META_FIELD]) return null;
 
     const now = Date.now();
@@ -202,6 +227,13 @@ export async function readSpiceConnectDeviceStates(userId: string): Promise<Spic
       const state = parseStored<SpiceConnectCachedDeviceState>(raw);
       const updatedAt = state ? validDate(state.updatedAt) : null;
       if (!state || !validCachedDevice(state) || !updatedAt || now - updatedAt >= SPICE_CONNECT_DEVICE_RETENTION_MS) {
+        staleFields.push(field);
+        continue;
+      }
+      if (
+        state.pairedAuthorizationHash
+        && forgotten?.[forgottenDeviceField(state.deviceId, state.pairedAuthorizationHash)]
+      ) {
         staleFields.push(field);
         continue;
       }
@@ -222,11 +254,24 @@ export async function readSpiceConnectDeviceStates(userId: string): Promise<Spic
 export async function writeSpiceConnectDeviceState(
   userId: string,
   state: SpiceConnectCachedDeviceState,
-) {
+): Promise<boolean | 'forgotten'> {
   const redis = getSpiceConnectRedis();
   if (!redis) return false;
 
   try {
+    if (state.pairedAuthorizationHash) {
+      const forgottenAuthorizationHash = await redis.hget<string>(
+        forgottenDevicesKey(userId),
+        forgottenDeviceField(state.deviceId, state.pairedAuthorizationHash),
+      );
+      if (forgottenAuthorizationHash) {
+        // The revoked paired credential must never resurrect a deleted device
+        // from a delayed heartbeat or stale command retry. Keep this distinct
+        // from a successful cache write so callers also skip durable
+        // checkpoints for the forgotten authorization generation.
+        return 'forgotten';
+      }
+    }
     const key = deviceStatesKey(userId);
     const pipeline = redis.pipeline();
     pipeline.hset(key, {
@@ -273,6 +318,47 @@ export async function deleteSpiceConnectDeviceState(userId: string, deviceId: st
     return true;
   } catch (error) {
     console.warn('[Spice Connect] Redis device-state cleanup failed.', error);
+    return false;
+  }
+}
+
+export async function rememberSpiceConnectForgottenDevice(
+  userId: string,
+  deviceId: string,
+  authorizationHash: string,
+) {
+  const redis = getSpiceConnectRedis();
+  if (!redis || !authorizationHash) return false;
+  try {
+    const key = forgottenDevicesKey(userId);
+    const pipeline = redis.pipeline();
+    pipeline.hset(key, {
+      [forgottenDeviceField(deviceId, authorizationHash)]: '1',
+    });
+    pipeline.expire(key, FORGOTTEN_DEVICE_TTL_SECONDS);
+    await pipeline.exec();
+    return true;
+  } catch (error) {
+    console.warn('[Spice Connect] Redis forgotten-device marker failed.', error);
+    return false;
+  }
+}
+
+export async function clearSpiceConnectForgottenDevice(
+  userId: string,
+  deviceId: string,
+  authorizationHash: string,
+) {
+  const redis = getSpiceConnectRedis();
+  if (!redis || !authorizationHash) return false;
+  try {
+    await redis.hdel(
+      forgottenDevicesKey(userId),
+      forgottenDeviceField(deviceId, authorizationHash),
+    );
+    return true;
+  } catch (error) {
+    console.warn('[Spice Connect] Redis forgotten-device cleanup failed.', error);
     return false;
   }
 }
@@ -411,6 +497,13 @@ export async function enqueueSpiceConnectCommand(userId: string, command: SpiceC
       [commandField(command.id)]: JSON.stringify(command),
     });
     pipeline.expire(queueKey, COMMAND_QUEUE_TTL_SECONDS);
+    pipeline.hset(commandSourceIndexKey(userId, command.sourceDeviceId), {
+      [commandField(command.id)]: command.targetDeviceId,
+    });
+    pipeline.expire(
+      commandSourceIndexKey(userId, command.sourceDeviceId),
+      COMMAND_QUEUE_TTL_SECONDS,
+    );
     pipeline.set(initializedKey, '1', { ex: COMMAND_QUEUE_TTL_SECONDS });
     await pipeline.exec();
     return true;
@@ -444,6 +537,7 @@ export async function claimSpiceConnectCommands(
 
     const nowTime = now.getTime();
     const deleteFields: string[] = [];
+    const sourceIndexDeletes = new Map<string, string[]>();
     const updates: Record<string, string> = {};
     const deliverable: SpiceConnectCachedCommand[] = [];
 
@@ -455,6 +549,9 @@ export async function claimSpiceConnectCommands(
       }
       if (!isSpiceConnectCommandFresh(command.createdAt, nowTime)) {
         deleteFields.push(field);
+        const sourceFields = sourceIndexDeletes.get(command.sourceDeviceId) ?? [];
+        sourceFields.push(field);
+        sourceIndexDeletes.set(command.sourceDeviceId, sourceFields);
         continue;
       }
       if (!isSpiceConnectCommandDeliverable(command, nowTime)) continue;
@@ -479,6 +576,9 @@ export async function claimSpiceConnectCommands(
     if (deleteFields.length > 0 || Object.keys(updates).length > 0) {
       const pipeline = redis.pipeline();
       if (deleteFields.length > 0) pipeline.hdel(queueKey, ...deleteFields);
+      for (const [sourceDeviceId, fields] of sourceIndexDeletes) {
+        pipeline.hdel(commandSourceIndexKey(userId, sourceDeviceId), ...fields);
+      }
       if (Object.keys(updates).length > 0) pipeline.hset(queueKey, updates);
       pipeline.set(
         commandQueueInitializedKey(userId, deviceId),
@@ -509,14 +609,24 @@ export async function hydrateSpiceConnectCommandQueue(
   if (!redis) return false;
   try {
     const entries: Record<string, string> = {};
+    const sourceEntries = new Map<string, Record<string, string>>();
     for (const command of commands) {
-      entries[commandField(command.id)] = JSON.stringify(command);
+      const field = commandField(command.id);
+      entries[field] = JSON.stringify(command);
+      const sourceIndex = sourceEntries.get(command.sourceDeviceId) ?? {};
+      sourceIndex[field] = command.targetDeviceId;
+      sourceEntries.set(command.sourceDeviceId, sourceIndex);
     }
     const pipeline = redis.pipeline();
     const queueKey = commandQueueKey(userId, deviceId);
     if (Object.keys(entries).length > 0) {
       pipeline.hset(queueKey, entries);
       pipeline.expire(queueKey, COMMAND_QUEUE_TTL_SECONDS);
+      for (const [sourceDeviceId, indexedCommands] of sourceEntries) {
+        const sourceKey = commandSourceIndexKey(userId, sourceDeviceId);
+        pipeline.hset(sourceKey, indexedCommands);
+        pipeline.expire(sourceKey, COMMAND_QUEUE_TTL_SECONDS);
+      }
     }
     pipeline.set(
       commandQueueInitializedKey(userId, deviceId),
@@ -535,9 +645,20 @@ export async function removeSpiceConnectCommandsForDevice(userId: string, device
   const redis = getSpiceConnectRedis();
   if (!redis) return false;
   try {
+    const sourceKey = commandSourceIndexKey(userId, deviceId);
+    const sentCommands = await redis.hgetall<Record<string, string>>(sourceKey);
+    if (sentCommands && Object.keys(sentCommands).length > 0) {
+      const pipeline = redis.pipeline();
+      for (const [field, targetDeviceId] of Object.entries(sentCommands)) {
+        if (typeof targetDeviceId !== 'string' || !targetDeviceId) continue;
+        pipeline.hdel(commandQueueKey(userId, targetDeviceId), field);
+      }
+      await pipeline.exec();
+    }
     await redis.del(
       commandQueueKey(userId, deviceId),
       commandQueueInitializedKey(userId, deviceId),
+      sourceKey,
     );
     return true;
   } catch (error) {

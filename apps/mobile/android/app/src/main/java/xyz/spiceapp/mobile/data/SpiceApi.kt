@@ -1287,6 +1287,8 @@ internal fun parseRemoteCommands(payload: JSONObject): List<RemoteCommand> {
             val repeatMode = repeatValue?.let(::parseRemoteRepeatMode)
             val shouldPlay = commandPayload.optBoolean("isPlaying").takeIf { commandPayload.has("isPlaying") }
             val connected = commandPayload.optBoolean("connected").takeIf { commandPayload.has("connected") }
+            val transferId = commandPayload.optString("transferId").trim()
+            val failureReason = commandPayload.optString("reason").trim()
             add(
                 RemoteCommand(
                     id = id,
@@ -1301,6 +1303,8 @@ internal fun parseRemoteCommands(payload: JSONObject): List<RemoteCommand> {
                     repeatMode = repeatMode,
                     shouldPlay = shouldPlay,
                     connected = connected,
+                    transferId = transferId,
+                    failureReason = failureReason,
                 ),
             )
         }

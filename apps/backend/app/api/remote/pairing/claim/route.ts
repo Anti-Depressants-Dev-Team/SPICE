@@ -26,6 +26,7 @@ import {
 } from '@/lib/rate-limit-policy';
 import {
   cacheSpiceConnectPairedAuthorization,
+  clearSpiceConnectForgottenDevice,
   deleteSpiceConnectDeviceState,
 } from '@/lib/spice-connect-redis';
 
@@ -194,6 +195,7 @@ export async function POST(request: Request) {
       authorizationHash: tokenHash,
       expiresAt: expiresAt.toISOString(),
     }),
+    clearSpiceConnectForgottenDevice(authorization.userId, device.deviceId, tokenHash),
     deleteSpiceConnectDeviceState(authorization.userId, device.deviceId),
   ]);
 

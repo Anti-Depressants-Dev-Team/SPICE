@@ -75,6 +75,7 @@ class SpiceLocalRuntimeManager {
       localUrl: this.localUrl,
       manifestUrl: this.manifestUrl,
       runtimeLog: this.childOutput,
+      architectures: readRuntimeArchitectures(this.runtimeDir),
     };
   }
 
@@ -115,6 +116,7 @@ class SpiceLocalRuntimeManager {
       fs.mkdirSync(this.rootDir, { recursive: true });
       fs.rmSync(this.runtimeDir, { recursive: true, force: true });
       fs.renameSync(stagingDir, this.runtimeDir);
+      await clearMacRuntimeQuarantine(this.runtimeDir, this.platform);
 
       this.message = `Bundled SPICE local runtime ${bundledVersion || "included"} installed.`;
       this.emitStatus();
@@ -230,6 +232,7 @@ class SpiceLocalRuntimeManager {
       fs.mkdirSync(this.rootDir, { recursive: true });
       fs.rmSync(this.runtimeDir, { recursive: true, force: true });
       fs.renameSync(stagingDir, this.runtimeDir);
+      await clearMacRuntimeQuarantine(this.runtimeDir, this.platform);
 
       this.message = `SPICE local runtime ${manifest.version || "latest"} installed.`;
       this.emitStatus();
@@ -263,6 +266,7 @@ class SpiceLocalRuntimeManager {
     }
 
     prepareRuntimeExecutables(this.runtimeDir, this.platform);
+    await clearMacRuntimeQuarantine(this.runtimeDir, this.platform);
     this.childOutput = "";
     this.child = spawn(
       this.execPath,
@@ -434,8 +438,65 @@ function prepareRuntimeExecutables(runtimeDir, platform = process.platform) {
     if (!fs.existsSync(candidate)) continue;
     try {
       fs.chmodSync(candidate, 0o755);
-    } catch {}
+    } catch (error) {
+      throw new Error(
+        `SPICE could not make the local runtime executable at ${candidate}. `
+        + `Check the folder permissions and retry. ${error && error.message ? error.message : ""}`.trim(),
+      );
+    }
   }
+}
+
+function clearMacRuntimeQuarantine(
+  runtimeDir,
+  platform = process.platform,
+  spawnProcess = spawn,
+) {
+  if (platform !== "darwin" || !runtimeDir || !fs.existsSync(runtimeDir)) {
+    return Promise.resolve(false);
+  }
+
+  return new Promise((resolve, reject) => {
+    let stderr = "";
+    let child;
+    try {
+      // The runtime is downloaded independently of the signed Electron app.
+      // Clear quarantine metadata recursively before Node or FFmpeg is
+      // launched so Gatekeeper does not fail later with an opaque EACCES.
+      child = spawnProcess("/usr/bin/xattr", ["-cr", runtimeDir], {
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+    } catch (error) {
+      reject(macRuntimePreparationError(runtimeDir, error));
+      return;
+    }
+    child.stderr?.on("data", (chunk) => {
+      stderr = `${stderr}${String(chunk || "")}`.slice(-2000);
+    });
+    child.once("error", (error) => reject(macRuntimePreparationError(runtimeDir, error)));
+    child.once("exit", (code, signal) => {
+      if (code === 0) {
+        resolve(true);
+        return;
+      }
+      reject(macRuntimePreparationError(
+        runtimeDir,
+        new Error(
+          stderr.trim()
+          || `xattr exited with ${signal ? `signal ${signal}` : `code ${code ?? "unknown"}`}.`,
+        ),
+      ));
+    });
+  });
+}
+
+function macRuntimePreparationError(runtimeDir, cause) {
+  return new Error(
+    `macOS could not prepare the downloaded SPICE runtime at ${runtimeDir}. `
+    + `Check that SPICE can write to this folder, then retry. If macOS still blocks it, `
+    + `open System Settings → Privacy & Security and allow SPICE. `
+    + `${cause && cause.message ? cause.message : ""}`.trim(),
+  );
 }
 
 function lastRuntimeLogLine(output) {
@@ -460,6 +521,20 @@ function readRuntimeVersion(runtimeDir) {
     return typeof manifest.version === "string" ? manifest.version : "unknown";
   } catch {
     return "unknown";
+  }
+}
+
+function readRuntimeArchitectures(runtimeDir) {
+  if (!runtimeDir) return [];
+  const manifestPath = path.join(runtimeDir, "spice-local-manifest.json");
+  if (!fs.existsSync(manifestPath)) return [];
+  try {
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    return Array.isArray(manifest.architectures)
+      ? manifest.architectures.filter((value) => value === "arm64" || value === "x64")
+      : [];
+  } catch {
+    return [];
   }
 }
 
@@ -544,4 +619,7 @@ module.exports = {
   resolveRuntimeDownloadUrl,
   runtimePlatformConfig,
   shouldInstallRuntimeUpdate,
+  clearMacRuntimeQuarantine,
+  prepareRuntimeExecutables,
+  readRuntimeArchitectures,
 };

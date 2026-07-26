@@ -38,6 +38,7 @@ const {
   shouldQuitWhenLastWindowCloses,
   supportsStartOnBoot,
   createLoginItemSettings,
+  collectOfflineLibraryFiles,
 } = require("./desktop-helpers");
 
 // Simple File Logger for Production Debugging - INITIALIZE FIRST
@@ -638,22 +639,30 @@ async function listOfflineLibraryTracks() {
   const directory = await ensureOfflineLibraryDirectory();
   const metadata = offlineMetadata();
   const entries = await fs.promises.readdir(directory, { withFileTypes: true });
-  const tracks = await Promise.all(entries
+  const fileNames = entries
     .filter((entry) => entry.isFile() && OFFLINE_AUDIO_EXTENSIONS.has(path.extname(entry.name).toLowerCase()))
-    .map(async (entry) => {
-      const filePath = path.join(directory, entry.name);
-      const stat = await fs.promises.stat(filePath);
-      const saved = metadata[entry.name] && typeof metadata[entry.name] === "object"
-        ? metadata[entry.name]
+    .map((entry) => entry.name);
+  const snapshot = await collectOfflineLibraryFiles(
+    fileNames,
+    (fileName) => fs.promises.stat(path.join(directory, fileName)),
+    metadata,
+  );
+  if (snapshot.metadataChanged && store) {
+    store.set(OFFLINE_LIBRARY_METADATA_KEY, snapshot.metadata);
+  }
+  const tracks = snapshot.files.map((entry) => {
+      const saved = snapshot.metadata[entry.fileName] && typeof snapshot.metadata[entry.fileName] === "object"
+        ? snapshot.metadata[entry.fileName]
         : {};
-      const fallbackTitle = path.basename(entry.name, path.extname(entry.name));
+      const fallbackTitle = path.basename(entry.fileName, path.extname(entry.fileName));
+      const url = `spice-offline://audio/${encodeURIComponent(entry.fileName)}?access=${offlineLibraryProtocolToken()}`;
       return {
-        fileName: entry.name,
-        bytes: stat.size,
-        updatedAt: stat.mtime.toISOString(),
-        url: `spice-offline://audio/${encodeURIComponent(entry.name)}?access=${offlineLibraryProtocolToken()}`,
+        fileName: entry.fileName,
+        bytes: entry.bytes,
+        updatedAt: entry.updatedAt,
+        url,
         track: {
-          id: `offline:${encodeURIComponent(entry.name)}`,
+          id: `offline:${encodeURIComponent(entry.fileName)}`,
           title: saved.title || fallbackTitle,
           artists: Array.isArray(saved.artists) && saved.artists.length
             ? saved.artists
@@ -662,10 +671,10 @@ async function listOfflineLibraryTracks() {
           durationMs: saved.durationMs,
           artworkUrl: saved.artworkUrl,
           sourceId: "offline",
-          permalinkUrl: `spice-offline://audio/${encodeURIComponent(entry.name)}?access=${offlineLibraryProtocolToken()}`,
+          permalinkUrl: url,
         },
       };
-    }));
+    });
   return tracks.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }
 
@@ -729,6 +738,18 @@ ipcMain.handle("spice-offline-library-list", async (event) => {
   return { directory: offlineLibraryDirectory(), tracks: await listOfflineLibraryTracks() };
 });
 
+ipcMain.handle("spice-offline-library-exists", async (event, fileName) => {
+  requireTrustedSpiceSender(event);
+  if (typeof fileName !== "string" || path.basename(fileName) !== fileName) {
+    throw new Error("Invalid offline audio file.");
+  }
+  const filePath = path.join(offlineLibraryDirectory(), fileName);
+  const exists = await fs.promises.stat(filePath)
+    .then((stat) => stat.isFile())
+    .catch(() => false);
+  return { exists, fileName };
+});
+
 ipcMain.handle("spice-offline-library-save", async (event, payload = {}) => {
   requireTrustedSpiceSender(event);
   const bytes = payload.bytes instanceof ArrayBuffer
@@ -777,7 +798,9 @@ ipcMain.handle("spice-offline-library-show", async (event, fileName) => {
   requireTrustedSpiceSender(event);
   const directory = await ensureOfflineLibraryDirectory();
   if (typeof fileName === "string" && path.basename(fileName) === fileName) {
-    shell.showItemInFolder(path.join(directory, fileName));
+    const filePath = path.join(directory, fileName);
+    if (!fs.existsSync(filePath)) return { success: false, missing: true };
+    shell.showItemInFolder(filePath);
   } else {
     await shell.openPath(directory);
   }

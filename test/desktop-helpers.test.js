@@ -12,12 +12,17 @@ const {
   shouldQuitWhenLastWindowCloses,
   supportsStartOnBoot,
   createLoginItemSettings,
+  collectOfflineLibraryFiles,
 } = require("../desktop-helpers");
 
 test("normalizes supported shell themes and rejects unknown values", () => {
   assert.deepEqual(normalizeShellTheme({ accent: "green", surface: "glass" }), {
     accent: "green",
     surface: "glass",
+  });
+  assert.deepEqual(normalizeShellTheme({ accent: "blue", surface: "daylight" }), {
+    accent: "blue",
+    surface: "daylight",
   });
   assert.deepEqual(
     normalizeShellTheme({ accent: "javascript:bad", surface: "unknown" }),
@@ -160,4 +165,37 @@ test("configures start on boot only on supported desktop platforms", () => {
   assert.deepEqual(createLoginItemSettings(true, "darwin", "/Applications/Spice.app"), {
     openAtLogin: true,
   });
+});
+
+test("offline library scans keep healthy files when another file disappears mid-scan", async () => {
+  const snapshot = await collectOfflineLibraryFiles(
+    ["available.mp3", "moved.mp3"],
+    async (fileName) => {
+      if (fileName === "moved.mp3") {
+        const error = new Error("File was moved");
+        error.code = "ENOENT";
+        throw error;
+      }
+      return {
+        size: 4_096,
+        mtime: new Date("2026-07-26T12:00:00.000Z"),
+      };
+    },
+    {
+      "available.mp3": { title: "Available" },
+      "moved.mp3": { title: "Moved" },
+      "deleted.mp3": { title: "Deleted" },
+    },
+  );
+
+  assert.deepEqual(snapshot.files, [{
+    fileName: "available.mp3",
+    bytes: 4_096,
+    updatedAt: "2026-07-26T12:00:00.000Z",
+  }]);
+  assert.deepEqual(snapshot.metadata, {
+    "available.mp3": { title: "Available" },
+  });
+  assert.equal(snapshot.metadataChanged, true);
+  assert.deepEqual(snapshot.missingFileNames, ["moved.mp3"]);
 });

@@ -23,6 +23,7 @@ import {
   isSpiceConnectRedisConfigured,
   publishSpiceConnectRedisSignal,
   readSpiceConnectDeviceStates,
+  rememberSpiceConnectForgottenDevice,
   removeSpiceConnectCommandsForDevice,
   readSpiceConnectPairedAuthorization,
   reserveSpiceConnectDeviceCheckpoint,
@@ -309,6 +310,17 @@ export async function DELETE(request: Request) {
         )),
     ]);
 
+    // Install every exact revoked-generation tombstone before removing the
+    // visible state. A delayed heartbeat can otherwise race this request and
+    // briefly restore a device after it was forgotten.
+    await Promise.all(revokedAuthorizations.map((authorization) => (
+      rememberSpiceConnectForgottenDevice(
+        principal.userId,
+        authorization.deviceId,
+        authorization.tokenHash,
+      )
+    )));
+
     await Promise.all([
       ...revokedAuthorizations.map((authorization) => (
         invalidateSpiceConnectPairedAuthorization(
@@ -376,7 +388,18 @@ export async function POST(request: Request) {
       pairedAuthorizationHash,
       updatedAt: updatedAt.toISOString(),
     };
-    const cached = await writeSpiceConnectDeviceState(principal.userId, state);
+    const cacheResult = await writeSpiceConnectDeviceState(principal.userId, state);
+    if (cacheResult === 'forgotten') {
+      return jsonResponse(
+        {
+          error: 'device_authorization_revoked',
+          message: 'This paired device was forgotten. Pair it again before reconnecting.',
+        },
+        { status: 401, headers: { 'Cache-Control': 'no-store, max-age=0' } },
+        request,
+      );
+    }
+    const cached = cacheResult === true;
     const checkpointReserved = await reserveSpiceConnectDeviceCheckpoint(
       principal.userId,
       input.deviceId,

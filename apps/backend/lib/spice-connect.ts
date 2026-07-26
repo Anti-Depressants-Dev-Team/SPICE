@@ -10,6 +10,11 @@ export type SpiceConnectCommandType =
   | 'repeat'
   | 'play_track'
   | 'handoff'
+  | 'handoff_prepare'
+  | 'handoff_ready'
+  | 'handoff_commit'
+  | 'handoff_complete'
+  | 'handoff_cancel'
   | 'connect';
 
 export type SpiceConnectRepeatMode = 'none' | 'all' | 'one';
@@ -190,6 +195,11 @@ const allowedCommands = new Set<SpiceConnectCommandType>([
   'repeat',
   'play_track',
   'handoff',
+  'handoff_prepare',
+  'handoff_ready',
+  'handoff_commit',
+  'handoff_complete',
+  'handoff_cancel',
   'connect',
 ]);
 
