@@ -426,7 +426,7 @@ function installSpiceDesktopRuntimeBridge() {
 installSpiceDesktopRuntimeBridge();
 
 function installSpiceDesktopOfflineLibraryBridge() {
-    if (!IS_SPICE_MUSIC || window.spiceDesktopOfflineLibrary) return;
+    if (window.spiceDesktopOfflineLibrary) return;
 
     const bridge = {
         getSettings: () => ipcRenderer.invoke('spice-offline-library-settings'),
