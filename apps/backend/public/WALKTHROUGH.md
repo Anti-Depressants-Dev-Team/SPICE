@@ -1,5 +1,10 @@
 # SPICE Walkthrough
 
+## v1.0.157
+
+- [Spice.Downloads main] Expose Native Downloads Folder controls through Electron context isolation and transfer downloaded audio as bridge-safe bytes so choosing, opening, and saving to a custom folder work in the packaged app.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.157`.
+
 ## v1.0.156
 
 - [Spice.Downloads main] Keep Downloads Folder visible under Settings → Support even before desktop folder access is detected, retain the Desktop/Native folder picker, and explain the browser-managed download location on web.
