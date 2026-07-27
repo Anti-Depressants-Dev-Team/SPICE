@@ -154,7 +154,12 @@ test('desktop offline library is an explicit Spice-only file bridge', () => {
   );
   assert.match(spiceApp, /Change folder/);
   assert.match(spiceApp, /Downloads Folder/);
+  assert.match(
+    spiceApp,
+    /\{ id: 'offline-library', label: 'Downloads Folder', icon: Icons\.folder \}/,
+  );
   assert.match(spiceApp, /Songs download to your system Downloads folder by default/);
+  assert.match(spiceApp, /This web browser controls where downloads are saved/);
   assert.match(spiceApp, /Open folder/);
   assert.match(spiceApp, /Library → Downloads/);
   assert.match(spiceApp, /Download playlist/);

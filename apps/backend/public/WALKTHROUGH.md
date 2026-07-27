@@ -1,5 +1,10 @@
 # SPICE Walkthrough
 
+## v1.0.156
+
+- [Spice.Downloads main] Keep Downloads Folder visible under Settings → Support even before desktop folder access is detected, retain the Desktop/Native folder picker, and explain the browser-managed download location on web.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.156`.
+
 ## v1.0.155
 
 - [Spice.Desktop main] Render the actual dark-purple SPICE application icon in the standard and Native Windows installer artwork instead of a generic reconstructed music-note badge.
