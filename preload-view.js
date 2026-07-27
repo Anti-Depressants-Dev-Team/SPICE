@@ -3,7 +3,7 @@
  * Exposes a global function for track detection scripts to report what's playing
  */
 
-const { ipcRenderer, webFrame } = require('electron');
+const { contextBridge, ipcRenderer, webFrame } = require('electron');
 const { shouldBlockNativeStartupPlayback } = require('./desktop-helpers');
 
 const IS_SPICE_LOCAL_RUNTIME =
@@ -426,15 +426,14 @@ function installSpiceDesktopRuntimeBridge() {
 installSpiceDesktopRuntimeBridge();
 
 function installSpiceDesktopOfflineLibraryBridge() {
-    if (window.spiceDesktopOfflineLibrary) return;
+    if (!process.contextIsolated && window.spiceDesktopOfflineLibrary) return;
 
     const bridge = {
         getSettings: () => ipcRenderer.invoke('spice-offline-library-settings'),
         chooseDirectory: () => ipcRenderer.invoke('spice-offline-library-choose-directory'),
         list: () => ipcRenderer.invoke('spice-offline-library-list'),
-        save: async (fileName, blob, track) => {
-            if (!(blob instanceof Blob)) throw new TypeError('A downloaded audio Blob is required.');
-            const bytes = await blob.arrayBuffer();
+        save: (fileName, bytes, track) => {
+            if (!(bytes instanceof ArrayBuffer)) throw new TypeError('Downloaded audio bytes are required.');
             return ipcRenderer.invoke('spice-offline-library-save', { fileName, bytes, track });
         },
         exists: (fileName) => ipcRenderer.invoke('spice-offline-library-exists', fileName),
@@ -442,12 +441,16 @@ function installSpiceDesktopOfflineLibraryBridge() {
         show: (fileName) => ipcRenderer.invoke('spice-offline-library-show', fileName),
     };
 
-    Object.defineProperty(window, 'spiceDesktopOfflineLibrary', {
-        configurable: false,
-        enumerable: false,
-        writable: false,
-        value: Object.freeze(bridge),
-    });
+    if (process.contextIsolated) {
+        contextBridge.exposeInMainWorld('spiceDesktopOfflineLibrary', bridge);
+    } else {
+        Object.defineProperty(window, 'spiceDesktopOfflineLibrary', {
+            configurable: false,
+            enumerable: false,
+            writable: false,
+            value: Object.freeze(bridge),
+        });
+    }
     window.dispatchEvent(new CustomEvent('spice-desktop-bridge-ready', {
         detail: { capability: 'offline-library' },
     }));

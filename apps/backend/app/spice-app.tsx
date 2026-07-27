@@ -839,7 +839,7 @@ interface SpiceDesktopOfflineLibraryBridge {
   getSettings: () => Promise<{ directory: string }>;
   chooseDirectory: () => Promise<{ canceled: boolean; directory: string }>;
   list: () => Promise<{ directory: string; tracks: DesktopOfflineLibraryEntry[] }>;
-  save: (fileName: string, blob: Blob, track: Track) => Promise<{ success: boolean; directory: string; fileName: string }>;
+  save: (fileName: string, bytes: ArrayBuffer, track: Track) => Promise<{ success: boolean; directory: string; fileName: string }>;
   exists: (fileName: string) => Promise<{ exists: boolean; fileName: string }>;
   remove: (fileName: string) => Promise<{ success: boolean }>;
   show: (fileName?: string) => Promise<{ success: boolean; missing?: boolean }>;
@@ -2267,7 +2267,7 @@ export default function SpiceApp() {
     const fileName = `${sanitizeDownloadName(track)}.mp3`;
     const bridge = getSpiceDesktopOfflineLibraryBridge();
     if (bridge) {
-      await bridge.save(fileName, blob, track);
+      await bridge.save(fileName, await blob.arrayBuffer(), track);
       await refreshOfflineLibrary();
       return;
     }
