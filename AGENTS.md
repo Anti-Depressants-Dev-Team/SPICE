@@ -81,22 +81,23 @@ Do not add pnpm workspace files or a separate backend lockfile.
 
 ## Verification
 
-- Desktop logic: `npm test`.
-- Backend logic: `npm run backend:test`, `npm run backend:typecheck`, and `npm run backend:lint`.
-- Backend runtime changes: also run `npm run backend:build:local` and `npm run backend:build:vercel`.
-- Electron behavior: smoke-test with `npm start` when practical.
-- macOS-compatible desktop changes: rely on the universal macOS packaging check in CI and smoke-test on macOS when practical.
-- Native packaging/runtime: run `npm run start:native` or the relevant `npm run dist:native:*` path.
-- Mobile changes: run `npm run mobile:android:check`.
+Keep verification proportional and usage-conscious:
 
-## Automatic release policy
+- By default, run only the smallest targeted test or static check that covers the changed behavior.
+- Run `npm test` only for broad root-desktop changes or when no narrower root test exists.
+- Run backend tests, typecheck, or lint only when the changed backend files require them. Prefer a targeted backend test file over the complete suite.
+- Run local/Vercel builds, Electron smoke tests, Native packaging, Android checks, and cross-platform package builds only when the change directly affects those paths or the user explicitly requests them.
+- Do not repeat a check after a version-only or documentation-only edit unless that edit can affect the check.
+- Report which checks were intentionally skipped; do not spend time or tokens reproducing CI coverage locally without a concrete risk.
 
-- Any agent that completes a user-requested product or code implementation must carry it through release; do not stop after editing, committing, pushing a branch, or opening a pull request.
-- After the relevant verification passes, bump the root desktop patch version in `package.json` and `package-lock.json`. Bump `SPICE_MEDIA_CORE_VERSION` and its changelog/tests as well when the backend or local media runtime changes.
-- Commit only necessary tracked source and metadata, push the branch, merge it into `main`, and create/push the matching `v<desktop-version>` tag from the verified merge commit.
-- Monitor the `main` CI, Vercel production deployment, `Release Spice`, and `Release Spice Native` workflows to completion. Fix, rerun, or report any failed job; never describe a release as complete while required jobs or assets are missing.
-- Confirm that the GitHub release contains the expected desktop, Native, and Android assets and that the `spice-local-runtime` release was refreshed when runtime code changed.
-- Documentation-only, test-only, and workflow-only maintenance does not require a new product version unless the user explicitly requests one, but it must still be verified and merged when it is part of the requested work.
+## Publication and release policy
+
+- Automatically commit and release completed user-requested product or code implementations after the targeted verification above passes.
+- Bump the root desktop patch version for product releases. Bump `SPICE_MEDIA_CORE_VERSION` and its changelog/tests only when backend or local media runtime code changes.
+- Commit only the scoped files, push a branch, open and merge a pull request, then create and push the matching `v<desktop-version>` tag from the merge commit.
+- Rely on pull-request CI for the broad cross-platform matrix instead of repeating it locally. Monitor the required `main` CI, Vercel production, `Release Spice`, and `Release Spice Native` workflows with compact status checks and address failures.
+- Confirm the final GitHub release contains the expected desktop, Native, and Android assets. Confirm `spice-local-runtime` only when runtime code changed.
+- Documentation-only, test-only, and workflow-only maintenance should still be committed and merged when requested, but does not require a product version bump or release unless the user explicitly asks.
 
 ## Migration note
 

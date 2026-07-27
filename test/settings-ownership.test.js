@@ -143,7 +143,11 @@ test('desktop offline library is an explicit Spice-only file bridge', () => {
   assert.match(main, /path\.basename\(fileName\) !== fileName/);
   assert.match(main, /protocol\.handle\("spice-offline"/);
   assert.match(main, /parsed\.searchParams\.get\("access"\) !== offlineLibraryProtocolToken\(\)/);
-  assert.match(viewPreload, /if \(!IS_SPICE_MUSIC \|\| window\.spiceDesktopOfflineLibrary\) return/);
+  assert.match(viewPreload, /if \(window\.spiceDesktopOfflineLibrary\) return/);
+  assert.doesNotMatch(
+    viewPreload,
+    /function installSpiceDesktopOfflineLibraryBridge\(\) \{\s*if \(!IS_SPICE_MUSIC/,
+  );
   assert.match(viewPreload, /spice-offline-library-save/);
   assert.match(viewPreload, /spice-offline-library-exists/);
   assert.match(spiceApp, /offlineLibraryEntries\.reduce\(\(total, entry\).*entry\.bytes/s);
