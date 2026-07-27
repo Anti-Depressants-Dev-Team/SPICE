@@ -4,7 +4,17 @@
  */
 
 const { contextBridge, ipcRenderer, webFrame } = require('electron');
-const { shouldBlockNativeStartupPlayback } = require('./desktop-helpers');
+
+// BrowserView preloads run in Electron's sandbox and cannot require local files.
+// Keep this tiny helper here so a failed local import cannot prevent every
+// desktop bridge (including the Downloads Folder picker) from being installed.
+function shouldBlockNativeStartupPlayback({
+    waitingForAudioSettings = false,
+    guardActive = false,
+    userPlaybackIntent = false,
+} = {}) {
+    return !userPlaybackIntent && (waitingForAudioSettings || guardActive);
+}
 
 const IS_SPICE_LOCAL_RUNTIME =
     (window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost') &&
