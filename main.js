@@ -40,6 +40,7 @@ const {
   createLoginItemSettings,
   shouldOpenNativePlayerOnLaunch,
   collectOfflineLibraryFiles,
+  resolveWrapperVolumeStages,
 } = require("./desktop-helpers");
 
 // Simple File Logger for Production Debugging - INITIALIZE FIRST
@@ -107,6 +108,7 @@ let lyricsWindow = null;
 let queueWindow = null;
 let currentVolume = 1.0; // Volume gain value (0.0 - 10.0), shared across scopes
 let currentBoostEnabled = false;
+let spiceAudioControlRevision = 0;
 let spiceRuntimeManager = null;
 let applyVolumeToActiveView = () => {};
 let updateInstallInProgress = false;
@@ -1475,7 +1477,11 @@ function injectInlineLyrics(trackInfo) {
         if (!panel) {
           panel = document.createElement('div');
           panel.id = panelId;
-          panel.innerHTML = '<div class="spice-line"></div><div class="spice-next"></div>';
+          const currentLine = document.createElement('div');
+          currentLine.className = 'spice-line';
+          const nextLine = document.createElement('div');
+          nextLine.className = 'spice-next';
+          panel.append(currentLine, nextLine);
           document.body.appendChild(panel);
         }
 
@@ -4203,16 +4209,22 @@ app.whenReady().then(async () => {
   // Robust Volume Injection Script
   // This script runs on an interval in the webview to ensure volume is always applied
   // even if the video element changes (e.g. song switch, ad transition).
-  const getVolumeScript = (gainValue) => `
+  const getVolumeScript = (gainValue) => {
+    const stages = resolveWrapperVolumeStages(gainValue);
+    return `
         (function() {
-            window.spiceVolume = ${gainValue};
+            window.spiceVolume = ${stages.totalGain};
+            window.spiceMediaVolume = ${stages.mediaVolume};
+            window.spiceBoostGain = ${stages.boostGain};
 
             // Helper to apply immediately
             function apply() {
                 try {
                     const media = document.querySelector('video') || document.querySelector('audio');
                     if (!media) return;
-                    media.volume = Math.max(0, Math.min(1, window.spiceVolume));
+                    if (media.volume !== window.spiceMediaVolume) {
+                        media.volume = window.spiceMediaVolume;
+                    }
 
                     if (!window.boostCtx) {
                         const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -4234,8 +4246,8 @@ app.whenReady().then(async () => {
                         window.lastBoostedMedia = media;
                     }
 
-                    if (window.boostGain.gain.value !== window.spiceVolume) {
-                        window.boostGain.gain.value = window.spiceVolume;
+                    if (window.boostGain.gain.value !== window.spiceBoostGain) {
+                        window.boostGain.gain.value = window.spiceBoostGain;
                     }
                 } catch(e) {
                     // console.error(e);
@@ -4251,32 +4263,43 @@ app.whenReady().then(async () => {
                 apply();
             }, 1000);
         })();
-    `;
+      `;
+  };
 
-  const getSpiceAudioSyncScript = (gainValue, boostEnabled) => `
+  const getSpiceAudioSyncScript = (gainValue, boostEnabled, revision) => `
         (function() {
             if (typeof window.__spiceDesktopSetAudioSettings !== 'function') return false;
             window.__spiceDesktopSetAudioSettings({
                 volume: ${Math.round(Math.max(0, Math.min(10, Number(gainValue) || 0)) * 100)},
-                boostEnabled: ${boostEnabled ? "true" : "false"}
+                boostEnabled: ${boostEnabled ? "true" : "false"},
+                revision: ${revision}
             });
             return true;
         })();
     `;
 
-  function applySpiceAudioControls(retries = 60) {
+  function applySpiceAudioControls(retries = 60, payload = null) {
     const targetView = getActiveBackendView();
     if (!targetView) return;
+    const nextPayload = payload || {
+      gainValue: currentVolume,
+      boostEnabled: currentBoostEnabled,
+      revision: ++spiceAudioControlRevision,
+    };
     targetView.webContents
-      .executeJavaScript(getSpiceAudioSyncScript(currentVolume, currentBoostEnabled))
+      .executeJavaScript(getSpiceAudioSyncScript(
+        nextPayload.gainValue,
+        nextPayload.boostEnabled,
+        nextPayload.revision,
+      ))
       .then((applied) => {
-        if (!applied && retries > 0) {
-          setTimeout(() => applySpiceAudioControls(retries - 1), 250);
+        if (!applied && retries > 0 && nextPayload.revision === spiceAudioControlRevision) {
+          setTimeout(() => applySpiceAudioControls(retries - 1, nextPayload), 250);
         }
       })
       .catch(() => {
-        if (retries > 0) {
-          setTimeout(() => applySpiceAudioControls(retries - 1), 250);
+        if (retries > 0 && nextPayload.revision === spiceAudioControlRevision) {
+          setTimeout(() => applySpiceAudioControls(retries - 1, nextPayload), 250);
         }
       });
   }
@@ -4328,6 +4351,9 @@ app.whenReady().then(async () => {
     if (typeof (state && state.boostEnabled) === "boolean") {
       currentBoostEnabled = state.boostEnabled;
       if (store) store.set("boostEnabled", currentBoostEnabled);
+    }
+    if (currentService === "spice_crazy") {
+      applySpiceAudioControls();
     }
     miniPlayerServer.updateState({ volume: currentVolume });
     sendAudioControlState();

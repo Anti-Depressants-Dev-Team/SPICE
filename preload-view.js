@@ -19,6 +19,7 @@ function shouldBlockNativeStartupPlayback({
 const IS_SPICE_LOCAL_RUNTIME =
     (window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost') &&
     window.location.port === '3939';
+const IS_YOUTUBE_MUSIC = window.location.hostname === 'music.youtube.com';
 const SPICE_MUSIC_HOSTS = new Set([
     'music.spice-app.xyz',
     'spice-app.xyz',
@@ -548,6 +549,21 @@ function installSpiceDesktopUiBridge() {
 
 installSpiceDesktopUiBridge();
 
+function normalizeSpiceDesktopAudioPayload(payload) {
+    const boostEnabled = Boolean(payload && payload.boostEnabled);
+    const maxVolume = boostEnabled ? 1000 : 200;
+    const requestedVolume = Number(payload && payload.volume);
+    if (!Number.isFinite(requestedVolume)) return null;
+    const requestedRevision = Number(payload && payload.revision);
+    return {
+        volume: Math.max(0, Math.min(maxVolume, Math.round(requestedVolume))),
+        boostEnabled,
+        revision: Number.isSafeInteger(requestedRevision) && requestedRevision >= 0
+            ? requestedRevision
+            : null,
+    };
+}
+
 function installSpiceAudioBridge() {
     if (!IS_SPICE_LOCAL_RUNTIME) return;
 
@@ -558,8 +574,12 @@ function installSpiceAudioBridge() {
     let desktopAudioPayload = null;
     let desktopAudioPayloadApplied = false;
     let applyingDesktopAudioPayload = false;
+    let desktopAudioRevision = -1;
 
     function readBoostEnabled() {
+        const slider = findVolumeSlider();
+        const sliderMaximum = Number(slider && slider.max);
+        if (Number.isFinite(sliderMaximum)) return sliderMaximum > 200;
         return window.localStorage.getItem('spice_volume_booster_accepted') === 'true';
     }
 
@@ -577,20 +597,11 @@ function installSpiceAudioBridge() {
         return Number.isFinite(value) ? value : null;
     }
 
-    function normalizePayloadVolume(payload) {
-        const boostEnabled = Boolean(payload && payload.boostEnabled);
-        const maxVolume = boostEnabled ? 1000 : 200;
-        const requested = Number(payload && payload.volume);
-        if (!Number.isFinite(requested)) return null;
-        return Math.max(0, Math.min(maxVolume, Math.round(requested)));
-    }
-
     function writeDesktopAudioPayloadToStorage(payload) {
-        const volume = normalizePayloadVolume(payload);
-        if (volume === null) return;
+        if (!payload) return;
         try {
-            window.localStorage.setItem(PLAYER_VOLUME_STORAGE_KEY, String(volume));
-            window.localStorage.setItem('spice_volume_booster_accepted', String(Boolean(payload && payload.boostEnabled)));
+            window.localStorage.setItem(PLAYER_VOLUME_STORAGE_KEY, String(payload.volume));
+            window.localStorage.setItem('spice_volume_booster_accepted', String(payload.boostEnabled));
         } catch {
             // LocalStorage may be unavailable on early navigation; the DOM bridge still applies the payload.
         }
@@ -604,9 +615,9 @@ function installSpiceAudioBridge() {
 
         const isUserSource = source === 'user';
         if (!isUserSource && desktopAudioPayload) {
-            const expectedVolume = normalizePayloadVolume(desktopAudioPayload);
-            const expectedBoost = Boolean(desktopAudioPayload.boostEnabled);
-            if (expectedVolume !== null && (volume !== expectedVolume || boostEnabled !== expectedBoost)) {
+            const expectedVolume = desktopAudioPayload.volume;
+            const expectedBoost = desktopAudioPayload.boostEnabled;
+            if (volume !== expectedVolume || boostEnabled !== expectedBoost) {
                 applyAudioSettingsPayload(desktopAudioPayload);
             }
             return;
@@ -615,7 +626,11 @@ function installSpiceAudioBridge() {
         const signature = `${volume}:${boostEnabled}`;
         if (!force && signature === lastSignature) return;
         lastSignature = signature;
-        desktopAudioPayload = { volume, boostEnabled };
+        desktopAudioPayload = {
+            volume,
+            boostEnabled,
+            revision: desktopAudioRevision >= 0 ? desktopAudioRevision : null,
+        };
         writeDesktopAudioPayloadToStorage(desktopAudioPayload);
         ipcRenderer.send('spice-audio-state-changed', {
             volume,
@@ -633,14 +648,17 @@ function installSpiceAudioBridge() {
     }
 
     function applyAudioSettingsPayload(payload) {
-        desktopAudioPayload = {
-            volume: Number(payload && payload.volume),
-            boostEnabled: Boolean(payload && payload.boostEnabled),
-        };
-        writeDesktopAudioPayloadToStorage(desktopAudioPayload);
+        const nextPayload = normalizeSpiceDesktopAudioPayload(payload);
+        if (!nextPayload) return false;
+        if (nextPayload.revision !== null && nextPayload.revision < desktopAudioRevision) {
+            return true;
+        }
+        if (nextPayload.revision !== null) desktopAudioRevision = nextPayload.revision;
+        desktopAudioPayload = nextPayload;
 
-        const boostEnabled = Boolean(payload && payload.boostEnabled);
+        const boostEnabled = nextPayload.boostEnabled;
         const currentBoost = readBoostEnabled();
+        writeDesktopAudioPayloadToStorage(nextPayload);
         let boostClickQueued = false;
         if (currentBoost !== boostEnabled) {
             const boostButton = document.querySelector('button[title="Toggle Volume Booster"]');
@@ -653,18 +671,18 @@ function installSpiceAudioBridge() {
         }
 
         const applyRequestedVolume = (remainingAttempts = 40) => {
-            const nextVolume = normalizePayloadVolume(payload);
-            if (nextVolume === null) return;
+            if (desktopAudioPayload !== nextPayload) return;
+            const nextVolume = nextPayload.volume;
 
             const slider = findVolumeSlider();
             if (!slider) {
-                pendingAudioPayload = payload;
+                pendingAudioPayload = nextPayload;
                 return;
             }
 
             const sliderMaximum = Number(slider.max);
             if (boostEnabled && nextVolume > 200 && sliderMaximum < nextVolume && remainingAttempts > 0) {
-                pendingAudioPayload = payload;
+                pendingAudioPayload = nextPayload;
                 setTimeout(() => applyRequestedVolume(remainingAttempts - 1), 50);
                 return;
             }
@@ -685,13 +703,15 @@ function installSpiceAudioBridge() {
         if (boostClickQueued) setTimeout(() => applyRequestedVolume(), 0);
         else applyRequestedVolume();
 
-        setTimeout(() => emitAudioState(true, 'desktop'), 50);
+        setTimeout(() => {
+            if (desktopAudioPayload === nextPayload) emitAudioState(true, 'desktop');
+        }, 50);
+        return true;
     }
 
     window.__spiceDesktopSetAudioSettings = function(payload) {
-        pendingAudioPayload = payload;
         window.__spiceDesktopAudioSettingsQueued = true;
-        applyAudioSettingsPayload(payload);
+        return applyAudioSettingsPayload(payload);
     };
 
     function attachListeners() {
@@ -896,6 +916,103 @@ if (!IS_SPICE_LOCAL_RUNTIME) window.addEventListener('DOMContentLoaded', () => {
 
     console.log('[Preload] Ad MutationObserver Attached');
 });
+
+function isYouTubeIdleDialogText(value) {
+    return /video interrupted|continue (?:to )?(?:watch|listen)|are you still (?:there|watching|listening)|still there/i
+        .test(String(value || ''));
+}
+
+function findYouTubeIdleDialogAction(root) {
+    if (!root || typeof root.querySelector !== 'function') return null;
+
+    const actionSelector = [
+        '#confirm-button button',
+        'button[dialog-confirm]',
+        'button[aria-label*="continue" i]',
+        'button[aria-label="yes" i]',
+        'yt-button-renderer[dialog-confirm]',
+        'tp-yt-paper-button[dialog-confirm]',
+        '#confirm-button',
+        '[dialog-confirm]',
+    ].join(', ');
+
+    function findEnabledAction(container) {
+        if (!container || typeof container.querySelector !== 'function') return null;
+        const action = container.querySelector(actionSelector);
+        if (!action || action.disabled === true) return null;
+        if (typeof action.getAttribute === 'function' && action.getAttribute('aria-disabled') === 'true') {
+            return null;
+        }
+        return action;
+    }
+
+    const youThereRenderer = root.querySelector('ytmusic-you-there-renderer');
+    const dedicatedAction = findEnabledAction(youThereRenderer);
+    if (dedicatedAction) return dedicatedAction;
+
+    if (typeof root.querySelectorAll !== 'function') return null;
+    const dialogs = root.querySelectorAll(
+        'yt-confirm-dialog, tp-yt-paper-dialog, paper-dialog, [role="dialog"]'
+    );
+    for (const dialog of dialogs) {
+        if (!isYouTubeIdleDialogText(dialog && dialog.textContent)) continue;
+        const action = findEnabledAction(dialog);
+        if (action) return action;
+    }
+
+    return null;
+}
+
+function dismissYouTubeIdleDialog(root) {
+    const action = findYouTubeIdleDialogAction(root);
+    if (!action || typeof action.click !== 'function') return false;
+    action.click();
+    console.log('[Preload] Dismissed YouTube Music idle confirmation dialog');
+    return true;
+}
+
+function installYouTubeIdleDialogAutoDismiss() {
+    if (!IS_YOUTUBE_MUSIC || window.__spiceYouTubeIdleDialogAutoDismissInstalled) return;
+    window.__spiceYouTubeIdleDialogAutoDismissInstalled = true;
+
+    let observer = null;
+    let fallbackInterval = null;
+
+    function dismissIdleDialog() {
+        return dismissYouTubeIdleDialog(document);
+    }
+
+    function stopWatching() {
+        if (observer) observer.disconnect();
+        if (fallbackInterval !== null) window.clearInterval(fallbackInterval);
+        observer = null;
+        fallbackInterval = null;
+    }
+
+    function startWatching() {
+        if (!document.body) return;
+
+        dismissIdleDialog();
+        observer = new MutationObserver(dismissIdleDialog);
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['class', 'style', 'hidden', 'aria-hidden', 'aria-disabled'],
+        });
+        fallbackInterval = window.setInterval(dismissIdleDialog, 2000);
+        window.addEventListener('pagehide', stopWatching, { once: true });
+        console.log('[Preload] YouTube Music idle-dialog auto-dismiss attached');
+    }
+
+    if (document.readyState === 'loading') {
+        window.addEventListener('DOMContentLoaded', startWatching, { once: true });
+    } else {
+        startWatching();
+    }
+}
+
+installYouTubeIdleDialogAutoDismiss();
 
 function injectVkPlayer() {
     console.log('[Preload] Attempting to inject VK Player...');
