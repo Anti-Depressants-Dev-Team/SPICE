@@ -1,5 +1,10 @@
 # SPICE Walkthrough
 
+## v1.0.159
+
+- [Spice.Runtime main] Keep the local update-manifest test synchronized with the authoritative Media Core version so routine version bumps do not break Backend CI.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.159`.
+
 ## v1.0.158
 
 - [Spice.Desktop main] Replace the Native launcher homepage with a focused sign-in and registration gate, then skip that gate after account or local-only onboarding so repeat launches open SPICE directly.
