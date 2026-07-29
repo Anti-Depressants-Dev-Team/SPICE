@@ -81,23 +81,47 @@ Do not add pnpm workspace files or a separate backend lockfile.
 
 ## Verification
 
-Keep verification proportional and usage-conscious:
+Local verification is a mandatory publication gate:
 
-- By default, run only the smallest targeted test or static check that covers the changed behavior.
-- Run `npm test` only for broad root-desktop changes or when no narrower root test exists.
-- Run backend tests, typecheck, or lint only when the changed backend files require them. Prefer a targeted backend test file over the complete suite.
-- Run local/Vercel builds, Electron smoke tests, Native packaging, Android checks, and cross-platform package builds only when the change directly affects those paths or the user explicitly requests them.
-- Do not repeat a check after a version-only or documentation-only edit unless that edit can affect the check.
-- Report which checks were intentionally skipped; do not spend time or tokens reproducing CI coverage locally without a concrete risk.
+- Test every implementation and bug fix locally before committing it. Start with the smallest targeted test or static check that covers the changed behavior, then run the broader affected-surface checks needed to establish that the change is safe.
+- When a change affects a build, package, installer, generated runtime, or platform-specific startup path, produce the relevant build locally and smoke-test the resulting artifact before requesting permission to commit. A source-level test alone is not sufficient for a build-affecting change.
+- Run `npm test` for broad root-desktop changes or when no narrower root test exists.
+- Run the relevant backend tests, typecheck, lint, and local or Vercel build when backend files require them. Prefer a targeted backend test first, but do not omit an affected build gate.
+- Run the applicable Electron smoke test, Native packaging check, or Android check for changes to those surfaces. If the current machine cannot run a required platform check, report that limitation explicitly and do not present the change as fully locally verified.
+- CI is additional evidence, not a substitute for required local verification.
+- Before asking to commit, publish, deploy, or release, report the exact checks run, their results, any intentionally skipped checks, and the remaining risks.
+- Documentation-only and policy-only changes do not require a product build unless they modify executable commands, workflow files, or packaging configuration. Validate their wording and repository diff locally.
 
 ## Publication and release policy
 
-- Automatically commit and release completed user-requested product or code implementations after the targeted verification above passes.
-- Bump the root desktop patch version for product releases. Bump `SPICE_MEDIA_CORE_VERSION` and its changelog/tests only when backend or local media runtime code changes.
-- Commit only the scoped files, push a branch, open and merge a pull request, then create and push the matching `v<desktop-version>` tag from the merge commit.
-- Rely on pull-request CI for the broad cross-platform matrix instead of repeating it locally. Monitor the required `main` CI, Vercel production, `Release Spice`, and `Release Spice Native` workflows with compact status checks and address failures.
+Do not automatically commit, push, deploy, merge, tag, or release completed work.
+
+### Approval gates
+
+- After local verification passes, summarize the scoped files and evidence and obtain explicit user confirmation before creating a commit.
+- Obtain explicit user confirmation before pushing a branch, opening or merging a pull request, or deploying a backend update. A confirmation may cover several clearly named publication steps, but it does not authorize unmentioned steps or materially expanded scope.
+- Every change published to GitHub must be committed on a non-`main` branch, pushed to that branch, and submitted through a pull request. Direct pushes to `main` are strictly forbidden for agents and maintainers; only GitHub's merge of an approved pull request may update `main`.
+- Never bypass branch protection, force-push `main`, or use administrative privileges to avoid the required pull-request workflow.
+- Obtain separate explicit user confirmation before bumping a product version, creating or pushing a release tag, or creating a GitHub release. Never infer release approval from approval to commit, push, merge, or deploy.
+- If verification fails, required evidence is unavailable, or the scope changes after confirmation, stop the publication sequence, report the new state, and obtain fresh direction.
+- Commit only the scoped files. Do not include unrelated user work or generated artifacts.
+
+### Release batching
+
+- Accumulate ordinary, low-impact features and fixes into a meaningful, cohesive release instead of creating a new product release for each completed change.
+- Before proposing a release, inspect the unreleased changes and decide whether they provide enough combined user value to justify new desktop, Native, and Android artifacts. Report that assessment with the test and build evidence for every affected surface.
+- A prompt release may be justified for a security or privacy issue, data-loss risk, startup or crash failure, severe user-facing regression, or another important fix that users cannot reasonably receive without new packaged binaries.
+- Defer a product release when changes are non-important, have an easy workaround, or can be delivered completely through a single Vercel backend update. For a backend-only fix, prefer proposing a tested Vercel deployment and continue accumulating packaged-client changes.
+- A Vercel deployment still requires the relevant local backend tests and Vercel build plus explicit user confirmation before deployment.
+- The final release decision belongs to the user after the agent presents the batching assessment, affected platforms, local evidence, CI status, remaining risks, and recommended action.
+
+### Approved release flow
+
+- After release approval, bump the root desktop patch version for product releases. Bump `SPICE_MEDIA_CORE_VERSION` and its changelog/tests only when backend or local media runtime code changes.
+- Push the verified non-`main` release branch, open and merge a pull request through GitHub, then create and push the matching `v<desktop-version>` tag from the merge commit only when those steps were explicitly authorized.
+- Monitor the required `main` CI, Vercel production, `Release Spice`, and `Release Spice Native` workflows with compact status checks and address failures.
 - Confirm the final GitHub release contains the expected desktop, Native, and Android assets. Confirm `spice-local-runtime` only when runtime code changed.
-- Documentation-only, test-only, and workflow-only maintenance should still be committed and merged when requested, but does not require a product version bump or release unless the user explicitly asks.
+- Documentation-only, test-only, policy-only, and workflow-only maintenance does not require a product version bump or release unless the user explicitly approves one after the release assessment.
 
 ## Migration note
 
