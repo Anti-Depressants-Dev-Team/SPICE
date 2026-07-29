@@ -800,7 +800,7 @@ interface SpiceConfirmDialog {
 }
 
 interface SpiceDesktopNavigationDetail {
-  action: 'back' | 'settings';
+  action: 'back' | 'home' | 'settings';
   handled: boolean;
 }
 
@@ -2540,6 +2540,14 @@ export default function SpiceApp() {
     const handleDesktopNavigation = (event: Event) => {
       const detail = (event as CustomEvent<SpiceDesktopNavigationDetail>).detail;
       if (!detail || detail.handled) return;
+
+      if (detail.action === 'home') {
+        setSelectedPlaylist(null);
+        setSelectedUser(null);
+        setCurrentPage('home');
+        detail.handled = true;
+        return;
+      }
 
       if (detail.action === 'settings') {
         setSelectedPlaylist(null);

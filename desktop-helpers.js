@@ -183,6 +183,10 @@ function createLoginItemSettings(
   return settings;
 }
 
+function shouldOpenNativePlayerOnLaunch({ nativeMode, onboarded, account } = {}) {
+  return Boolean(nativeMode && (onboarded === true || account));
+}
+
 async function collectOfflineLibraryFiles(fileNames, statFile, metadata = {}) {
   const safeNames = Array.isArray(fileNames)
     ? fileNames.filter((fileName) => typeof fileName === "string" && fileName)
@@ -231,5 +235,6 @@ module.exports = {
   shouldQuitWhenLastWindowCloses,
   supportsStartOnBoot,
   createLoginItemSettings,
+  shouldOpenNativePlayerOnLaunch,
   collectOfflineLibraryFiles,
 };

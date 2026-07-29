@@ -38,6 +38,7 @@ const {
   shouldQuitWhenLastWindowCloses,
   supportsStartOnBoot,
   createLoginItemSettings,
+  shouldOpenNativePlayerOnLaunch,
   collectOfflineLibraryFiles,
 } = require("./desktop-helpers");
 
@@ -269,12 +270,7 @@ function nativeModeSettings() {
   return {
     nativeMode: APP_NATIVE_MODE,
     bundledRuntimeAvailable: hasBundledNativeRuntime(),
-    autoOpen: getNativeAutoOpen(),
   };
-}
-
-function getNativeAutoOpen() {
-  return store ? store.get("nativeAutoOpen", true) !== false : true;
 }
 
 function getNativeAccountSnapshot() {
@@ -308,13 +304,13 @@ function saveNativeAccount(token, user) {
   };
   store.set("nativeAccount", snapshot);
   store.set("nativeOnboarded", true);
-  store.set("nativeAutoOpen", true);
   return getNativeAccountSummary();
 }
 
 function clearNativeAccount() {
   if (!store) return;
   store.delete("nativeAccount");
+  store.set("nativeOnboarded", false);
 }
 
 async function ensureLocalRuntimeReady() {
@@ -884,9 +880,8 @@ function createWindow() {
   });
 
   // Initial load via local server
-  windowInstance.loadURL(APP_NATIVE_MODE ? "http://localhost:6969/?native=1" : "http://localhost:6969/").then(() => {
+  windowInstance.loadURL(APP_NATIVE_MODE ? "http://localhost:6969/?native=1" : "http://localhost:6969/").then(async () => {
     if (mainWindow !== windowInstance || windowInstance.isDestroyed()) return;
-    windowInstance.show();
     applyCustomCssToWebContents(windowInstance.webContents);
     sendShellTheme(windowInstance.webContents);
     // mainWindow.webContents.openDevTools({ mode: "detach" }); // Disabled to stop DevTools console from popping up automatically
@@ -901,12 +896,24 @@ function createWindow() {
       sendActiveServiceState(true);
       sendAudioControlState();
       applyVolumeToActiveView();
+      windowInstance.show();
       return;
     }
 
-    // Check for Default Service Startup.
+    // Check for Default Service Startup. Native keeps the shell hidden once
+    // onboarding is complete so the login gate never flashes during boot.
+    const nativeDirectOpen = shouldOpenNativePlayerOnLaunch({
+      nativeMode: APP_NATIVE_MODE,
+      onboarded: store ? store.get("nativeOnboarded", false) : false,
+      account: getNativeAccountSummary(),
+    });
+    if (!nativeDirectOpen) {
+      windowInstance.show();
+    }
     const startupService = APP_NATIVE_MODE
-      ? (store && store.get("nativeOnboarded", false) && getNativeAutoOpen() ? "spice_crazy" : DEFAULT_NATIVE_STARTUP_SERVICE)
+      ? nativeDirectOpen
+        ? "spice_crazy"
+        : DEFAULT_NATIVE_STARTUP_SERVICE
       : (currentService || (store ? store.get("defaultService", DEFAULT_STARTUP_SERVICE) : DEFAULT_STARTUP_SERVICE));
 
     if (
@@ -915,19 +922,20 @@ function createWindow() {
       SERVICES[startupService]
     ) {
       console.log(`Auto-loading Default Service: ${startupService}`);
-      // Ensure we have a small delay so window is ready
-      setTimeout(() => {
-        if (mainWindow === windowInstance && !windowInstance.isDestroyed()) {
-          loadService(startupService);
-        }
-      }, 500);
+      await loadService(startupService);
     } else {
       // If 'home' or invalid, stay on home (index.html)
       console.log("Staying on Home Screen");
       sendActiveServiceState(false);
     }
+    if (mainWindow === windowInstance && !windowInstance.isDestroyed()) {
+      windowInstance.show();
+    }
   }).catch((error) => {
     console.error("Failed to load the SPICE desktop shell:", error);
+    if (mainWindow === windowInstance && !windowInstance.isDestroyed()) {
+      windowInstance.show();
+    }
   });
 
   windowInstance.on("resize", () => {
@@ -1762,9 +1770,9 @@ ipcMain.on("seek-playback", (event, time) => {
 async function loadService(serviceKey) {
   if (APP_NATIVE_MODE && serviceKey !== "spice_crazy") {
     console.log(`Native mode rejected legacy service: ${serviceKey}`);
-    return;
+    return false;
   }
-  if (!SERVICES[serviceKey]) return;
+  if (!SERVICES[serviceKey]) return false;
 
   // VK layout uses the same YT Music URL, but force-enables VK player
   if (serviceKey === "yt_vk") {
@@ -1789,12 +1797,12 @@ async function loadService(serviceKey) {
       );
     }
     sendActiveServiceState(false);
-    return;
+    return false;
   }
 
   if (!serviceUrl) {
     sendActiveServiceState(false);
-    return;
+    return false;
   }
 
   // Save state - DISABLE for now to favor explicit Default Setting
@@ -1843,38 +1851,39 @@ async function loadService(serviceKey) {
     console.log(
       `[Main] Service URL already loaded or loading: ${serviceUrl}`,
     );
-    return;
+    return true;
   }
 
   console.log(`Loading service URL: ${serviceUrl} `);
-  view.webContents
-    .loadURL(serviceUrl)
-    .then(() => {
-      console.log(`Successfully loaded ${serviceKey} `);
-      updateViewBounds(); // Re-apply bounds just in case
-      applyCustomCssToWebContents(view.webContents);
+  try {
+    await view.webContents.loadURL(serviceUrl);
+    console.log(`Successfully loaded ${serviceKey} `);
+    updateViewBounds(); // Re-apply bounds just in case
+    applyCustomCssToWebContents(view.webContents);
 
-      if (supportsInjectedPlayback(trackDetectionKey)) {
-        if (trackDetectionKey !== "spice_crazy") {
-          // Inject CSS for cosmetic blocking on legacy web services.
-          view.webContents.insertCSS(AD_CSS);
-          injectAdSkipper(view);
-        }
-
-        // Inject Track Detection Script based on service
-        injectTrackDetection(trackDetectionKey);
-
-        // Start main process polling (bypasses broken preload IPC)
-        startTrackPolling();
-      } else {
-        resetTrackedPlayback();
+    if (supportsInjectedPlayback(trackDetectionKey)) {
+      if (trackDetectionKey !== "spice_crazy") {
+        // Inject CSS for cosmetic blocking on legacy web services.
+        view.webContents.insertCSS(AD_CSS);
+        injectAdSkipper(view);
       }
 
-      applyVolumeToActiveView();
-    })
-    .catch((e) => {
-      console.error(`Failed to load ${serviceKey}: `, e);
-    });
+      // Inject Track Detection Script based on service
+      injectTrackDetection(trackDetectionKey);
+
+      // Start main process polling (bypasses broken preload IPC)
+      startTrackPolling();
+    } else {
+      resetTrackedPlayback();
+    }
+
+    applyVolumeToActiveView();
+    return true;
+  } catch (error) {
+    console.error(`Failed to load ${serviceKey}: `, error);
+    sendActiveServiceState(false);
+    return false;
+  }
 }
 
 async function loadSupportedUrl(rawUrl) {
@@ -1998,6 +2007,9 @@ async function dispatchSpiceDesktopNavigation(action) {
 
 async function navigateActiveView(action) {
   if (action === "home") {
+    if (APP_NATIVE_MODE && await dispatchSpiceDesktopNavigation("home")) {
+      return true;
+    }
     goHome();
     return true;
   }
@@ -3744,20 +3756,11 @@ app.whenReady().then(async () => {
   ipcMain.handle("native-continue-offline", async () => {
     if (store) {
       store.set("nativeOnboarded", true);
-      store.set("nativeAutoOpen", true);
     }
     await ensureLocalRuntimeReady();
     return {
       account: null,
       runtime: spiceRuntimeManager ? await spiceRuntimeManager.getStatus() : null,
-    };
-  });
-
-  ipcMain.handle("native-set-auto-open", async (event, enabled) => {
-    if (store) store.set("nativeAutoOpen", enabled !== false);
-    return {
-      ...nativeModeSettings(),
-      account: getNativeAccountSummary(),
     };
   });
 

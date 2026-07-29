@@ -157,7 +157,6 @@
                 case 'nativePrepareRuntime': return window.api.native && window.api.native.prepareRuntime();
                 case 'nativeAuth': return window.api.native && window.api.native.auth(args[0]);
                 case 'nativeContinueOffline': return window.api.native && window.api.native.continueOffline();
-                case 'nativeSetAutoOpen': return window.api.native && window.api.native.setAutoOpen(args[0]);
                 case 'nativeSignOut': return window.api.native && window.api.native.signOut();
                 case 'windowControls':
                     if (args[0] === 'minimize') return window.api.windowControls.minimize();
@@ -469,186 +468,129 @@
             }
         }
 
-        async function setNativeAutoOpen(enabled) {
-            setNativeBusy(true);
-            setNativeMessage(enabled ? 'SPICE Music will open automatically on launch.' : 'Native launcher will stay on this screen.');
-            try {
-                await callApi('nativeSetAutoOpen', enabled);
-                await refreshNativeStatus();
-            } catch (err) {
-                setNativeMessage(err && err.message ? err.message : 'Could not update native launch preference.');
-            } finally {
-                setNativeBusy(false);
-            }
-        }
-
         if (nativeMode) {
             var account = nativeStatus && nativeStatus.account;
-            var runtime = nativeStatus && nativeStatus.runtime;
-            var autoOpen = !nativeStatus || nativeStatus.autoOpen !== false;
-            var runtimeText = runtime
-                ? (runtime.running ? 'Runtime running on 127.0.0.1:3939' : runtime.installed ? 'Runtime installed' : runtime.bundled ? 'Bundled runtime ready' : 'Runtime not prepared')
-                : 'Checking runtime';
+            var nativeReady = nativeStatus !== null;
+            var nativeAccessGranted = nativeReady && (nativeStatus.onboarded || account);
 
             return html`
-                <div class="theme-home-bg native-launch">
-                    <div class="native-launch__orb native-launch__orb--one" aria-hidden="true"></div>
-                    <div class="native-launch__orb native-launch__orb--two" aria-hidden="true"></div>
-                    <section class="native-launch__hero">
-                        <div class="native-launch__hero-inner">
-                            <div class="native-launch__brand-row">
-                                <span class="native-launch__mark">${icon(IC.ytMusic, 24)}</span>
-                                <div class="theme-badge native-launch__badge">
-                                    ${icon(IC.cloud, 15)} Native SPICE
-                                </div>
-                            </div>
-                            <h1 class="native-launch__title">
-                                Your music.<br />
-                                <span class="theme-gradient-text">Local by design.</span>
-                            </h1>
-                            <p class="native-launch__lede">
-                                The desktop app starts the bundled local runtime, keeps media extraction on this PC, and only uses the cloud account service for sign-in and sync.
-                            </p>
-
-                            <div class="native-launch__metrics">
-                                <article class="native-launch__metric">
-                                    <span class="native-launch__metric-icon">${icon(IC.play, 17)}</span>
-                                    <div class="native-launch__metric-copy">
-                                        <div class="native-launch__metric-label">Runtime</div>
-                                        <div class="native-launch__metric-value" title=${runtimeText}>${runtimeText}</div>
-                                    </div>
-                                </article>
-                                <article class="native-launch__metric">
-                                    <span class="native-launch__metric-icon">${icon(IC.account, 17)}</span>
-                                    <div class="native-launch__metric-copy">
-                                        <div class="native-launch__metric-label">Account</div>
-                                        <div class="native-launch__metric-value native-launch__metric-value--email" title=${account && account.user ? (account.user.email || 'Connected') : 'Optional'}>${account && account.user ? (account.user.email || 'Connected') : 'Optional'}</div>
-                                    </div>
-                                </article>
-                                <article class="native-launch__metric">
-                                    <span class="native-launch__metric-icon">${icon(IC.sparkles, 17)}</span>
-                                    <div class="native-launch__metric-copy">
-                                        <div class="native-launch__metric-label">Launch</div>
-                                        <div class="native-launch__metric-value">${autoOpen ? 'Auto-opens SPICE' : 'Launcher screen'}</div>
-                                    </div>
-                                </article>
-                            </div>
-
-                            <div class="native-launch__trust-row" aria-label="Native runtime benefits">
-                                <span><i></i>Media stays on this PC</span>
-                                <span><i></i>Cloud sync is optional</span>
-                                <span><i></i>Ready on port 3939</span>
+                <div class="theme-home-bg native-auth">
+                    <div class="native-auth__orb native-auth__orb--one" aria-hidden="true"></div>
+                    <div class="native-auth__orb native-auth__orb--two" aria-hidden="true"></div>
+                    <section class="native-auth__panel" aria-labelledby="native-auth-title">
+                        <div class="native-auth__brand">
+                            <span class="native-auth__mark">${icon(IC.ytMusic, 25)}</span>
+                            <div>
+                                <div class="native-auth__eyebrow">SPICE Native</div>
+                                <strong>SPICE</strong>
                             </div>
                         </div>
-                    </section>
 
-                    <section class="native-launch__panel">
-                        ${account ? html`
-                            <div class="native-launch__account">
-                                <div class="native-launch__panel-eyebrow">Signed in</div>
-                                <div class="native-launch__identity">
-                                    <span class="native-launch__identity-icon">${icon(IC.account, 22)}</span>
-                                    <div>
-                                        <span>SPICE account</span>
-                                        <h2 title=${account.user && account.user.email ? account.user.email : 'SPICE account connected'}>${account.user && account.user.email ? account.user.email : 'SPICE account connected'}</h2>
-                                    </div>
-                                </div>
-                                <p class="native-launch__panel-copy">Your session will be injected into the local SPICE runtime when the player opens.</p>
-                                <div class="native-launch__actions">
-                                    <button class="theme-primary-btn rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
-                                            disabled=${nativeBusy}
-                                            onClick=${launchNativeSpice}>
-                                        Open SPICE Music
-                                    </button>
-                                    <button class="theme-outline-btn rounded-lg border px-4 py-2 text-sm font-semibold disabled:opacity-40"
-                                            disabled=${nativeBusy}
-                                            onClick=${function() { setNativeAutoOpen(!autoOpen); }}>
-                                        ${autoOpen ? 'Auto-open enabled' : 'Auto-open on launch'}
-                                    </button>
-                                    <button class="rounded-lg border border-white/10 px-4 py-2 text-sm font-semibold text-gray-300 hover:bg-white/5 disabled:opacity-40"
+                        ${!nativeReady ? html`
+                            <div class="native-auth__loading" role="status">
+                                <span class="native-auth__spinner" aria-hidden="true"></span>
+                                <h1 id="native-auth-title">Checking your session</h1>
+                                <p>One moment while SPICE gets things ready.</p>
+                            </div>
+                        ` : nativeAccessGranted ? html`
+                            <div class="native-auth__recovery">
+                                <div class="native-auth__eyebrow">Startup interrupted</div>
+                                <h1 id="native-auth-title">SPICE didn’t open</h1>
+                                <p>
+                                    Your ${account ? 'account is still connected' : 'local-only setup is still saved'}.
+                                    Try starting the local player again.
+                                </p>
+                                <button class="theme-primary-btn native-auth__button"
+                                        disabled=${nativeBusy}
+                                        onClick=${launchNativeSpice}>
+                                    ${nativeBusy ? 'Opening SPICE...' : 'Try again'}
+                                </button>
+                                ${account && html`
+                                    <button class="native-auth__text-button"
                                             disabled=${nativeBusy}
                                             onClick=${async function() { await callApi('nativeSignOut'); await refreshNativeStatus(); }}>
-                                        Sign out
+                                        Sign out instead
                                     </button>
-                                </div>
+                                `}
                             </div>
                         ` : nativeVerification ? html`
-                            <form class="native-launch__form" onSubmit=${handleNativeVerify}>
-                                <div class="native-launch__panel-eyebrow">Email verification</div>
+                            <form class="native-auth__form" onSubmit=${handleNativeVerify}>
+                                <div class="native-auth__eyebrow">Email verification</div>
                                 <h2>Check <span title=${nativeVerification.email}>${nativeVerification.email}</span></h2>
-                                <p class="native-launch__panel-copy">Enter the six-digit code we sent. It expires after 10 minutes.</p>
+                                <p class="native-auth__copy">Enter the six-digit code we sent. It expires after 10 minutes.</p>
 
-                                <label class="block text-xs font-semibold text-gray-300 mb-1">Verification code</label>
-                                <input class="mb-4 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2.5 text-center text-xl tracking-[0.3em] text-white outline-none focus:border-purple-400"
+                                <label class="native-auth__label">Verification code</label>
+                                <input class="native-auth__input native-auth__input--code"
                                        type="text" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength="6" required
                                        value=${nativeVerificationCode}
                                        onInput=${function(e) { setNativeVerificationCode(e.target.value.replace(/\D/g, '').slice(0, 6)); }} />
 
-                                <button class="theme-primary-btn w-full rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
+                                <button class="theme-primary-btn native-auth__button"
                                         disabled=${nativeBusy || nativeVerificationCode.length !== 6}>
                                     ${nativeBusy ? 'Working...' : 'Verify and open SPICE'}
                                 </button>
-                                <button type="button" class="mt-2 w-full rounded-lg border border-white/10 px-4 py-2.5 text-sm font-semibold text-gray-300 hover:bg-white/5 disabled:opacity-40"
+                                <button type="button" class="native-auth__secondary-button"
                                         disabled=${nativeBusy} onClick=${resendNativeVerification}>
                                     Resend code
                                 </button>
-                                <button type="button" class="mt-2 w-full rounded-lg px-4 py-2 text-xs font-semibold text-gray-500 hover:text-gray-300 disabled:opacity-40"
+                                <button type="button" class="native-auth__text-button"
                                         disabled=${nativeBusy}
                                         onClick=${function() { setNativeVerification(null); setNativeVerificationCode(''); setNativeMessage('Enter your account details to try again.'); }}>
                                     Start registration again
                                 </button>
                             </form>
                         ` : html`
-                            <form class="native-launch__form" onSubmit=${handleNativeAuth}>
-                                <div class="native-launch__panel-eyebrow">First launch</div>
-                                <h2>Connect your SPICE account</h2>
-                                <p class="native-launch__panel-copy">Sign in for sync and account features, or continue local-only.</p>
+                            <form class="native-auth__form" onSubmit=${handleNativeAuth}>
+                                <div class="native-auth__eyebrow">Welcome</div>
+                                <h1 id="native-auth-title">${authMode === 'register' ? 'Create your account' : 'Sign in to SPICE'}</h1>
+                                <p class="native-auth__copy">Connect for sync and account features. You’ll go straight to your music next time.</p>
 
-                                <div class="grid grid-cols-2 gap-2 mb-4 rounded-xl bg-white/[0.04] p-1">
-                                    <button type="button" class=${'rounded-lg px-3 py-2 text-sm font-semibold ' + (authMode === 'signin' ? 'theme-primary-btn text-white' : 'text-gray-400 hover:text-white')}
+                                <div class="native-auth__tabs" role="tablist" aria-label="Account action">
+                                    <button type="button" role="tab" aria-selected=${authMode === 'signin'} class=${authMode === 'signin' ? 'is-active' : ''}
                                             onClick=${function() { setAuthMode('signin'); setNativeVerification(null); }}>
                                         Sign in
                                     </button>
-                                    <button type="button" class=${'rounded-lg px-3 py-2 text-sm font-semibold ' + (authMode === 'register' ? 'theme-primary-btn text-white' : 'text-gray-400 hover:text-white')}
+                                    <button type="button" role="tab" aria-selected=${authMode === 'register'} class=${authMode === 'register' ? 'is-active' : ''}
                                             onClick=${function() { setAuthMode('register'); setNativeVerification(null); }}>
                                         Register
                                     </button>
                                 </div>
 
-                                <label class="block text-xs font-semibold text-gray-300 mb-1">Email</label>
-                                <input class="mb-3 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2.5 text-sm text-white outline-none focus:border-purple-400"
+                                <label class="native-auth__label">Email</label>
+                                <input class="native-auth__input"
                                        type="email" autoComplete="email" required
                                        value=${authEmail}
                                        onInput=${function(e) { setAuthEmail(e.target.value); }} />
 
                                 ${authMode === 'register' && html`
-                                    <label class="block text-xs font-semibold text-gray-300 mb-1">Username</label>
-                                    <input class="mb-3 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2.5 text-sm text-white outline-none focus:border-purple-400"
+                                    <label class="native-auth__label">Username</label>
+                                    <input class="native-auth__input"
                                            type="text" autoComplete="username" required
                                            value=${authUsername}
                                            onInput=${function(e) { setAuthUsername(e.target.value); }} />
                                 `}
 
-                                <label class="block text-xs font-semibold text-gray-300 mb-1">Password</label>
-                                <input class="mb-4 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2.5 text-sm text-white outline-none focus:border-purple-400"
+                                <label class="native-auth__label">Password</label>
+                                <input class="native-auth__input"
                                        type="password" autoComplete=${authMode === 'signin' ? 'current-password' : 'new-password'} required
                                        value=${authPassword}
                                        onInput=${function(e) { setAuthPassword(e.target.value); }} />
 
-                                <button class="theme-primary-btn w-full rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
+                                <button class="theme-primary-btn native-auth__button"
                                         disabled=${nativeBusy}>
-                                    ${nativeBusy ? 'Working...' : authMode === 'register' ? 'Create account and open SPICE' : 'Sign in and open SPICE'}
+                                    ${nativeBusy ? 'Working...' : authMode === 'register' ? 'Create account' : 'Sign in'}
                                 </button>
-                                <button type="button" class="mt-2 w-full rounded-lg border border-white/10 px-4 py-2.5 text-sm font-semibold text-gray-300 hover:bg-white/5 disabled:opacity-40"
+                                <button type="button" class="native-auth__secondary-button"
                                         disabled=${nativeBusy}
                                         onClick=${continueNativeOffline}>
-                                    Continue local-only
+                                    Continue without an account
                                 </button>
                             </form>
                         `}
 
-                        <div class="native-launch__message" role="status">${nativeMessage}</div>
+                        <div class="native-auth__message" role="status">${nativeMessage}</div>
                     </section>
+                    <p class="native-auth__privacy">${icon(IC.cloud, 14)} Playback and media extraction stay on this computer.</p>
                 </div>
             `;
         }

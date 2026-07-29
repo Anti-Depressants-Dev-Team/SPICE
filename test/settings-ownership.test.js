@@ -76,8 +76,10 @@ test('Native desktop settings move into SPICE Music while the wrapper keeps its 
   assert.match(viewPreload, /Object\.defineProperty\(window, 'spiceNativeShell'/);
   assert.match(main, /if \(!APP_NATIVE_MODE\) \{\s*createSettingsWindow\(\)/s);
   assert.match(main, /openSpiceSettingsInMainWindow\(\)\.catch/);
+  assert.match(main, /APP_NATIVE_MODE && await dispatchSpiceDesktopNavigation\("home"\)/);
   assert.match(settings, /id="discord-toggle"/);
-  assert.match(spiceApp, /action: 'back' \| 'settings'/);
+  assert.match(spiceApp, /action: 'back' \| 'home' \| 'settings'/);
+  assert.match(spiceApp, /detail\.action === 'home'[\s\S]*setCurrentPage\('home'\)/);
 });
 
 test('SPICE settings group every section and keep the admin shortcut in Account only', () => {
@@ -353,17 +355,24 @@ test('SPICE Music settings navigation and topbar command shortcut use live theme
   assert.doesNotMatch(spiceApp, /document\.activeElement.*tagName === 'SELECT'/s);
 });
 
-test('Native launcher summary cards contain long account and runtime values', () => {
-  const launcher = read('index.html');
+test('Native shell uses an authentication gate instead of a signed-in homepage', () => {
+  const index = read('index.html');
+  const main = read('main.js');
+  const preload = read('preload.js');
   const styles = read('styles.css');
 
-  assert.match(launcher, /class="theme-home-bg native-launch"/);
-  assert.match(launcher, /native-launch__metric-value--email/);
-  assert.match(launcher, /title=\$\{account && account\.user/);
-  assert.match(launcher, /Apple Silicon \+ Intel/);
-  assert.match(styles, /\.native-launch__metric\s*\{[^}]*min-width:\s*0/s);
-  assert.match(styles, /\.native-launch__metric-value\s*\{[^}]*overflow-wrap:\s*anywhere/s);
-  assert.match(styles, /\.native-launch__metrics\s*\{[^}]*repeat\(3, minmax\(0, 1fr\)\)/s);
+  assert.match(index, /class="theme-home-bg native-auth"/);
+  assert.match(index, /Sign in to SPICE/);
+  assert.match(index, /Continue without an account/);
+  assert.match(index, /Startup interrupted/);
+  assert.doesNotMatch(index, /Your music\.<br \/>/);
+  assert.doesNotMatch(index, /Auto-open enabled/);
+  assert.doesNotMatch(preload, /setAutoOpen/);
+  assert.match(main, /const nativeDirectOpen = shouldOpenNativePlayerOnLaunch/);
+  assert.match(main, /if \(!nativeDirectOpen\) \{\s*windowInstance\.show\(\)/s);
+  assert.match(main, /await loadService\(startupService\)/);
+  assert.match(styles, /\.native-auth__panel\s*\{[^}]*var\(--shell-surface\)/s);
+  assert.match(styles, /\.native-auth__input\s*\{[^}]*var\(--text-primary\)/s);
 });
 
 test('desktop updater cleanup cannot quit before electron-updater launches the installer', () => {

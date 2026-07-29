@@ -1,5 +1,11 @@
 # SPICE Walkthrough
 
+## v1.0.158
+
+- [Spice.Desktop main] Replace the Native launcher homepage with a focused sign-in and registration gate, then skip that gate after account or local-only onboarding so repeat launches open SPICE directly.
+- [Spice.Music main] Route the Native title-bar Home action to the SPICE home view instead of returning to the desktop authentication gate.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.158`.
+
 ## v1.0.157
 
 - [Spice.Downloads main] Expose Native Downloads Folder controls through Electron context isolation and transfer downloaded audio as bridge-safe bytes so choosing, opening, and saving to a custom folder work in the packaged app.

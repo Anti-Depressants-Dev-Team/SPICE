@@ -12,6 +12,7 @@ const {
   shouldQuitWhenLastWindowCloses,
   supportsStartOnBoot,
   createLoginItemSettings,
+  shouldOpenNativePlayerOnLaunch,
   collectOfflineLibraryFiles,
 } = require("../desktop-helpers");
 
@@ -92,6 +93,41 @@ test("native mode only accepts SPICE URLs", () => {
     parseSupportedServiceUrl("http://localhost:3939/", { nativeMode: true })
       .serviceKey,
     "spice_crazy",
+  );
+});
+
+test("Native launch skips the login gate after account or local-only onboarding", () => {
+  assert.equal(
+    shouldOpenNativePlayerOnLaunch({
+      nativeMode: true,
+      onboarded: true,
+      account: null,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldOpenNativePlayerOnLaunch({
+      nativeMode: true,
+      onboarded: false,
+      account: { user: { email: "native@example.com" } },
+    }),
+    true,
+  );
+  assert.equal(
+    shouldOpenNativePlayerOnLaunch({
+      nativeMode: true,
+      onboarded: false,
+      account: null,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldOpenNativePlayerOnLaunch({
+      nativeMode: false,
+      onboarded: true,
+      account: { user: { email: "native@example.com" } },
+    }),
+    false,
   );
 });
 
