@@ -12,6 +12,7 @@ import {
   localWindowsDownloadUrl,
   newestRuntimeVersion,
 } from '../lib/local-updates.ts';
+import { SPICE_MEDIA_CORE_VERSION } from '../lib/release-notifications.ts';
 
 test('compareVersions compares dotted release versions', () => {
   assert.equal(compareVersions('1.0.91', '1.0.90'), 1);
@@ -137,7 +138,7 @@ test('buildLocalWindowsUpdateManifest uses configured artifact metadata without 
   delete process.env.SPICE_LOCAL_WINDOWS_RELEASE_NOTES_URL;
 
   const manifest = buildLocalWindowsUpdateManifest();
-  assert.equal(manifest.version, '1.0.157');
+  assert.equal(manifest.version, SPICE_MEDIA_CORE_VERSION);
   assert.equal(manifest.download?.url, 'https://downloads.spice-app.xyz/spice-local-windows.zip');
   assert.equal(manifest.download?.sha256, 'abc123');
   assert.equal(manifest.download?.sizeBytes, 42);
