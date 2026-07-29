@@ -156,6 +156,18 @@ function shouldBlockNativeStartupPlayback({
   return !userPlaybackIntent && (waitingForAudioSettings || guardActive);
 }
 
+function resolveWrapperVolumeStages(value) {
+  const requestedGain = Number(value);
+  const totalGain = Number.isFinite(requestedGain)
+    ? Math.max(0, Math.min(10, requestedGain))
+    : 1;
+  return {
+    totalGain,
+    mediaVolume: Math.min(1, totalGain),
+    boostGain: totalGain > 1 ? totalGain : 1,
+  };
+}
+
 function resolveLocalRuntimePlatform(platform = process.platform) {
   if (platform === "win32") return "windows";
   if (platform === "linux") return "linux";
@@ -231,6 +243,7 @@ module.exports = {
   getNavigationHistory,
   navigateHistory,
   shouldBlockNativeStartupPlayback,
+  resolveWrapperVolumeStages,
   resolveLocalRuntimePlatform,
   shouldQuitWhenLastWindowCloses,
   supportsStartOnBoot,

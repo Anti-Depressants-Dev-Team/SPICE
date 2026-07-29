@@ -8,6 +8,7 @@ const {
   getNavigationHistory,
   navigateHistory,
   shouldBlockNativeStartupPlayback,
+  resolveWrapperVolumeStages,
   resolveLocalRuntimePlatform,
   shouldQuitWhenLastWindowCloses,
   supportsStartOnBoot,
@@ -175,6 +176,37 @@ test("native startup playback yields immediately to an explicit user action", ()
     }),
     false,
   );
+});
+
+test("wrapper volume uses one attenuation stage below 100 percent", () => {
+  assert.deepEqual(resolveWrapperVolumeStages(0.5), {
+    totalGain: 0.5,
+    mediaVolume: 0.5,
+    boostGain: 1,
+  });
+  assert.deepEqual(resolveWrapperVolumeStages(0), {
+    totalGain: 0,
+    mediaVolume: 0,
+    boostGain: 1,
+  });
+});
+
+test("wrapper volume reserves Web Audio gain for boosted output", () => {
+  assert.deepEqual(resolveWrapperVolumeStages(2), {
+    totalGain: 2,
+    mediaVolume: 1,
+    boostGain: 2,
+  });
+  assert.deepEqual(resolveWrapperVolumeStages(20), {
+    totalGain: 10,
+    mediaVolume: 1,
+    boostGain: 10,
+  });
+  assert.deepEqual(resolveWrapperVolumeStages("not-a-volume"), {
+    totalGain: 1,
+    mediaVolume: 1,
+    boostGain: 1,
+  });
 });
 
 test("maps supported desktop platforms to managed local runtimes", () => {
