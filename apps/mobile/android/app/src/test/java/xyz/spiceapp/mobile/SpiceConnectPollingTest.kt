@@ -7,6 +7,38 @@ import org.junit.Test
 
 class SpiceConnectPollingTest {
     @Test
+    fun connectBackgroundWorkRequiresExplicitOptInAndRemoteAccess() {
+        assertFalse(
+            shouldStartSpiceConnect(
+                enabled = false,
+                hasAccountSession = true,
+                hasPairedCredential = false,
+            ),
+        )
+        assertFalse(
+            shouldStartSpiceConnect(
+                enabled = true,
+                hasAccountSession = false,
+                hasPairedCredential = false,
+            ),
+        )
+        assertTrue(
+            shouldStartSpiceConnect(
+                enabled = true,
+                hasAccountSession = true,
+                hasPairedCredential = false,
+            ),
+        )
+        assertTrue(
+            shouldStartSpiceConnect(
+                enabled = true,
+                hasAccountSession = false,
+                hasPairedCredential = true,
+            ),
+        )
+    }
+
+    @Test
     fun usesRealtimeWakeupsWithAConservativePollingFallback() {
         assertEquals(5_000L, SPICE_CONNECT_COMMAND_POLL_INTERVAL_MS)
         assertEquals(30_000L, SPICE_CONNECT_REALTIME_FALLBACK_POLL_INTERVAL_MS)

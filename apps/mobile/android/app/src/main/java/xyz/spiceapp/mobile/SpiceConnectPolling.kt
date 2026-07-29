@@ -85,6 +85,12 @@ internal fun hasSpiceConnectAccess(
     hasPairedCredential: Boolean,
 ): Boolean = hasAccountSession || hasPairedCredential
 
+internal fun shouldStartSpiceConnect(
+    enabled: Boolean,
+    hasAccountSession: Boolean,
+    hasPairedCredential: Boolean,
+): Boolean = enabled && hasSpiceConnectAccess(hasAccountSession, hasPairedCredential)
+
 internal fun requiresSpiceConnectDeviceRegistration(
     publishedAccessIdentity: String?,
     activeAccessIdentity: String,

@@ -260,6 +260,7 @@ private fun SpiceRoot(
             onProfilePrivateChanged = viewModel::setProfileEditPrivate,
             onSaveProfile = viewModel::saveProfileEdit,
             onSyncNow = viewModel::syncNow,
+            onSpiceConnectEnabled = viewModel::setSpiceConnectEnabled,
             onRefreshSpiceConnect = viewModel::refreshSpiceConnect,
             onPlaybackDeviceSelected = viewModel::selectPlaybackDevice,
             onForgetPlaybackDevice = viewModel::forgetSpiceConnectDevice,

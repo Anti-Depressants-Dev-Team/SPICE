@@ -109,6 +109,7 @@ data class SpiceUiState(
     val accentTheme: AccentTheme = AccentTheme.MidnightVelvet,
     val accountSession: AccountSession? = null,
     val pairedDeviceCredential: PairedDeviceCredential? = null,
+    val spiceConnectEnabled: Boolean = false,
     val pairingCode: String = "",
     val pairingLoading: Boolean = false,
     val profileSummary: ProfileSummary? = null,
@@ -181,6 +182,11 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
         .also { credential ->
             if (credential == null) pairedCredentialStore.clear()
         }
+    private val initialSpiceConnectEnabled = if (connectPreferences.contains(KEY_SPICE_CONNECT_ENABLED)) {
+        connectPreferences.getBoolean(KEY_SPICE_CONNECT_ENABLED, false)
+    } else {
+        initialPairedCredential != null
+    }
     private var playJob: Job? = null
     private var downloadJob: Job? = null
     private var remoteVolumeJob: Job? = null
@@ -228,6 +234,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
             accentTheme = libraryRepository.accentTheme(),
             accountSession = sessionStore.load(),
             pairedDeviceCredential = initialPairedCredential,
+            spiceConnectEnabled = initialSpiceConnectEnabled,
             remoteDeviceId = remoteDeviceId,
             selectedPlaybackDeviceId = loadSelectedPlaybackDeviceId(),
         ),
@@ -243,7 +250,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
             loadProfileSummary(session)
             loadPendingAccountInvites(session)
         }
-        if (_uiState.value.accountSession != null || _uiState.value.pairedDeviceCredential != null) {
+        if (shouldStartSpiceConnect()) {
             startSpiceConnect()
         }
         if (!resumeDurableAppUpdateDownload()) checkForAppUpdate()
@@ -1485,8 +1492,10 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
                     displayName = "Spice Android",
                 ).also(pairedCredentialStore::save)
             }.onSuccess { credential ->
+                connectPreferences.edit().putBoolean(KEY_SPICE_CONNECT_ENABLED, true).apply()
                 _uiState.value = _uiState.value.copy(
                     pairedDeviceCredential = credential,
+                    spiceConnectEnabled = true,
                     pairingCode = "",
                     pairingLoading = false,
                     connectStatus = "This phone is securely paired for Spice Connect.",
@@ -1519,7 +1528,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
         loadProfileSummary(session)
         syncLibrary(session)
         loadPendingAccountInvites(session)
-        startSpiceConnect()
+        if (shouldStartSpiceConnect()) startSpiceConnect()
     }
 
     fun signOut() {
@@ -1552,7 +1561,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
             connectStatus = "",
             message = "Signed out of Spice account.",
         )
-        if (activePairedCredential() != null) startSpiceConnect()
+        if (shouldStartSpiceConnect()) startSpiceConnect()
     }
 
     fun syncNow() {
@@ -2545,6 +2554,40 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun setSpiceConnectEnabled(enabled: Boolean) {
+        connectPreferences.edit().putBoolean(KEY_SPICE_CONNECT_ENABLED, enabled).apply()
+        _uiState.value = _uiState.value.copy(
+            spiceConnectEnabled = enabled,
+            connectStatus = if (enabled) {
+                "Spice Connect enabled on this phone."
+            } else {
+                "Spice Connect disabled on this phone."
+            },
+        )
+        if (enabled) {
+            if (hasRemoteAccess()) startSpiceConnect()
+            return
+        }
+
+        connectJob?.cancel()
+        connectRealtimeJob?.cancel()
+        connectRefreshJob?.cancel()
+        connectJob = null
+        connectRealtimeJob = null
+        connectRefreshJob = null
+        connectRealtimeAvailable.set(false)
+        clearPendingSpiceConnectHandoff()
+        preparedSpiceConnectHandoffs.clear()
+        clearOptimisticRemoteState()
+        connectPreferences.edit().remove(KEY_SELECTED_PLAYBACK_DEVICE_ID).apply()
+        _uiState.value = _uiState.value.copy(
+            remoteDevices = emptyList(),
+            selectedPlaybackDeviceId = "",
+            incomingRemoteControllerDeviceId = "",
+            connectLoading = false,
+        )
+    }
+
     private fun sendRemoteCommand(
         deviceId: String,
         command: String,
@@ -2852,6 +2895,12 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
     private fun hasRemoteAccess(): Boolean = hasSpiceConnectAccess(
         hasAccountSession = _uiState.value.accountSession != null,
         hasPairedCredential = activePairedCredential() != null,
+    )
+
+    private fun shouldStartSpiceConnect(): Boolean = shouldStartSpiceConnect(
+        enabled = _uiState.value.spiceConnectEnabled,
+        hasAccountSession = _uiState.value.accountSession != null,
+        hasPairedCredential = _uiState.value.pairedDeviceCredential != null,
     )
 
     private fun activePairedCredential(): PairedDeviceCredential? {
@@ -3817,6 +3866,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
 
     private companion object {
         const val KEY_REMOTE_DEVICE_ID = "remote_device_id"
+        const val KEY_SPICE_CONNECT_ENABLED = "spice_connect_enabled"
         const val KEY_SELECTED_PLAYBACK_DEVICE_ID = "selected_playback_device_id"
         const val KEY_APPLIED_REMOTE_COMMAND_IDS = "applied_remote_command_ids"
         const val MAX_APPLIED_REMOTE_COMMAND_IDS = 160
