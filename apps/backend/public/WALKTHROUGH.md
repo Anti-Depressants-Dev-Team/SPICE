@@ -1,5 +1,12 @@
 # SPICE Walkthrough
 
+## v1.0.160
+
+- [Spice.Desktop main] Start the shared Windows and macOS Electron shell at a roomier `1350x800` default size, including SPICE Native.
+- [Spice.Music main] Remove the page-name block and visible command-palette key from the topbar, align search and its source selector to the left, and retain `Ctrl+K` keyboard access.
+- [Spice.Mobile main] No matching Android UI change is needed because the native Android client does not use Electron window bounds or the desktop SPICE Music topbar.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.160`.
+
 ## v1.0.159
 
 - [Spice.Runtime main] Keep the local update-manifest test synchronized with the authoritative Media Core version so routine version bumps do not break Backend CI.

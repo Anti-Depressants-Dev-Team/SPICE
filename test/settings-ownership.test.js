@@ -248,6 +248,9 @@ test('SPICE topbar layout is user-selectable and keeps search with its provider'
   );
   assert.match(styles, /\.topbar-layout--embedded \.app-topbar\s*\{[\s\S]*border-radius:\s*0/);
   assert.match(styles, /\.app-topbar__search-shell\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) auto/);
+  assert.match(styles, /\.app-topbar\s*\{[\s\S]*grid-template-columns:\s*minmax\(260px, 780px\) minmax\(0, 1fr\)/);
+  assert.match(styles, /\.app-topbar__search-shell\s*\{[\s\S]*justify-self:\s*start/);
+  assert.doesNotMatch(spiceApp, /className="app-topbar__context"/);
 });
 
 test('SPICE embedded header keeps an accessible profile menu and compact breakpoints', () => {
@@ -264,7 +267,7 @@ test('SPICE embedded header keeps an accessible profile menu and compact breakpo
   assert.match(styles, /@media \(max-width: 1500px\) and \(min-width: 1181px\)/);
   assert.match(
     styles,
-    /grid-template-columns:\s*minmax\(250px, 1fr\) minmax\(280px, 780px\) minmax\(250px, 1fr\)/,
+    /grid-template-columns:\s*minmax\(280px, 780px\) minmax\(250px, 1fr\)/,
   );
   assert.match(styles, /@media \(max-width: 820px\) and \(min-width: 601px\)/);
   assert.match(styles, /\.app-topbar__profile,\s*\.topbar-layout--embedded \.app-topbar__profile/);
@@ -342,17 +345,23 @@ test('desktop settings sidebar locks a requested section through smooth scrollin
   assert.match(settings, /sectionLink\.classList\.toggle\("hidden", isNativeMode\)/);
 });
 
-test('SPICE Music settings navigation and topbar command shortcut use live theme tokens', () => {
+test('SPICE Music keeps command palette keyboard access without a topbar button', () => {
   const spiceApp = read('apps/backend/app/spice-app.tsx');
-  const styles = read('apps/backend/app/globals.css');
 
   assert.match(spiceApp, /className="settings-page-nav"/);
   assert.match(spiceApp, /rgba\(var\(--accent-pink-rgb/);
-  assert.match(spiceApp, /className="app-topbar__command-palette"/);
-  assert.match(spiceApp, /aria-label="Open command palette"/);
-  assert.match(styles, /\.app-topbar__command-palette/);
+  assert.match(spiceApp, /if \(!isCommandPaletteShortcut\(event\)\) return/);
+  assert.match(spiceApp, /window\.addEventListener\('keydown', handleCommandPaletteShortcut\)/);
+  assert.doesNotMatch(spiceApp, /className="app-topbar__command-palette"/);
+  assert.doesNotMatch(spiceApp, /aria-label="Open command palette"/);
   assert.doesNotMatch(spiceApp, /className="now-playing__btn now-playing__command-palette"/);
   assert.doesNotMatch(spiceApp, /document\.activeElement.*tagName === 'SELECT'/s);
+});
+
+test('desktop starts at the requested wider default window size', () => {
+  const main = read('main.js');
+
+  assert.match(main, /const windowInstance = new BrowserWindow\(\{\s*width:\s*1350,\s*height:\s*800,/);
 });
 
 test('Native shell uses an authentication gate instead of a signed-in homepage', () => {

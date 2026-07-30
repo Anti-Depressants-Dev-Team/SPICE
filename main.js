@@ -841,7 +841,7 @@ function createWindow() {
   }
 
   const windowInstance = new BrowserWindow({
-    width: 1200,
+    width: 1350,
     height: 800,
     backgroundColor: "#121212", // Match CSS bg
     icon: path.join(__dirname, "icon.png"), // App icon for taskbar/desktop

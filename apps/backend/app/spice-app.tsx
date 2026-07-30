@@ -12362,22 +12362,6 @@ const getMaskedEmail = (email: string) => {
       <main className="main" id="main">
         <div className="main__content">
           <header className="app-topbar" aria-label="SPICE topbar">
-            <div className="app-topbar__context">
-              <div className="app-topbar__context-copy">
-                <span>{currentPage === 'search' ? 'Search mode' : 'SPICE Music'}</span>
-                <strong>{currentPage.charAt(0).toUpperCase() + currentPage.slice(1)}</strong>
-              </div>
-              <button
-                type="button"
-                className="app-topbar__command-palette"
-                onClick={() => setCommandPaletteOpen(true)}
-                title="Command palette (Ctrl+K)"
-                aria-label="Open command palette"
-              >
-                <span aria-hidden="true">K</span>
-              </button>
-            </div>
-
             <div className="app-topbar__search-shell" ref={topbarSearchShellRef}>
               <form className="app-topbar__search" onSubmit={handleTopbarSearchSubmit} role="search">
                 {Icons.search}
