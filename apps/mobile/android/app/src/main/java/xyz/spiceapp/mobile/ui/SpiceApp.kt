@@ -221,6 +221,7 @@ fun SpiceApp(
     onProfilePrivateChanged: (Boolean) -> Unit,
     onSaveProfile: () -> Unit,
     onSyncNow: () -> Unit,
+    onSpiceConnectEnabled: (Boolean) -> Unit,
     onRefreshSpiceConnect: () -> Unit,
     onPlaybackDeviceSelected: (String?) -> Unit,
     onForgetPlaybackDevice: (String) -> Unit,
@@ -356,6 +357,7 @@ fun SpiceApp(
                 onSmartQueueEnabled = onSmartQueueEnabled,
                 onOpenProfileEditor = onOpenProfileEditor,
                 onSyncNow = onSyncNow,
+                onSpiceConnectEnabled = onSpiceConnectEnabled,
                 onRefreshPendingInvites = onRefreshPendingInvites,
                 onAcceptPendingInvite = onAcceptPendingInvite,
                 onRejectPendingInvite = onRejectPendingInvite,
@@ -1578,6 +1580,7 @@ private fun SettingsScreen(
     onSmartQueueEnabled: (Boolean) -> Unit,
     onOpenProfileEditor: () -> Unit,
     onSyncNow: () -> Unit,
+    onSpiceConnectEnabled: (Boolean) -> Unit,
     onRefreshPendingInvites: () -> Unit,
     onAcceptPendingInvite: (PendingPlaylistInvite) -> Unit,
     onRejectPendingInvite: (PendingPlaylistInvite) -> Unit,
@@ -1643,6 +1646,13 @@ private fun SettingsScreen(
                         onRefreshPendingInvites = onRefreshPendingInvites,
                         onAcceptPendingInvite = onAcceptPendingInvite,
                         onRejectPendingInvite = onRejectPendingInvite,
+                    )
+                }
+                item { HorizontalDivider() }
+                item {
+                    SpiceConnectAvailabilitySection(
+                        uiState = uiState,
+                        onEnabledChange = onSpiceConnectEnabled,
                     )
                 }
                 item { HorizontalDivider() }
@@ -1848,6 +1858,33 @@ private fun AccentCard(
                 shadowElevation = if (selected) 8.dp else 0.dp,
             ) {}
             Text(theme.label, maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+        }
+    }
+}
+
+@Composable
+private fun SpiceConnectAvailabilitySection(
+    uiState: SpiceUiState,
+    onEnabledChange: (Boolean) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "Spice Connect",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    "Off by default. Enable it only when you want this phone to appear as a receiver or control another Spice device.",
+                    color = SpiceTextMuted,
+                    fontSize = 13.sp,
+                )
+            }
+            Switch(
+                checked = uiState.spiceConnectEnabled,
+                onCheckedChange = onEnabledChange,
+            )
         }
     }
 }

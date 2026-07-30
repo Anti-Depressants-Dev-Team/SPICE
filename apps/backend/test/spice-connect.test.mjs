@@ -14,6 +14,7 @@ import {
   projectSpiceConnectProgressMs,
   safeRemotePayload,
   spiceConnectCommandPollDelay,
+  spiceConnectEnabledFromStorage,
   SPICE_CONNECT_COMMAND_ACTIVE_POLL_INTERVAL_MS,
   SPICE_CONNECT_COMMAND_HIDDEN_POLL_INTERVAL_MS,
   SPICE_CONNECT_COMMAND_IDLE_POLL_INTERVAL_MS,
@@ -36,6 +37,14 @@ import {
   startSpiceConnectHandoffSource,
   transitionSpiceConnectHandoffSource,
 } from '../lib/spice-connect-handoff.ts';
+
+test('Spice Connect requires an explicit persisted opt-in', () => {
+  assert.equal(spiceConnectEnabledFromStorage(null), false);
+  assert.equal(spiceConnectEnabledFromStorage(undefined), false);
+  assert.equal(spiceConnectEnabledFromStorage('false'), false);
+  assert.equal(spiceConnectEnabledFromStorage('TRUE'), false);
+  assert.equal(spiceConnectEnabledFromStorage('true'), true);
+});
 
 test('Spice Connect device normalization bounds client-reported playback state', () => {
   const queue = Array.from({ length: 100 }, (_, index) => ({ id: `track-${index}` }));

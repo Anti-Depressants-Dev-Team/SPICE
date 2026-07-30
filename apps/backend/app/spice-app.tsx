@@ -109,6 +109,7 @@ import {
 import {
   isSpiceConnectCommandFresh,
   spiceConnectCommandPollDelay,
+  spiceConnectEnabledFromStorage,
   SPICE_CONNECT_COMMAND_IDLE_BACKOFF_POLLS,
   SPICE_CONNECT_COMMAND_REALTIME_FALLBACK_POLL_INTERVAL_MS,
   SPICE_CONNECT_COMMAND_TTL_MS,
@@ -2654,9 +2655,9 @@ export default function SpiceApp() {
   const [isLocalDbFallback, setIsLocalDbFallback] = useState<boolean>(false);
   const [remoteControlEnabled, setRemoteControlEnabled] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
-      return localStorage.getItem('spice_remote_control_enabled') !== 'false';
+      return spiceConnectEnabledFromStorage(localStorage.getItem('spice_remote_control_enabled'));
     }
-    return true;
+    return false;
   });
   const [remoteRealtimeConnected, setRemoteRealtimeConnected] = useState(false);
   const [remoteDeviceId] = useState<string>(() => {
@@ -15852,7 +15853,7 @@ const getMaskedEmail = (email: string) => {
                   <div id="spice-connect" style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
                     <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.monitor} Spice Connect Setup</h3>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0 0 20px 0', lineHeight: 1.4 }}>
-                      This desktop registers as soon as you sign in or pair it. Every receiver shows its live status and last connection time; removing a paired device also revokes its access.
+                      Spice Connect is off by default. Enable it when you want this desktop to appear as a receiver, or pair it explicitly from another signed-in device.
                     </p>
 
                     <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 0.85fr) minmax(0, 1.15fr)', gap: '20px', alignItems: 'start' }}>

@@ -39,6 +39,10 @@ export const SPICE_CONNECT_OPTIMISTIC_STATE_WINDOW_MS = 6000;
 export const SPICE_CONNECT_STALE_DEVICE_SECONDS = 120;
 export const SPICE_CONNECT_DEVICE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
+export function spiceConnectEnabledFromStorage(value: string | null | undefined) {
+  return value === 'true';
+}
+
 type RemoteAuthorizationState = {
   tokenHash: string;
   expiresAt: Date | string;
