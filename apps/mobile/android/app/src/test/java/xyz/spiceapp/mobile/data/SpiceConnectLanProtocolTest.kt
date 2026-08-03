@@ -71,6 +71,12 @@ class SpiceConnectLanProtocolTest {
         val libraryAction = parseSpiceConnectLanEnvelope(envelope, "desktop", "android", "session-1")
         assertEquals(true, (libraryAction as SpiceConnectLanEnvelope.Command).command.liked)
 
+        command
+            .put("command", "play_queue_index")
+            .put("payload", JSONObject().put("queueIndex", 37))
+        val queueSelection = parseSpiceConnectLanEnvelope(envelope, "desktop", "android", "session-1")
+        assertEquals(37, (queueSelection as SpiceConnectLanEnvelope.Command).command.payloadQueueIndex)
+
         assertNull(parseSpiceConnectLanEnvelope(envelope, "other", "android", "session-1"))
         assertNull(parseSpiceConnectLanEnvelope(envelope, "desktop", "android", "session-2"))
         command.put("command", SPICE_CONNECT_LAN_SIGNAL_COMMAND)

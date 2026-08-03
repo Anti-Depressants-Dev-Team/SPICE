@@ -15,7 +15,7 @@ internal fun parseTimedLyrics(value: String?): List<TimedLyricLine> {
             val text = timestamps.lastOrNull()
                 ?.let { sourceLine.substring(it.range.last + 1).trim() }
                 .orEmpty()
-            if (timestamps.isEmpty() || text.isEmpty()) {
+            if (timestamps.isEmpty()) {
                 emptySequence()
             } else {
                 timestamps.asSequence().map { match ->
@@ -37,5 +37,7 @@ internal fun parseTimedLyrics(value: String?): List<TimedLyricLine> {
         .toList()
 }
 
-internal fun activeTimedLyricIndex(lines: List<TimedLyricLine>, positionMs: Long): Int =
-    lines.indexOfLast { it.timeMs <= positionMs.coerceAtLeast(0L) }
+internal fun activeTimedLyricIndex(lines: List<TimedLyricLine>, positionMs: Long): Int {
+    val index = lines.indexOfLast { it.timeMs <= positionMs.coerceAtLeast(0L) }
+    return index.takeIf { it >= 0 && lines[it].text.isNotEmpty() } ?: -1
+}

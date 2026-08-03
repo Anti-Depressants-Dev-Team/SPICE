@@ -607,6 +607,11 @@ class SpiceApiParserTest {
                         "playlistId": "playlist-1",
                         "playlistTitle": "Road trip"
                       }
+                    },
+                    {
+                      "id": "command-10",
+                      "command": "play_queue_index",
+                      "payload": {"queueIndex": 37}
                     }
                   ]
                 }
@@ -628,6 +633,7 @@ class SpiceApiParserTest {
         assertEquals(true, commands[6].connected)
         assertEquals(true, commands[7].liked)
         assertEquals("track-2", commands[7].payloadTrack?.id)
+        assertEquals(37, commands[9].payloadQueueIndex)
         assertEquals("playlist-1", commands[8].playlistId)
         assertEquals("Road trip", commands[8].playlistTitle)
         assertEquals("one", RepeatMode.One.toRemoteValue())

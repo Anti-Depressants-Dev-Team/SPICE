@@ -3,8 +3,10 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import {
+  applySpiceConnectLikeMutation,
   isSpiceConnectCommandDeliverable,
   isSpiceConnectCommandFresh,
+  isSpiceConnectPlaybackCommand,
   isSpiceConnectDeviceStale,
   isSpiceConnectDeviceRemembered,
   isSpiceConnectRemoteDeviceVisible,
@@ -172,6 +174,58 @@ test('Spice Connect accepts receiver library and download actions', () => {
     assert.equal(input.command, command);
     assert.deepEqual(JSON.parse(input.payloadJson), payload);
   }
+});
+
+test('Spice Connect accepts receiver-owned queue index selection', () => {
+  const input = normalizeSpiceConnectCommandInput({
+    sourceDeviceId: 'phone',
+    targetDeviceId: 'desktop',
+    command: 'play_queue_index',
+    payload: { queueIndex: 37 },
+  });
+  assert.ok(!('error' in input));
+  assert.equal(input.command, 'play_queue_index');
+  assert.deepEqual(JSON.parse(input.payloadJson), { queueIndex: 37 });
+});
+
+test('startup reload suppression applies only to playback commands', () => {
+  assert.equal(isSpiceConnectPlaybackCommand('play'), true);
+  assert.equal(isSpiceConnectPlaybackCommand('play_queue_index'), true);
+  assert.equal(isSpiceConnectPlaybackCommand('handoff_commit'), true);
+  assert.equal(isSpiceConnectPlaybackCommand('set_like'), false);
+  assert.equal(isSpiceConnectPlaybackCommand('add_to_playlist'), false);
+  assert.equal(isSpiceConnectPlaybackCommand('download'), false);
+});
+
+test('batched receiver like mutations build on the latest local state', () => {
+  let state = {
+    likedTracks: new Set(['existing']),
+    likedTrackDetails: { existing: { id: 'existing' } },
+  };
+  state = applySpiceConnectLikeMutation(
+    state.likedTracks,
+    state.likedTrackDetails,
+    'first',
+    { id: 'first' },
+    true,
+  );
+  state = applySpiceConnectLikeMutation(
+    state.likedTracks,
+    state.likedTrackDetails,
+    'second',
+    { id: 'second' },
+    true,
+  );
+  state = applySpiceConnectLikeMutation(
+    state.likedTracks,
+    state.likedTrackDetails,
+    'first',
+    { id: 'first' },
+    false,
+  );
+
+  assert.deepEqual([...state.likedTracks].sort(), ['existing', 'second']);
+  assert.deepEqual(Object.keys(state.likedTrackDetails).sort(), ['existing', 'second']);
 });
 
 test('Spice Connect accepts authenticated LAN negotiation as a signaling command', () => {

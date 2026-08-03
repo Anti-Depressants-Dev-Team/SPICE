@@ -9,6 +9,7 @@ export type SpiceConnectCommandType =
   | 'shuffle'
   | 'repeat'
   | 'play_track'
+  | 'play_queue_index'
   | 'set_like'
   | 'add_to_playlist'
   | 'download'
@@ -202,6 +203,7 @@ const allowedCommands = new Set<SpiceConnectCommandType>([
   'shuffle',
   'repeat',
   'play_track',
+  'play_queue_index',
   'set_like',
   'add_to_playlist',
   'download',
@@ -215,8 +217,51 @@ const allowedCommands = new Set<SpiceConnectCommandType>([
   'lan_signal',
 ]);
 
+const playbackCommands = new Set<SpiceConnectCommandType>([
+  'play',
+  'pause',
+  'toggle',
+  'next',
+  'previous',
+  'seek',
+  'volume',
+  'shuffle',
+  'repeat',
+  'play_track',
+  'play_queue_index',
+  'handoff',
+  'handoff_prepare',
+  'handoff_ready',
+  'handoff_commit',
+  'handoff_complete',
+  'handoff_cancel',
+]);
+
 export function isSpiceConnectCommandType(value: unknown): value is SpiceConnectCommandType {
   return typeof value === 'string' && allowedCommands.has(value as SpiceConnectCommandType);
+}
+
+export function isSpiceConnectPlaybackCommand(command: SpiceConnectCommandType) {
+  return playbackCommands.has(command);
+}
+
+export function applySpiceConnectLikeMutation<T>(
+  currentLikes: ReadonlySet<string>,
+  currentDetails: Readonly<Record<string, T>>,
+  trackId: string,
+  track: T,
+  liked: boolean,
+) {
+  const likedTracks = new Set(currentLikes);
+  const likedTrackDetails = { ...currentDetails };
+  if (liked) {
+    likedTracks.add(trackId);
+    likedTrackDetails[trackId] = track;
+  } else {
+    likedTracks.delete(trackId);
+    delete likedTrackDetails[trackId];
+  }
+  return { likedTracks, likedTrackDetails };
 }
 
 export function normalizeSpiceConnectRepeatMode(

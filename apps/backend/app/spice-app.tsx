@@ -107,7 +107,9 @@ import {
   listenTogetherTrackKey,
 } from './listen-together-core';
 import {
+  applySpiceConnectLikeMutation,
   isSpiceConnectCommandFresh,
+  isSpiceConnectPlaybackCommand,
   spiceConnectCommandPollDelay,
   spiceConnectEnabledFromStorage,
   SPICE_CONNECT_COMMAND_IDLE_BACKOFF_POLLS,
@@ -1236,6 +1238,7 @@ type RemoteCommandType =
   | 'shuffle'
   | 'repeat'
   | 'play_track'
+  | 'play_queue_index'
   | 'set_like'
   | 'add_to_playlist'
   | 'download'
@@ -2012,6 +2015,7 @@ export default function SpiceApp() {
     [offlineLibraryEntries],
   );
   const [offlineDownloadTrackId, setOfflineDownloadTrackId] = useState<string | null>(null);
+  const offlineDownloadTrackIdRef = useRef<string | null>(null);
   const [playlistDownloadProgress, setPlaylistDownloadProgress] = useState<{
     playlistId: string;
     completed: number;
@@ -2327,7 +2331,8 @@ export default function SpiceApp() {
   }, [fetchTrackDownloadBlob, refreshOfflineLibrary]);
 
   const downloadTrackToOfflineLibrary = useCallback(async (track: Track, quiet = false) => {
-    if (offlineDownloadTrackId) throw new Error('Another song is already downloading.');
+    if (offlineDownloadTrackIdRef.current) throw new Error('Another song is already downloading.');
+    offlineDownloadTrackIdRef.current = track.id;
     setOfflineDownloadTrackId(track.id);
     if (!quiet) showSpiceNotice(`Preparing "${track.title}" for offline listening...`, 'info');
     try {
@@ -2341,9 +2346,10 @@ export default function SpiceApp() {
         );
       }
     } finally {
+      offlineDownloadTrackIdRef.current = null;
       setOfflineDownloadTrackId(null);
     }
-  }, [offlineDownloadTrackId, saveTrackDownload, showSpiceNotice]);
+  }, [saveTrackDownload, showSpiceNotice]);
 
   const downloadSharedSong = useCallback(async () => {
     if (!songShareDialog) return;
@@ -2489,9 +2495,18 @@ export default function SpiceApp() {
   const [likedTracks, setLikedTracks] = useState<Set<string>>(new Set(activeProfile.likedTracks));
   const [likedTrackDetails, setLikedTrackDetails] = useState<Record<string, Track>>(activeProfile.likedTrackDetails || {});
   const [customPlaylists, setCustomPlaylists] = useState<Playlist[]>(activeProfile.customPlaylists || []);
+  const likedTracksRef = useRef(likedTracks);
+  const likedTrackDetailsRef = useRef(likedTrackDetails);
+  const customPlaylistsRef = useRef(customPlaylists);
   const [history, setHistory] = useState<Track[]>(activeProfile.history || []);
   const [queue, setQueue] = useState<Track[]>([IDLE_PLAYER_TRACK]);
   const [queueIndex, setQueueIndex] = useState(0);
+
+  useEffect(() => {
+    likedTracksRef.current = likedTracks;
+    likedTrackDetailsRef.current = likedTrackDetails;
+    customPlaylistsRef.current = customPlaylists;
+  }, [customPlaylists, likedTrackDetails, likedTracks]);
 
   const homeHistoryShelves = useMemo(
     () => buildHomeHistoryShelves(history),
@@ -3098,9 +3113,14 @@ export default function SpiceApp() {
     targetDeviceId?: string,
     quiet?: boolean,
   ) => Promise<boolean>>(async () => false);
-  const addTrackToPlaylistRef = useRef<(track: Track, playlistId: string) => Promise<boolean>>(
+  const addTrackToPlaylistRef = useRef<(
+    track: Track,
+    playlistId: string,
+    playlistTitle?: string,
+  ) => Promise<boolean>>(
     async () => false,
   );
+  const remotePlaylistMutationChainRef = useRef<Promise<void>>(Promise.resolve());
 
   const handleAudioEndedRef = useRef<(
     slot?: 0 | 1,
@@ -6851,23 +6871,22 @@ export default function SpiceApp() {
     handleNextRef.current = handleNext;
   });
 
-  const setTrackLiked = (track: Track, isLiked: boolean) => {
+  const commitTrackLiked = (track: Track, isLiked: boolean, syncToCloud: boolean) => {
     rememberTrackSnapshots([track]);
-    const updated = new Set(likedTracks);
-    if (isLiked) {
-      updated.add(track.id);
-    } else {
-      updated.delete(track.id);
-    }
+    const mutation = applySpiceConnectLikeMutation(
+      likedTracksRef.current,
+      likedTrackDetailsRef.current,
+      track.id,
+      track,
+      isLiked,
+    );
+    const updated = mutation.likedTracks;
+    likedTracksRef.current = updated;
     setLikedTracks(updated);
     logDebug('database', `${isLiked ? 'Liked' : 'Unliked'} track "${track.title}" (ID: ${track.id}) - Synchronized to active profile.`);
 
-    const savedLikedDetails = { ...likedTrackDetails };
-    if (updated.has(track.id)) {
-      savedLikedDetails[track.id] = track;
-    } else {
-      delete savedLikedDetails[track.id];
-    }
+    const savedLikedDetails = mutation.likedTrackDetails;
+    likedTrackDetailsRef.current = savedLikedDetails;
     setLikedTrackDetails(savedLikedDetails);
 
     // Sync to profiles list database
@@ -6875,7 +6894,18 @@ export default function SpiceApp() {
       likedTracks: Array.from(updated),
       likedTrackDetails: savedLikedDetails
     });
-    autoSyncLikes(Array.from(updated), savedLikedDetails);
+    if (syncToCloud) autoSyncLikes(Array.from(updated), savedLikedDetails);
+  };
+
+  const setTrackLiked = (track: Track, isLiked: boolean) => {
+    commitTrackLiked(track, isLiked, true);
+  };
+
+  const applyRemoteTrackLiked = (track: Track, isLiked: boolean) => {
+    if (likedTracksRef.current.has(track.id) === isLiked) return;
+    // The controller already persisted this exact mutation with PATCH /sync/likes.
+    // Applying it locally avoids replacing newer cloud likes with a receiver snapshot.
+    commitTrackLiked(track, isLiked, false);
   };
 
   const toggleLike = (track: Track) => {
@@ -7430,6 +7460,7 @@ export default function SpiceApp() {
   };
 
   const shouldIgnoreRemoteCommand = (command: RemoteCommand, now: number) => {
+    if (!isSpiceConnectPlaybackCommand(command.command)) return false;
     const createdAt = new Date(command.createdAt).getTime();
     if (!Number.isFinite(createdAt)) return true;
     if (createdAt < clientBootedAtRef.current) return true;
@@ -7553,12 +7584,20 @@ export default function SpiceApp() {
         }
         break;
       }
+      case 'play_queue_index': {
+        const queueIndexHint = Number(command.payload?.queueIndex);
+        const currentQueue = queueRef.current;
+        if (Number.isInteger(queueIndexHint) && queueIndexHint >= 0 && queueIndexHint < currentQueue.length) {
+          void playTrackRef.current(currentQueue[queueIndexHint], currentQueue, queueIndexHint);
+        }
+        break;
+      }
       case 'set_like': {
         const payloadTrack = command.payload?.track;
         const liked = command.payload?.liked;
         if (payloadTrack && typeof payloadTrack === 'object' && payloadTrack.id && typeof liked === 'boolean') {
           const hydratedTrack = enrichTrackSnapshot(payloadTrack as Track);
-          if (likedTracks.has(hydratedTrack.id) !== liked) setTrackLiked(hydratedTrack, liked);
+          applyRemoteTrackLiked(hydratedTrack, liked);
           showSpiceNotice(
             `${liked ? 'Liked' : 'Unliked'} "${hydratedTrack.title}" from Spice Connect.`,
             'success',
@@ -7571,9 +7610,16 @@ export default function SpiceApp() {
         const playlistId = typeof command.payload?.playlistId === 'string'
           ? command.payload.playlistId.trim()
           : '';
+        const playlistTitle = typeof command.payload?.playlistTitle === 'string'
+          ? command.payload.playlistTitle.trim()
+          : '';
         if (payloadTrack && typeof payloadTrack === 'object' && payloadTrack.id && playlistId) {
           const hydratedTrack = enrichTrackSnapshot(payloadTrack as Track);
-          void addTrackToPlaylistRef.current(hydratedTrack, playlistId).then((added) => {
+          const queuedMutation = remotePlaylistMutationChainRef.current.then(() => (
+            addTrackToPlaylistRef.current(hydratedTrack, playlistId, playlistTitle)
+          ));
+          remotePlaylistMutationChainRef.current = queuedMutation.then(() => undefined, () => undefined);
+          void queuedMutation.then((added) => {
             showSpiceNotice(
               added
                 ? `Added "${hydratedTrack.title}" to the selected playlist from Spice Connect.`
@@ -9089,6 +9135,7 @@ export default function SpiceApp() {
 
   // Playlists Operations
   const persistCustomPlaylists = (updated: Playlist[], syncOwnedPlaylists = true) => {
+    customPlaylistsRef.current = updated;
     setCustomPlaylists(updated);
     updateActiveProfileData({ customPlaylists: updated });
     if (syncOwnedPlaylists) {
@@ -9242,7 +9289,8 @@ export default function SpiceApp() {
   };
 
   const addTrackToPlaylist = async (track: Track, playlistId: string): Promise<boolean> => {
-    const target = customPlaylists.find(pl => pl.id === playlistId);
+    const currentPlaylists = customPlaylistsRef.current;
+    const target = currentPlaylists.find(pl => pl.id === playlistId);
 
     // For shared playlists, add via API
     if (target?.shared && cloudToken && isPlaylistUuid(playlistId)) {
@@ -9257,7 +9305,7 @@ export default function SpiceApp() {
 
         // Optimistically update the local playlist
         let wasAdded = false;
-        const updated = customPlaylists.map(pl => {
+        const updated = currentPlaylists.map(pl => {
           if (pl.id === playlistId) {
             if (pl.tracks.some(t => t.id === track.id)) return pl;
             wasAdded = true;
@@ -9283,7 +9331,7 @@ export default function SpiceApp() {
 
     rememberTrackSnapshots([track]);
     let wasAdded = false;
-    const updated = customPlaylists.map(pl => {
+    const updated = currentPlaylists.map(pl => {
       if (pl.id === playlistId) {
         if (pl.tracks.some(t => t.id === track.id)) return pl;
         wasAdded = true;
@@ -9299,8 +9347,38 @@ export default function SpiceApp() {
     return wasAdded;
   };
 
+  const addRemoteTrackToPlaylist = async (
+    track: Track,
+    playlistId: string,
+    playlistTitle?: string,
+  ): Promise<boolean> => {
+    const normalizedTitle = playlistTitle?.trim();
+    const currentPlaylists = customPlaylistsRef.current;
+    const target = currentPlaylists.find((playlist) => playlist.id === playlistId)
+      || (normalizedTitle
+        ? currentPlaylists.find((playlist) => (
+          !playlist.shared && playlist.title.trim().toLocaleLowerCase() === normalizedTitle.toLocaleLowerCase()
+        ))
+        : undefined);
+    if (target) return addTrackToPlaylist(track, target.id);
+    if (!normalizedTitle) return false;
+
+    rememberTrackSnapshots([track]);
+    const createdPlaylist: Playlist = {
+      id: createPlaylistId(),
+      title: normalizedTitle,
+      description: 'Created from a paired Spice Connect device.',
+      tracks: [track],
+      gradient: PRESET_GRADIENTS[randomIndex(PRESET_GRADIENTS.length)],
+      isPublic: false,
+      createdAt: new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }),
+    };
+    persistCustomPlaylists([...currentPlaylists, createdPlaylist]);
+    return true;
+  };
+
   useEffect(() => {
-    addTrackToPlaylistRef.current = addTrackToPlaylist;
+    addTrackToPlaylistRef.current = addRemoteTrackToPlaylist;
   });
 
   const openPlaylistPicker = (track: Track) => {

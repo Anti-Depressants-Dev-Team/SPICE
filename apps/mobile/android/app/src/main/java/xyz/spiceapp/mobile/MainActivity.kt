@@ -165,8 +165,9 @@ private fun SpiceRoot(
     var pendingLegacyDownload by remember { mutableStateOf<(() -> Unit)?>(null) }
     val legacyStoragePermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
-    ) {
-        pendingLegacyDownload?.invoke()
+    ) { granted ->
+        if (granted) pendingLegacyDownload?.invoke()
+        else viewModel.denyPendingRemoteDownloadPermission()
         pendingLegacyDownload = null
     }
     val uiState = viewModel.uiState.collectAsStateWithLifecycle().value
@@ -196,6 +197,12 @@ private fun SpiceRoot(
         }
     }
 
+    LaunchedEffect(uiState.pendingRemoteDownloadTrack?.let { "${it.sourceId}:${it.id}" }) {
+        if (uiState.pendingRemoteDownloadTrack != null) {
+            withLegacyDownloadPermission(viewModel::approvePendingRemoteDownload)
+        }
+    }
+
     SpiceTheme(uiState.accentTheme) {
         SpiceApp(
             uiState = uiState,
@@ -206,6 +213,10 @@ private fun SpiceRoot(
             onTrackSelected = { track, queue ->
                 ensureNotificationPermission()
                 viewModel.play(track, queue)
+            },
+            onQueueTrackSelected = { track, queue, queueIndex ->
+                ensureNotificationPermission()
+                viewModel.play(track, queue, queueIndex)
             },
             onTogglePlayback = viewModel::togglePlayback,
             onPlayNext = viewModel::playNext,
