@@ -42,6 +42,7 @@ before SPICE can honestly label it supported.
 - Compact full-player download action with progress and cancellation for explicit audio downloads
 - Lyrics sheet using LRCLIB-style lookup for the current track
 - Compact Spice Connect receiver menus in both players, with local/remote track, shuffle, repeat, and transport routing
+- Opted-in same-network Spice Connect data channels for direct phone remote commands and receiver state, with authenticated cloud signaling and automatic cross-network fallback
 - Fixed `XXXX-XXXX` Spice Connect pairing mask with paste/edit-safe cursor handling
 - One-second Spice Connect command/device refresh while controlling a receiver, projected progress between snapshots, and persisted command-ID deduplication for safe redelivery
 - Startup checks for newer signed Android APKs on the official SPICE GitHub release, with an explicit download/install prompt, progress, cancellation, integrity checks, and secure package-installer handoff
@@ -96,7 +97,9 @@ The returned `spice_pair_...` credential is restricted to this Android device an
 
 The pairing editor always displays a fixed `XXXX-XXXX` mask. It accepts pasted raw or dashed codes, keeps cursor edits stable, and submits the canonical ASCII-dashed form. A phone may be paired while its full Spice account is signed in; the scoped pairing credential remains separate.
 
-Spice Connect uses realtime Redis events to wake receivers and refresh remote playback state immediately. Slower polling remains as a safety fallback if realtime is reconnecting or unavailable. Applied command IDs are kept in a bounded persisted history so a bounded server redelivery cannot repeat actions such as toggle, next, or seek. The UI projects playing progress between authoritative snapshots; track metadata and duration reconcile as soon as the receiver acknowledges a handoff.
+Spice Connect uses realtime Redis events to wake receivers and refresh remote playback state immediately. Slower polling remains as a safety fallback if realtime is reconnecting or unavailable. When both opted-in devices are on the same network, Android and the desktop/web player use the authenticated command queue to negotiate a session-bound WebRTC data channel, then carry commands and receiver state directly. No STUN or TURN server is configured, so only local host candidates are gathered; failed or cross-network negotiation continues through the cloud transport. The receiver menu labels the selected route as `Same-network direct` or `Cloud fallback`. Next and previous controls wait for the receiver's authoritative queue result because restart thresholds, shuffle history, repeat boundaries, and continuation can produce a different track than a controller-side index guess.
+
+Applied command IDs are kept in a bounded persisted history so a bounded server redelivery cannot repeat actions such as toggle, next, or seek. The UI projects playing progress between authoritative snapshots; track metadata and duration reconcile as soon as the receiver acknowledges a handoff. The app targets SDK 36, where the existing internet permission covers local-network access. Before moving the target to SDK 37, add Android's runtime local-network permission request flow.
 
 ## Android self-updates
 

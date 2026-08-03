@@ -156,6 +156,26 @@ test('Spice Connect accepts every phase of the acknowledged handoff protocol', (
   }
 });
 
+test('Spice Connect accepts authenticated LAN negotiation as a signaling command', () => {
+  const input = normalizeSpiceConnectCommandInput({
+    sourceDeviceId: 'desktop-a',
+    targetDeviceId: 'desktop-b',
+    command: 'lan_signal',
+    payload: {
+      version: 1,
+      kind: 'request',
+      sessionId: 'session-1',
+    },
+  });
+  assert.ok(!('error' in input));
+  assert.equal(input.command, 'lan_signal');
+  assert.deepEqual(JSON.parse(input.payloadJson), {
+    version: 1,
+    kind: 'request',
+    sessionId: 'session-1',
+  });
+});
+
 test('acknowledged handoff never pauses the source before the destination is ready', () => {
   const transferId = createSpiceConnectTransferId('desktop', 'phone', 1234, 'test');
   const started = startSpiceConnectHandoffSource(transferId, 'phone', true);

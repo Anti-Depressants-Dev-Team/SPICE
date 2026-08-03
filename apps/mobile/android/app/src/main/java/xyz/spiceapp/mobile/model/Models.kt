@@ -196,6 +196,8 @@ data class RemoteCommand(
     val id: String,
     val sourceDeviceId: String,
     val command: String,
+    val createdAt: String = "",
+    val payloadJson: String = "{}",
     val payloadTrack: Track? = null,
     val payloadQueue: List<Track> = emptyList(),
     val payloadQueueIndex: Int = 0,

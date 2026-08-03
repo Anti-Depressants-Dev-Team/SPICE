@@ -1,5 +1,12 @@
 # SPICE Walkthrough
 
+## v1.0.161
+
+- [Spice.Connect main] Prefer a verified, host-only WebRTC data channel for same-network desktop, web, and Android playback commands and receiver state while retaining authenticated cloud discovery, signaling, and fallback.
+- [Spice.Connect main] Keep next and previous transitions receiver-authoritative so restart, shuffle history, repeat boundaries, and personalized queue continuation cannot be overwritten by an invented controller-side queue step.
+- [Spice.Connect main] Add a hidden desktop transport trace (`Ctrl+Shift+Alt+L`) that reports whether the last playback command used the local network or cloud server, including measured LAN round-trip or cloud request/queue latency when available, and keep that command route separate from the last cloud signaling/fallback request in Settings.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.161`.
+
 ## v1.0.160
 
 - [Spice.Desktop main] Start the shared Windows and macOS Electron shell at a roomier `1350x800` default size, including SPICE Native.

@@ -15,7 +15,8 @@ export type SpiceConnectCommandType =
   | 'handoff_commit'
   | 'handoff_complete'
   | 'handoff_cancel'
-  | 'connect';
+  | 'connect'
+  | 'lan_signal';
 
 export type SpiceConnectRepeatMode = 'none' | 'all' | 'one';
 
@@ -205,7 +206,12 @@ const allowedCommands = new Set<SpiceConnectCommandType>([
   'handoff_complete',
   'handoff_cancel',
   'connect',
+  'lan_signal',
 ]);
+
+export function isSpiceConnectCommandType(value: unknown): value is SpiceConnectCommandType {
+  return typeof value === 'string' && allowedCommands.has(value as SpiceConnectCommandType);
+}
 
 export function normalizeSpiceConnectRepeatMode(
   value: unknown,
@@ -276,7 +282,7 @@ export function normalizeSpiceConnectCommandInput(body: Record<string, unknown>)
   if (targetDeviceId === sourceDeviceId) {
     return { error: 'same_device', message: 'Choose another device to control.' };
   }
-  if (!allowedCommands.has(command as SpiceConnectCommandType)) {
+  if (!isSpiceConnectCommandType(command)) {
     return { error: 'invalid_command', message: 'Unsupported Spice Connect command.' };
   }
 
