@@ -1222,30 +1222,33 @@ internal fun parseRemoteDevices(payload: JSONObject): List<RemoteDevice> {
     return buildList {
         for (index in 0 until devices.length()) {
             val item = devices.optJSONObject(index) ?: continue
-            val deviceId = item.optString("deviceId").trim()
-            val displayName = item.optString("displayName").trim()
-            if (deviceId.isEmpty() || displayName.isEmpty()) continue
-            add(
-                RemoteDevice(
-                    deviceId = deviceId,
-                    displayName = displayName,
-                    currentTrack = parseRemoteTrack(item.optJSONObject("currentTrack")),
-                    queue = parseRemoteTracks(item.optJSONArray("queue")),
-                    queueIndex = item.optInt("queueIndex", 0).coerceAtLeast(0),
-                    isPlaying = item.optBoolean("isPlaying", false),
-                    shuffleEnabled = item.optBoolean("shuffleEnabled", false),
-                    repeatMode = parseRemoteRepeatMode(item.optString("repeatMode")),
-                    progressMs = (item.optDouble("progress", 0.0) * 1000).toLong().coerceAtLeast(0),
-                    durationMs = (item.optDouble("duration", 0.0) * 1000).toLong().coerceAtLeast(0),
-                    volume = item.optInt("volume", 70).coerceIn(0, 100),
-                    updatedAt = item.optString("updatedAt").trim(),
-                    lastSeenSeconds = item.optLong("lastSeenSeconds", 0L).coerceAtLeast(0L),
-                    rememberedUntil = item.optString("rememberedUntil").trim(),
-                    isOnline = item.optBoolean("isOnline", true),
-                ),
-            )
+            parseRemoteDevice(item)?.let(::add)
         }
     }
+}
+
+internal fun parseRemoteDevice(item: JSONObject): RemoteDevice? {
+    val deviceId = item.optString("deviceId").trim()
+    val displayName = item.optString("displayName").trim()
+    if (deviceId.isEmpty() || displayName.isEmpty()) return null
+    val queue = parseRemoteTracks(item.optJSONArray("queue")).take(80)
+    return RemoteDevice(
+        deviceId = deviceId,
+        displayName = displayName,
+        currentTrack = parseRemoteTrack(item.optJSONObject("currentTrack")),
+        queue = queue,
+        queueIndex = item.optInt("queueIndex", 0).coerceIn(0, queue.lastIndex.coerceAtLeast(0)),
+        isPlaying = item.optBoolean("isPlaying", false),
+        shuffleEnabled = item.optBoolean("shuffleEnabled", false),
+        repeatMode = parseRemoteRepeatMode(item.optString("repeatMode")),
+        progressMs = (item.optDouble("progress", 0.0) * 1000).toLong().coerceAtLeast(0),
+        durationMs = (item.optDouble("duration", 0.0) * 1000).toLong().coerceAtLeast(0),
+        volume = item.optInt("volume", 70).coerceIn(0, 100),
+        updatedAt = item.optString("updatedAt").trim(),
+        lastSeenSeconds = item.optLong("lastSeenSeconds", 0L).coerceAtLeast(0L),
+        rememberedUntil = item.optString("rememberedUntil").trim(),
+        isOnline = item.optBoolean("isOnline", true),
+    )
 }
 
 internal fun parseRemoteCommands(payload: JSONObject): List<RemoteCommand> {
@@ -1294,6 +1297,8 @@ internal fun parseRemoteCommands(payload: JSONObject): List<RemoteCommand> {
                     id = id,
                     sourceDeviceId = sourceDeviceId,
                     command = command,
+                    createdAt = item.optString("createdAt").trim(),
+                    payloadJson = commandPayload.toString(),
                     payloadTrack = payloadTrack,
                     payloadQueue = payloadQueue,
                     payloadQueueIndex = payloadQueueIndex,

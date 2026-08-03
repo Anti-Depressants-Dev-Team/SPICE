@@ -2686,10 +2686,12 @@ private fun SpiceConnectReceiverMenu(
                                         lastSeenSeconds = device.lastSeenSeconds,
                                         trackTitle = device.currentTrack?.title,
                                     ).let { status ->
-                                        if (uiState.selectedPlaybackDeviceId == device.deviceId) {
-                                            "Currently connected - $status"
-                                        } else {
-                                            status
+                                        when {
+                                            device.deviceId in uiState.lanConnectedDeviceIds ->
+                                                "Same-network direct - $status"
+                                            uiState.selectedPlaybackDeviceId == device.deviceId ->
+                                                "Cloud fallback - $status"
+                                            else -> status
                                         }
                                     },
                                     color = SpiceTextMuted,
@@ -3275,5 +3277,11 @@ private val licenseEntries = listOf(
         license = "Apache-2.0 wrapper / MIT engine",
         purpose = "Experimental JavaScript resolver parity bridge.",
         url = "https://github.com/cashapp/quickjs-java",
+    ),
+    LicenseEntry(
+        name = "WebRTC Android SDK",
+        license = "BSD-3-Clause",
+        purpose = "Same-network Spice Connect data channels.",
+        url = "https://github.com/webrtc-sdk/android",
     ),
 )

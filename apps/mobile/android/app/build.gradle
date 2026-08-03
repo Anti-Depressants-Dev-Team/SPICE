@@ -135,6 +135,9 @@ dependencies {
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2'
     implementation 'io.coil-kt.coil3:coil-compose:3.3.0'
     implementation 'io.coil-kt.coil3:coil-network-okhttp:3.3.0'
+    // Data-channel-only Spice Connect transport. The prefixed/stripped artifact
+    // avoids WebRTC package collisions and excludes unused software video codecs.
+    implementation 'io.github.webrtc-sdk:android-prefixed-stripped:144.7559.05'
 
     ksp 'androidx.room:room-compiler:2.8.4'
 

@@ -16,6 +16,7 @@ The app-side integration source is in this repository under `apps/mobile`. If an
 | FFmpeg module | 0.18.1 package | LGPL/GPL depending configuration | Media conversion, metadata, and thumbnail embedding | https://ffmpeg.org |
 | aria2c module | 0.18.1 package | GPL-2.0-or-later | Optional accelerated transfer support for downloads | https://aria2.github.io |
 | QuickJS Android | 0.9.2 | Apache-2.0 wrapper / MIT engine | Experimental JavaScript resolver parity bridge | https://github.com/cashapp/quickjs-java |
+| WebRTC Android SDK (prefixed stripped build) | 144.7559.05 | BSD-3-Clause | Same-network Spice Connect data channels | https://github.com/webrtc-sdk/android |
 
 ## Redistribution Checklist
 
@@ -27,4 +28,4 @@ The app-side integration source is in this repository under `apps/mobile`. If an
 
 ## Provider Notice
 
-These components interact with third-party services. Spice is not affiliated with or endorsed by YouTube, SoundCloud, NewPipe, yt-dlp, FFmpeg, aria2, or QuickJS.
+These components interact with third-party services. Spice is not affiliated with or endorsed by YouTube, SoundCloud, NewPipe, yt-dlp, FFmpeg, aria2, QuickJS, or WebRTC SDK maintainers.

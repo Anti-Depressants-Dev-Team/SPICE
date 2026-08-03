@@ -34,7 +34,11 @@ import xyz.spiceapp.mobile.data.SessionStore
 import xyz.spiceapp.mobile.data.SpiceApi
 import xyz.spiceapp.mobile.data.SpiceApiException
 import xyz.spiceapp.mobile.data.SpiceConnectRealtimeEvent
+import xyz.spiceapp.mobile.data.SPICE_CONNECT_LAN_SIGNAL_COMMAND
+import xyz.spiceapp.mobile.data.SpiceConnectLanTransport
 import xyz.spiceapp.mobile.data.ResolvedPlayback
+import xyz.spiceapp.mobile.data.parseSpiceConnectLanTimestamp
+import xyz.spiceapp.mobile.data.spiceConnectLanTimestamp
 import xyz.spiceapp.mobile.data.toRemoteTrackJson
 import xyz.spiceapp.mobile.data.download.MediaDownloadClient
 import xyz.spiceapp.mobile.data.update.AppUpdateClient
@@ -153,6 +157,7 @@ data class SpiceUiState(
     val remoteDeviceId: String = "",
     val remoteDevices: List<RemoteDevice> = emptyList(),
     val selectedPlaybackDeviceId: String = "",
+    val lanConnectedDeviceIds: Set<String> = emptySet(),
     val incomingRemoteControllerDeviceId: String = "",
     val connectLoading: Boolean = false,
     val connectStatus: String = "",
@@ -177,6 +182,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
     )
     private val connectPreferences = application.getSharedPreferences("spice_connect", Context.MODE_PRIVATE)
     private val remoteDeviceId = loadRemoteDeviceId()
+    private val clientBootedAtMs = System.currentTimeMillis()
     private val initialPairedCredential = pairedCredentialStore.load()
         ?.takeIf { it.deviceId == remoteDeviceId }
         .also { credential ->
@@ -193,6 +199,8 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
     private var connectJob: Job? = null
     private var connectRealtimeJob: Job? = null
     private var connectRefreshJob: Job? = null
+    private var spiceConnectLanTransport: SpiceConnectLanTransport? = null
+    private var lastSpiceConnectLanFingerprint: String? = null
     private var handoffAcceptTimeoutJob: Job? = null
     private var handoffCompleteTimeoutJob: Job? = null
     private var pendingSpiceConnectHandoff: PendingSpiceConnectHandoff? = null
@@ -495,7 +503,9 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
 
     fun playNext() {
         activeRemoteTargetId()?.let { targetDeviceId ->
-            patchRemoteQueueStep(targetDeviceId, step = 1)
+            // The receiver owns shuffle history, repeat boundaries, and queue
+            // continuation. Its direct/cloud state acknowledgement is the
+            // only truthful source for the resulting track.
             sendRemoteCommand(targetDeviceId, "next")
             return
         }
@@ -520,7 +530,8 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
 
     fun playPrevious() {
         activeRemoteTargetId()?.let { targetDeviceId ->
-            patchRemoteQueueStep(targetDeviceId, step = -1)
+            // Previous can restart the current track instead of moving the
+            // queue, so never invent an optimistic remote queue position.
             sendRemoteCommand(targetDeviceId, "previous")
             return
         }
@@ -1538,6 +1549,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
         connectJob?.cancel()
         connectRealtimeJob?.cancel()
         connectRefreshJob?.cancel()
+        disposeSpiceConnectLanTransport()
         clearPendingSpiceConnectHandoff()
         preparedSpiceConnectHandoffs.clear()
         clearOptimisticRemoteState()
@@ -1557,6 +1569,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
             sharedPlaylistTracks = null,
             remoteDevices = emptyList(),
             selectedPlaybackDeviceId = "",
+            lanConnectedDeviceIds = emptySet(),
             connectLoading = false,
             connectStatus = "",
             message = "Signed out of Spice account.",
@@ -1936,6 +1949,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
                 val restored = restoreLocalPlaybackContextIfNeeded(player)
                 if (!restored) updateObservedShuffleState(player)
                 evaluateMobilePlaybackTransition(player)
+                broadcastSpiceConnectLanStateIfChanged()
             }
         }
     }
@@ -2397,6 +2411,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
         val stateBeforeForget = _uiState.value
         val removedDevice = stateBeforeForget.remoteDevices.firstOrNull { it.deviceId == deviceId } ?: return
         val wasSelected = stateBeforeForget.selectedPlaybackDeviceId == deviceId
+        spiceConnectLanTransport?.disconnect(deviceId)
         optimisticallyForgottenRemoteDeviceIds += deviceId
         if (wasSelected) {
             clearOptimisticRemoteState(deviceId)
@@ -2572,6 +2587,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
         connectJob?.cancel()
         connectRealtimeJob?.cancel()
         connectRefreshJob?.cancel()
+        disposeSpiceConnectLanTransport()
         connectJob = null
         connectRealtimeJob = null
         connectRefreshJob = null
@@ -2583,6 +2599,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = _uiState.value.copy(
             remoteDevices = emptyList(),
             selectedPlaybackDeviceId = "",
+            lanConnectedDeviceIds = emptySet(),
             incomingRemoteControllerDeviceId = "",
             connectLoading = false,
         )
@@ -2607,12 +2624,29 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         val target = _uiState.value.remoteDevices.firstOrNull { it.deviceId == deviceId }
-        if (target?.isOnline == false) {
+        if (target?.isOnline == false && deviceId !in _uiState.value.lanConnectedDeviceIds) {
             onFailure(IllegalStateException("${target.displayName} is offline."))
             _uiState.value = _uiState.value.copy(message = "${target.displayName} is offline.")
             return
         }
         viewModelScope.launch {
+            if (
+                command != SPICE_CONNECT_LAN_SIGNAL_COMMAND &&
+                spiceConnectLanTransport?.sendCommand(deviceId, command, payload) == true
+            ) {
+                onSuccess()
+                if (!quiet) {
+                    _uiState.value = _uiState.value.copy(
+                        connectStatus = if (command == "handoff") {
+                            _uiState.value.connectStatus
+                        } else {
+                            "Sent $command directly over the same network."
+                        },
+                    )
+                }
+                Log.i(SPICE_CONNECT_LOG_TAG, "Delivered $command over LAN from $remoteDeviceId to $deviceId")
+                return@launch
+            }
             runCatching {
                 withRemoteAccess { token ->
                     api.sendRemoteCommand(
@@ -2630,7 +2664,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
                         connectStatus = if (command == "handoff") {
                             _uiState.value.connectStatus
                         } else {
-                            "Sent $command through Spice Connect."
+                            "Sent $command through Spice Connect cloud fallback."
                         },
                     )
                 }
@@ -2691,23 +2725,6 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
                 .put("queueIndex", queueIndex),
         )
         _uiState.value = _uiState.value.copy(connectStatus = "Sent ${track.title} to ${target.displayName}.")
-    }
-
-    private fun patchRemoteQueueStep(deviceId: String, step: Int) {
-        patchRemoteDevice(deviceId) { device ->
-            val queue = device.queue
-            if (queue.isEmpty()) return@patchRemoteDevice device.copy(isPlaying = true)
-            val currentIndex = device.queueIndex.coerceIn(0, queue.lastIndex)
-            val nextIndex = (currentIndex + step).mod(queue.size)
-            val nextTrack = queue[nextIndex]
-            device.copy(
-                currentTrack = nextTrack,
-                queueIndex = nextIndex,
-                isPlaying = true,
-                progressMs = 0,
-                durationMs = nextTrack.durationMs,
-            )
-        }
     }
 
     private fun patchRemoteDevice(deviceId: String, transform: (RemoteDevice) -> RemoteDevice) {
@@ -2923,6 +2940,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
             connectJob?.cancel()
             connectRealtimeJob?.cancel()
             connectRefreshJob?.cancel()
+            disposeSpiceConnectLanTransport()
             connectPreferences.edit().remove(KEY_SELECTED_PLAYBACK_DEVICE_ID).apply()
         }
         _uiState.value = state.copy(
@@ -2958,6 +2976,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
         connectJob?.cancel()
         connectRealtimeJob?.cancel()
         connectRefreshJob?.cancel()
+        resetSpiceConnectLanTransport()
         clearPendingSpiceConnectHandoff()
         preparedSpiceConnectHandoffs.clear()
         connectRealtimeAvailable.set(false)
@@ -3023,7 +3042,9 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
                             nextDeviceHeartbeatAtMs = nowElapsedRealtimeMs + SPICE_CONNECT_DEVICE_SYNC_INTERVAL_MS
                         }
 
-                        val isControllingRemoteDevice = activeRemoteTargetId() != null
+                        val isControllingRemoteDevice = activeRemoteTargetId()?.let { targetDeviceId ->
+                            targetDeviceId !in _uiState.value.lanConnectedDeviceIds
+                        } == true
                         val shouldSyncDevices = shouldSyncSpiceConnectDevices(
                             nowElapsedRealtimeMs = nowElapsedRealtimeMs,
                             nextDeviceSyncAtMs = nextDeviceSnapshotAtMs,
@@ -3105,6 +3126,148 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun resetSpiceConnectLanTransport() {
+        disposeSpiceConnectLanTransport()
+        if (!shouldStartSpiceConnect()) return
+        val transport = runCatching {
+            SpiceConnectLanTransport(
+                context = getApplication(),
+                localDeviceId = remoteDeviceId,
+                scope = viewModelScope,
+                sendSignal = { targetDeviceId, signal ->
+                    runCatching {
+                        withRemoteAccess { token ->
+                            api.sendRemoteCommand(
+                                token = token,
+                                targetDeviceId = targetDeviceId,
+                                sourceDeviceId = remoteDeviceId,
+                                command = SPICE_CONNECT_LAN_SIGNAL_COMMAND,
+                                payload = signal.toJson(),
+                            )
+                        }
+                    }.onFailure { error ->
+                        Log.w(SPICE_CONNECT_LOG_TAG, "Could not send LAN negotiation to $targetDeviceId", error)
+                    }.isSuccess
+                },
+                onCommand = { command ->
+                    // A verified live channel is not a durable queue. Use the
+                    // receipt time so harmless phone/desktop clock skew cannot
+                    // make a direct command appear stale.
+                    applyRemoteCommands(
+                        listOf(command.copy(createdAt = spiceConnectLanTimestamp())),
+                    )
+                    delay(SPICE_CONNECT_COMMAND_STATE_SETTLE_MS)
+                    broadcastSpiceConnectLanState(force = true)
+                },
+                onState = ::applySpiceConnectLanState,
+                onPeersChanged = ::applySpiceConnectLanPeers,
+                onDiagnostic = { message -> Log.w(SPICE_CONNECT_LOG_TAG, message) },
+            )
+        }.getOrElse { error ->
+            Log.w(SPICE_CONNECT_LOG_TAG, "Same-network Spice Connect is unavailable; cloud fallback remains active", error)
+            _uiState.value = _uiState.value.copy(
+                lanConnectedDeviceIds = emptySet(),
+                connectStatus = "Same-network connection is unavailable; Spice Connect will use cloud fallback.",
+            )
+            return
+        }
+        spiceConnectLanTransport = transport
+        lastSpiceConnectLanFingerprint = null
+        broadcastSpiceConnectLanState(force = true)
+        _uiState.value.selectedPlaybackDeviceId.takeIf(String::isNotBlank)?.let { selectedDeviceId ->
+            viewModelScope.launch { transport.ensureConnection(selectedDeviceId) }
+        }
+    }
+
+    private fun disposeSpiceConnectLanTransport() {
+        spiceConnectLanTransport?.dispose()
+        spiceConnectLanTransport = null
+        lastSpiceConnectLanFingerprint = null
+        if (_uiState.value.lanConnectedDeviceIds.isNotEmpty()) {
+            _uiState.value = _uiState.value.copy(lanConnectedDeviceIds = emptySet())
+        }
+    }
+
+    private fun applySpiceConnectLanPeers(connectedDeviceIds: Set<String>) {
+        val state = _uiState.value
+        val previousConnectedDeviceIds = state.lanConnectedDeviceIds
+        val selectedDeviceId = state.selectedPlaybackDeviceId
+        val selectedDeviceName = state.remoteDevices
+            .firstOrNull { it.deviceId == selectedDeviceId }
+            ?.displayName
+            ?: "the selected device"
+        _uiState.value = state.copy(
+            lanConnectedDeviceIds = connectedDeviceIds,
+            connectStatus = when {
+                selectedDeviceId in connectedDeviceIds ->
+                    "Same-network direct link active with $selectedDeviceName."
+                selectedDeviceId in previousConnectedDeviceIds ->
+                    "Same-network link ended; commands will use cloud fallback."
+                else -> state.connectStatus
+            },
+        )
+    }
+
+    private fun applySpiceConnectLanState(peerDeviceId: String, incoming: RemoteDevice) {
+        val state = _uiState.value
+        val existing = state.remoteDevices.firstOrNull { it.deviceId == peerDeviceId } ?: return
+        val nowElapsedRealtimeMs = SystemClock.elapsedRealtime()
+        val merged = incoming.copy(
+            displayName = existing.displayName,
+            lastSeenSeconds = 0L,
+            rememberedUntil = existing.rememberedUntil,
+            isOnline = true,
+            observedAtElapsedRealtimeMs = nowElapsedRealtimeMs,
+        )
+        if (remoteSnapshotAcknowledgesOptimisticState(merged, existing)) {
+            clearOptimisticRemoteState(peerDeviceId)
+        }
+        _uiState.value = state.copy(
+            remoteDevices = state.remoteDevices.map { device ->
+                if (device.deviceId == peerDeviceId) merged else device
+            },
+            connectStatus = if (state.selectedPlaybackDeviceId == peerDeviceId) {
+                "Same-network direct link active with ${existing.displayName}."
+            } else {
+                state.connectStatus
+            },
+        )
+    }
+
+    private fun broadcastSpiceConnectLanStateIfChanged() {
+        val fingerprint = spiceConnectDeviceFingerprint()
+        if (fingerprint == lastSpiceConnectLanFingerprint) return
+        broadcastSpiceConnectLanState(fingerprint = fingerprint)
+    }
+
+    private fun broadcastSpiceConnectLanState(
+        force: Boolean = false,
+        fingerprint: String = spiceConnectDeviceFingerprint(),
+    ) {
+        val transport = spiceConnectLanTransport ?: return
+        if (!force && fingerprint == lastSpiceConnectLanFingerprint) return
+        val playback = currentSpiceConnectPlaybackSnapshot()
+        transport.broadcastState(
+            RemoteDevice(
+                deviceId = remoteDeviceId,
+                displayName = "Spice Android",
+                currentTrack = playback.track,
+                queue = _uiState.value.playbackQueue.take(80),
+                queueIndex = _uiState.value.queueIndex.coerceAtLeast(0),
+                isPlaying = playback.isPlaying,
+                shuffleEnabled = playback.player.shuffleEnabled,
+                repeatMode = playback.player.repeatMode,
+                progressMs = playback.progressMs,
+                durationMs = playback.durationMs,
+                volume = playback.player.volume,
+                updatedAt = spiceConnectLanTimestamp(),
+                isOnline = true,
+                observedAtElapsedRealtimeMs = SystemClock.elapsedRealtime(),
+            ),
+        )
+        lastSpiceConnectLanFingerprint = fingerprint
+    }
+
     private fun spiceConnectAccessIdentity(token: String): String {
         val state = _uiState.value
         state.pairedDeviceCredential
@@ -3118,6 +3281,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun publishSpiceConnectDevice(token: String) {
         val playback = currentSpiceConnectPlaybackSnapshot()
+        broadcastSpiceConnectLanState(force = true)
         api.updateRemoteDevice(
             token = token,
             deviceId = remoteDeviceId,
@@ -3196,7 +3360,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
                 }
             } else if (
                 command.sourceDeviceId.isNotBlank() &&
-                command.command !in setOf("handoff_ready", "handoff_complete", "handoff_cancel")
+                command.command !in setOf("handoff_ready", "handoff_complete", "handoff_cancel", SPICE_CONNECT_LAN_SIGNAL_COMMAND)
             ) {
                 _uiState.value = _uiState.value.copy(
                     incomingRemoteControllerDeviceId = command.sourceDeviceId,
@@ -3419,6 +3583,12 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 "handoff" -> applyIncomingSpiceConnectHandoff(command)
                 "connect" -> Unit
+                SPICE_CONNECT_LAN_SIGNAL_COMMAND -> {
+                    val createdAtMs = parseSpiceConnectLanTimestamp(command.createdAt)
+                    if (createdAtMs != null && createdAtMs >= clientBootedAtMs) {
+                        spiceConnectLanTransport?.handleSignal(command.sourceDeviceId, command.payloadJson)
+                    }
+                }
             }
             appliedRemoteCommandIds.markIfNew(command.id)
             persistAppliedRemoteCommandIds()
@@ -3860,6 +4030,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
         transitionPreparationJob?.cancel()
         autoTasteSyncJob?.cancel()
         appUpdateClient.cancelActiveRequest()
+        disposeSpiceConnectLanTransport()
         playerConnection.release()
         super.onCleared()
     }

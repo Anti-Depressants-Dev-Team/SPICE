@@ -122,6 +122,12 @@ import {
   SPICE_CONNECT_STALE_DEVICE_SECONDS,
 } from '@/lib/spice-connect';
 import {
+  SpiceConnectLanTransport,
+  SPICE_CONNECT_LAN_SIGNAL_COMMAND,
+  type SpiceConnectLanDeviceState,
+  type SpiceConnectLanSignal,
+} from '@/lib/spice-connect-lan';
+import {
   initialSpiceConnectSseParserState,
   parseSpiceConnectSseChunk,
   SPICE_CONNECT_REALTIME_RECONNECT_MAX_MS,
@@ -191,6 +197,7 @@ const UPDATE_RELOAD_REMOTE_SUPPRESS_MS = 30 * 1000;
 const UPDATE_RELOAD_REMOTE_SUPPRESS_KEY = 'spice_update_reload_remote_suppress_until';
 const SYNC_OUTBOX_STORAGE_KEY = 'spice_sync_outbox_v1';
 const LISTEN_TOGETHER_STATE_STORAGE_KEY = 'spice_listen_together_state_v2';
+const SPICE_CONNECT_TRANSPORT_DIAGNOSTICS_STORAGE_KEY = 'spice_connect_transport_diagnostics_v1';
 
 const recommendationPreferencesStorageKey = (profileId: string) => `spice_recommendation_preferences:${profileId}`;
 const listeningEventsStorageKey = (profileId: string) => `spice_listening_events:${profileId}`;
@@ -1235,7 +1242,8 @@ type RemoteCommandType =
   | 'handoff_commit'
   | 'handoff_complete'
   | 'handoff_cancel'
-  | 'connect';
+  | 'connect'
+  | 'lan_signal';
 
 interface RemoteDevice {
   deviceId: string;
@@ -1281,8 +1289,22 @@ interface RemoteCommand {
     connected?: boolean;
     transferId?: string;
     reason?: string;
+    version?: number;
+    kind?: string;
+    sessionId?: string;
+    description?: RTCSessionDescriptionInit;
+    [key: string]: unknown;
   };
   createdAt: string;
+}
+
+interface SpiceConnectTransportDiagnostic {
+  direction: 'sent' | 'received';
+  transport: 'lan' | 'cloud';
+  command: RemoteCommandType;
+  peerDeviceId: string;
+  observedAt: number;
+  latencyMs?: number;
 }
 
 interface PendingSpiceConnectHandoff {
@@ -2687,6 +2709,10 @@ export default function SpiceApp() {
   const [incomingRemoteControllerId, setIncomingRemoteControllerId] = useState('');
   const [remoteStatus, setRemoteStatus] = useState<string | null>(null);
   const [remoteTransport, setRemoteTransport] = useState<'unknown' | 'redis' | 'postgresql'>('unknown');
+  const [remoteLanPeerDeviceIds, setRemoteLanPeerDeviceIds] = useState<string[]>([]);
+  const [remoteTransportDiagnosticsEnabled, setRemoteTransportDiagnosticsEnabled] = useState(false);
+  const [remoteTransportDiagnostic, setRemoteTransportDiagnostic] = useState<SpiceConnectTransportDiagnostic | null>(null);
+  const [remoteLanLatencyMsByDevice, setRemoteLanLatencyMsByDevice] = useState<Record<string, number>>({});
   const [remoteRedisConfigured, setRemoteRedisConfigured] = useState<boolean | null>(null);
   const [forgettingRemoteDeviceIds, setForgettingRemoteDeviceIds] = useState<Set<string>>(new Set());
   const [receiverMenuOpen, setReceiverMenuOpen] = useState<ReceiverSelectVariant | null>(null);
@@ -2701,6 +2727,37 @@ export default function SpiceApp() {
   const [isShuffle, setIsShuffle] = useState<boolean>(false);
   const [repeatMode, setRepeatMode] = useState<'none' | 'all' | 'one'>('all');
   const [expandedTab, setExpandedTab] = useState<'controls' | 'queue' | 'lyrics'>('controls');
+
+  useEffect(() => {
+    if (localStorage.getItem(SPICE_CONNECT_TRANSPORT_DIAGNOSTICS_STORAGE_KEY) === 'true') {
+      setRemoteTransportDiagnosticsEnabled(true);
+    }
+    const toggleSpiceConnectTransportDiagnostics = (event: KeyboardEvent) => {
+      if (
+        event.code !== 'KeyL'
+        || !event.ctrlKey
+        || !event.shiftKey
+        || !event.altKey
+        || event.repeat
+      ) return;
+      event.preventDefault();
+      setRemoteTransportDiagnosticsEnabled((enabled) => {
+        const nextEnabled = !enabled;
+        localStorage.setItem(
+          SPICE_CONNECT_TRANSPORT_DIAGNOSTICS_STORAGE_KEY,
+          String(nextEnabled),
+        );
+        setRemoteStatus(
+          nextEnabled
+            ? 'Secret Spice Connect transport diagnostics enabled.'
+            : 'Spice Connect transport diagnostics hidden.',
+        );
+        return nextEnabled;
+      });
+    };
+    window.addEventListener('keydown', toggleSpiceConnectTransportDiagnostics);
+    return () => window.removeEventListener('keydown', toggleSpiceConnectTransportDiagnostics);
+  }, []);
 
   // Dynamic Lyrics & Karaoke states
   const [lyricsData, setLyricsData] = useState<{
@@ -3012,6 +3069,15 @@ export default function SpiceApp() {
   const remoteRequestGenerationRef = useRef(0);
   const pendingSpiceConnectHandoffRef = useRef<PendingSpiceConnectHandoff | null>(null);
   const preparedSpiceConnectHandoffsRef = useRef<Map<string, SpiceConnectHandoffDestinationState>>(new Map());
+  const remoteLanTransportRef = useRef<SpiceConnectLanTransport | null>(null);
+  const applyRemoteCommandRef = useRef<(command: RemoteCommand, now: number, transport?: 'cloud' | 'lan') => void>(() => {});
+  const handleRemoteLanStateRef = useRef<(peerDeviceId: string, state: SpiceConnectLanDeviceState) => void>(() => {});
+  const sendRemoteCommandRef = useRef<(
+    command: RemoteCommandType,
+    payload?: RemoteCommand['payload'],
+    targetDeviceId?: string,
+    quiet?: boolean,
+  ) => Promise<boolean>>(async () => false);
 
   const handleAudioEndedRef = useRef<(
     slot?: 0 | 1,
@@ -6857,6 +6923,59 @@ export default function SpiceApp() {
     setRemoteStatus('The paired-device credential expired or was revoked. Pair this device again.');
   };
 
+  function currentSpiceConnectLanDeviceState(): SpiceConnectLanDeviceState {
+    const targetTrack = currentTrackRef.current;
+    const currentQueue = queueRef.current || [];
+    return {
+      deviceId: remoteDeviceId,
+      displayName: remoteDeviceName,
+      currentTrack: targetTrack.id === 'placeholder' || targetTrack.id === 'spice-connect-placeholder'
+        ? null
+        : targetTrack,
+      queue: currentQueue.slice(0, 80),
+      queueIndex: queueIndexRef.current,
+      isPlaying: isPlayingRef.current,
+      shuffleEnabled: isShuffleRef.current,
+      repeatMode: repeatModeRef.current,
+      progress: progressRef.current,
+      duration: durationRef.current,
+      volume: volumeRef.current,
+      updatedAt: new Date(currentTimestampMs()).toISOString(),
+    };
+  }
+
+  const handleRemoteLanState = (peerDeviceId: string, state: SpiceConnectLanDeviceState) => {
+    if (peerDeviceId !== state.deviceId || forgettingRemoteDeviceIdsRef.current.has(peerDeviceId)) return;
+    if (optimisticRemoteDeviceStateRef.current?.deviceId === peerDeviceId) {
+      optimisticRemoteDeviceStateRef.current = null;
+    }
+    const syncedAtMs = currentTimestampMs();
+    setRemoteDevices((currentDevices) => {
+      const existing = currentDevices.find((device) => device.deviceId === peerDeviceId);
+      const directDevice: RemoteDevice = {
+        ...existing,
+        deviceId: peerDeviceId,
+        displayName: state.displayName,
+        currentTrack: state.currentTrack ? enrichTrackSnapshot(state.currentTrack as Track) : null,
+        queue: Array.isArray(state.queue) ? enrichTrackSnapshots(state.queue as Track[]) : [],
+        queueIndex: state.queueIndex,
+        isPlaying: state.isPlaying,
+        shuffleEnabled: state.shuffleEnabled,
+        repeatMode: state.repeatMode,
+        progress: state.progress,
+        duration: state.duration,
+        volume: state.volume,
+        updatedAt: state.updatedAt,
+        lastSeenSeconds: 0,
+        isOnline: true,
+        syncedAtMs,
+      };
+      return existing
+        ? currentDevices.map((device) => device.deviceId === peerDeviceId ? directDevice : device)
+        : [...currentDevices, directDevice];
+    });
+  };
+
   const reportRemoteDeviceState = async () => {
     if (!remoteAuthToken || !remoteControlEnabled) return;
     if (remoteDeviceReportInFlightRef.current) {
@@ -7279,12 +7398,51 @@ export default function SpiceApp() {
     return now < suppressRemotePlaybackUntilRef.current;
   };
 
-  const applyRemoteCommand = (command: RemoteCommand, now: number) => {
+  const recordRemoteTransportDiagnostic = (
+    direction: SpiceConnectTransportDiagnostic['direction'],
+    transport: SpiceConnectTransportDiagnostic['transport'],
+    command: RemoteCommandType,
+    peerDeviceId: string,
+    latencyMs?: number,
+  ) => {
+    setRemoteTransportDiagnostic({
+      direction,
+      transport,
+      command,
+      peerDeviceId,
+      observedAt: currentTimestampMs(),
+      latencyMs: Number.isFinite(latencyMs)
+        ? Math.max(0, Math.round(latencyMs as number))
+        : undefined,
+    });
+  };
+
+  const applyRemoteCommand = (
+    command: RemoteCommand,
+    now: number,
+    transport: 'cloud' | 'lan' = 'cloud',
+  ) => {
     if (command.sourceDeviceId === remoteDeviceId) return;
     if (shouldIgnoreRemoteCommand(command, now)) {
       setRemoteStatus('Ignored a stale Spice Connect playback command after startup.');
       logDebug('remote', `Ignored stale Spice Connect command ${command.command} after startup/update reload.`);
       return;
+    }
+
+    if (command.command !== SPICE_CONNECT_LAN_SIGNAL_COMMAND) {
+      const commandCreatedAt = new Date(command.createdAt).getTime();
+      const observedLatency = transport === 'lan'
+        ? remoteLanLatencyMsByDevice[command.sourceDeviceId]
+        : Number.isFinite(commandCreatedAt)
+          ? now - commandCreatedAt
+          : undefined;
+      recordRemoteTransportDiagnostic(
+        'received',
+        transport,
+        command.command,
+        command.sourceDeviceId,
+        observedLatency,
+      );
     }
 
     if (command.command === 'connect' && command.payload?.connected === false) {
@@ -7295,6 +7453,7 @@ export default function SpiceApp() {
       command.command !== 'handoff_ready'
       && command.command !== 'handoff_complete'
       && command.command !== 'handoff_cancel'
+      && command.command !== SPICE_CONNECT_LAN_SIGNAL_COMMAND
     ) {
       setIncomingRemoteControllerId(command.sourceDeviceId);
     }
@@ -7438,11 +7597,21 @@ export default function SpiceApp() {
       }
       case 'connect':
         break;
+      case 'lan_signal':
+        return;
     }
 
     setRemoteStatus(`Spice Connect command received: ${command.command}.`);
-    console.info(`[Spice Connect] applied command ${command.id} (${command.command}) from ${command.sourceDeviceId}`);
-    scheduleRemoteDeviceSync(command.command === 'handoff' ? 1400 : command.command === 'play_track' ? 900 : 300);
+    console.info(`[Spice Connect] applied ${transport} command ${command.id} (${command.command}) from ${command.sourceDeviceId}`);
+    const settleDelay = command.command === 'handoff' ? 1400 : command.command === 'play_track' ? 900 : 300;
+    if (transport === 'lan') {
+      remoteLanTransportRef.current?.broadcastState(currentSpiceConnectLanDeviceState());
+      window.setTimeout(() => {
+        remoteLanTransportRef.current?.broadcastState(currentSpiceConnectLanDeviceState());
+      }, settleDelay);
+    } else {
+      scheduleRemoteDeviceSync(settleDelay);
+    }
   };
 
   const pollRemoteCommands = async () => {
@@ -7479,7 +7648,14 @@ export default function SpiceApp() {
         ? 0
         : Math.min(emptyRemoteCommandPollsRef.current + 1, SPICE_CONNECT_COMMAND_IDLE_BACKOFF_POLLS);
       freshCommands.forEach((command) => {
-        applyRemoteCommand(command, now);
+        if (command.command === SPICE_CONNECT_LAN_SIGNAL_COMMAND) {
+          const createdAt = new Date(command.createdAt).getTime();
+          if (Number.isFinite(createdAt) && createdAt >= clientBootedAtRef.current) {
+            void remoteLanTransportRef.current?.handleSignal(command.sourceDeviceId, command.payload);
+          }
+        } else {
+          applyRemoteCommand(command, now);
+        }
         rememberRemoteCommandId(command.id);
       });
     } catch (error) {
@@ -7512,6 +7688,30 @@ export default function SpiceApp() {
       return false;
     }
     const targetRemoteDevice = remoteDevices.find((device) => device.deviceId === targetDeviceId);
+    if (command === 'play' && targetRemoteDevice && !targetRemoteDevice.currentTrack) {
+      setRemoteStatus(`Choose a track for ${targetRemoteDevice.displayName} before pressing play.`);
+      return false;
+    }
+    if (command !== SPICE_CONNECT_LAN_SIGNAL_COMMAND) {
+      const sentDirect = remoteLanTransportRef.current?.sendCommand(
+        targetDeviceId,
+        command,
+        payload,
+      ) ?? false;
+      if (sentDirect) {
+        recordRemoteTransportDiagnostic(
+          'sent',
+          'lan',
+          command,
+          targetDeviceId,
+          remoteLanLatencyMsByDevice[targetDeviceId],
+        );
+        if (!quiet) setRemoteStatus(`Sent ${command} over the same-network direct link.`);
+        console.info(`[Spice Connect] sent ${command} directly from ${remoteDeviceId} to ${targetDeviceId}`);
+        return true;
+      }
+      void remoteLanTransportRef.current?.ensureConnection(targetDeviceId);
+    }
     if (
       targetRemoteDevice?.lastSeenSeconds !== undefined
       && targetRemoteDevice.lastSeenSeconds > SPICE_CONNECT_STALE_DEVICE_SECONDS
@@ -7520,13 +7720,10 @@ export default function SpiceApp() {
       void loadRemoteDevices(true);
       return false;
     }
-    if (command === 'play' && targetRemoteDevice && !targetRemoteDevice.currentTrack) {
-      setRemoteStatus(`Choose a track for ${targetRemoteDevice.displayName} before pressing play.`);
-      return false;
-    }
 
     const requestGeneration = remoteRequestGenerationRef.current;
     const requestToken = remoteAuthToken;
+    const cloudSendStartedAt = currentTimestampMs();
     try {
       const response = await spiceFetch('cloud', '/remote/commands', {
         method: 'POST',
@@ -7552,9 +7749,20 @@ export default function SpiceApp() {
       if (data.transport === 'redis' || data.transport === 'postgresql') {
         setRemoteTransport(data.transport);
       }
+      if (command !== SPICE_CONNECT_LAN_SIGNAL_COMMAND) {
+        recordRemoteTransportDiagnostic(
+          'sent',
+          'cloud',
+          command,
+          targetDeviceId,
+          currentTimestampMs() - cloudSendStartedAt,
+        );
+      }
       if (!quiet) setRemoteStatus(`Sent ${command} through Spice Connect.`);
       console.info(`[Spice Connect] queued ${command} from ${remoteDeviceId} to ${targetDeviceId}`);
-      scheduleRemoteTargetRefresh();
+      if (command !== SPICE_CONNECT_LAN_SIGNAL_COMMAND) {
+        scheduleRemoteTargetRefresh();
+      }
       return true;
     } catch (error) {
       if (requestGeneration !== remoteRequestGenerationRef.current) return false;
@@ -7567,6 +7775,10 @@ export default function SpiceApp() {
       return false;
     }
   }
+
+  sendRemoteCommandRef.current = sendRemoteCommand;
+  applyRemoteCommandRef.current = applyRemoteCommand;
+  handleRemoteLanStateRef.current = handleRemoteLanState;
 
   const handleEmailVerificationSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -7806,6 +8018,91 @@ export default function SpiceApp() {
     Math.round(Math.max(0, duration) * 10),
     Math.floor(Math.max(0, progress) / 60),
   ].join('|');
+  const selectedRemoteDeviceUsesLan = Boolean(
+    selectedRemoteDeviceId && remoteLanPeerDeviceIds.includes(selectedRemoteDeviceId),
+  );
+  const remoteCommandRouteLabel = !selectedRemoteDeviceId
+    ? 'No receiver selected'
+    : selectedRemoteDeviceUsesLan
+      ? 'Local network direct'
+      : 'Cloud server fallback';
+  const remoteCloudPathLabel = remoteTransport === 'redis'
+    ? 'Last request used the Redis fast path'
+    : remoteTransport === 'postgresql'
+      ? remoteRedisConfigured === false
+        ? 'Last request used PostgreSQL · Redis is not configured'
+        : 'Last request used the PostgreSQL fallback'
+      : 'Not checked yet';
+
+  useEffect(() => {
+    remoteLanTransportRef.current?.dispose();
+    remoteLanTransportRef.current = null;
+    setRemoteLanPeerDeviceIds([]);
+    setRemoteLanLatencyMsByDevice({});
+    if (
+      !isMounted
+      || !remoteAuthToken
+      || !remoteControlEnabled
+      || typeof RTCPeerConnection === 'undefined'
+    ) return;
+
+    const transport = new SpiceConnectLanTransport({
+      localDeviceId: remoteDeviceId,
+      sendSignal: async (targetDeviceId: string, signal: SpiceConnectLanSignal) => (
+        sendRemoteCommandRef.current(
+          SPICE_CONNECT_LAN_SIGNAL_COMMAND,
+          signal as unknown as RemoteCommand['payload'],
+          targetDeviceId,
+          true,
+        )
+      ),
+      onCommand: (command) => {
+        const now = currentTimestampMs();
+        // A verified data channel can only deliver live session traffic. Use
+        // the local receipt time so harmless device clock skew cannot make a
+        // direct command look older than this receiver's boot time.
+        if (!rememberRemoteCommandId(command.id)) return;
+        applyRemoteCommandRef.current({
+          ...command,
+          payload: command.payload as RemoteCommand['payload'],
+          createdAt: new Date(now).toISOString(),
+        }, now, 'lan');
+      },
+      onState: (peerDeviceId, state) => {
+        handleRemoteLanStateRef.current(peerDeviceId, state);
+      },
+      onPeersChanged: setRemoteLanPeerDeviceIds,
+      onPeerLatency: (peerDeviceId, roundTripMs) => {
+        setRemoteLanLatencyMsByDevice((latencies) => ({
+          ...latencies,
+          [peerDeviceId]: roundTripMs,
+        }));
+      },
+      onDiagnostic: (message) => logDebug('remote', message),
+    });
+    remoteLanTransportRef.current = transport;
+    transport.broadcastState(currentSpiceConnectLanDeviceState());
+
+    return () => {
+      if (remoteLanTransportRef.current === transport) {
+        remoteLanTransportRef.current = null;
+      }
+      transport.dispose();
+    };
+  }, [isMounted, remoteAuthToken, remoteControlEnabled, remoteDeviceId]);
+
+  useEffect(() => {
+    const transport = remoteLanTransportRef.current;
+    if (!transport) return;
+    transport.broadcastState(currentSpiceConnectLanDeviceState());
+    if (selectedRemoteDeviceId) {
+      void transport.ensureConnection(selectedRemoteDeviceId);
+    }
+  }, [
+    remoteDeviceName,
+    remoteDeviceStateFingerprint,
+    selectedRemoteDeviceId,
+  ]);
 
   useEffect(() => {
     if (!isMounted || !remoteAuthToken) return;
@@ -7820,7 +8117,7 @@ export default function SpiceApp() {
         void reportRemoteDeviceState();
       }, SPICE_CONNECT_DEVICE_SYNC_INTERVAL_MS)
       : null;
-    const controllerRefreshInterval = selectedRemoteDeviceId
+    const controllerRefreshInterval = selectedRemoteDeviceId && !selectedRemoteDeviceUsesLan
       ? setInterval(() => {
         void loadRemoteDevices();
       }, remoteRealtimeConnected
@@ -7858,13 +8155,19 @@ export default function SpiceApp() {
     remoteDeviceName,
     remoteRealtimeConnected,
     selectedRemoteDeviceId,
+    selectedRemoteDeviceUsesLan,
   ]);
 
   useEffect(() => {
     if (!isMounted || !remoteAuthToken || !remoteControlEnabled) return;
 
     const timeoutId = window.setTimeout(() => {
-      void reportRemoteDeviceState();
+      const deliveredDirectly = remoteLanTransportRef.current?.broadcastState(
+        currentSpiceConnectLanDeviceState(),
+      ) ?? 0;
+      if (deliveredDirectly === 0) {
+        void reportRemoteDeviceState();
+      }
     }, SPICE_CONNECT_STATE_REPORT_DEBOUNCE_MS);
 
     return () => window.clearTimeout(timeoutId);
@@ -10102,26 +10405,6 @@ export default function SpiceApp() {
     patchRemoteDevice(selectedRemoteDeviceId, updates);
   };
 
-  const patchSelectedRemoteQueueStep = (step: -1 | 1) => {
-    if (!selectedRemoteDevice) return;
-    const remoteQueue = selectedRemoteDevice.queue || [];
-    if (remoteQueue.length === 0) {
-      patchSelectedRemoteDevice({ isPlaying: true });
-      return;
-    }
-
-    const currentIndex = Math.max(0, Math.min(selectedRemoteDevice.queueIndex || 0, remoteQueue.length - 1));
-    const nextIndex = (currentIndex + step + remoteQueue.length) % remoteQueue.length;
-    const nextTrack = remoteQueue[nextIndex];
-    patchSelectedRemoteDevice({
-      currentTrack: nextTrack,
-      queueIndex: nextIndex,
-      isPlaying: true,
-      progress: 0,
-      duration: nextTrack.durationMs ? nextTrack.durationMs / 1000 : 0,
-    });
-  };
-
   const handoffPlaybackToDevice = async (targetDevice: RemoteDevice | null) => {
     if (!targetDevice || currentTrackRef.current.id === 'placeholder') {
       setRemoteStatus('Start a track here, then choose an online device to move playback.');
@@ -10305,7 +10588,8 @@ export default function SpiceApp() {
     if (listenTogetherHostSessionId) return;
     if (isControllingRemoteReceiver) {
       if (!canControlSelectedRemoteReceiver('previous')) return;
-      patchSelectedRemoteQueueStep(-1);
+      // The receiver may restart the current track, traverse shuffle history,
+      // or wrap. Wait for its authoritative state instead of guessing here.
       void sendRemoteCommand('previous');
       return;
     }
@@ -10316,7 +10600,7 @@ export default function SpiceApp() {
     if (listenTogetherHostSessionId) return;
     if (isControllingRemoteReceiver) {
       if (!canControlSelectedRemoteReceiver('next')) return;
-      patchSelectedRemoteQueueStep(1);
+      // Repeat mode, shuffle, and personalized continuation are receiver-owned.
       void sendRemoteCommand('next');
       return;
     }
@@ -10435,6 +10719,9 @@ export default function SpiceApp() {
 
   const receiverStatusLabel = (device: RemoteDevice | null) => {
     if (!device) return 'Local playback';
+    if (remoteLanPeerDeviceIds.includes(device.deviceId)) {
+      return device.isPlaying ? 'LAN direct · playing now' : 'LAN direct · online';
+    }
     const seconds = Math.max(0, device.lastSeenSeconds ?? 0);
     if (device.isOnline === false) {
       if (seconds < 60) return 'Offline · last seen just now';
@@ -10461,6 +10748,7 @@ export default function SpiceApp() {
     const requestToken = remoteAuthToken;
     const forgottenDevice = remoteDevices.find((device) => device.deviceId === deviceId) || null;
     forgettingRemoteDeviceIdsRef.current.add(deviceId);
+    remoteLanTransportRef.current?.disconnect(deviceId);
     remoteDeviceListRevisionRef.current += 1;
     setForgettingRemoteDeviceIds(new Set(forgettingRemoteDeviceIdsRef.current));
     setRemoteDevices((devices) => devices.filter((device) => device.deviceId !== deviceId));
@@ -15853,7 +16141,7 @@ const getMaskedEmail = (email: string) => {
                   <div id="spice-connect" style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
                     <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.monitor} Spice Connect Setup</h3>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '0 0 20px 0', lineHeight: 1.4 }}>
-                      Spice Connect is off by default. Enable it when you want this desktop to appear as a receiver, or pair it explicitly from another signed-in device.
+                      Spice Connect is off by default. When two desktop or web devices enable it on the same network, controls automatically prefer an encrypted peer-to-peer link and fall back to the cloud if direct negotiation is unavailable.
                     </p>
 
                     <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 0.85fr) minmax(0, 1.15fr)', gap: '20px', alignItems: 'start' }}>
@@ -15889,28 +16177,43 @@ const getMaskedEmail = (email: string) => {
                         </p>
                         <div
                           role="status"
+                          aria-live="polite"
                           style={{
                             marginTop: '12px',
-                            padding: '9px 11px',
+                            padding: '10px 11px',
                             border: '1px solid var(--border-color)',
                             borderRadius: '9px',
-                            color: remoteTransport === 'redis'
-                              ? 'var(--accent-green, #4ade80)'
-                              : remoteRedisConfigured === false
-                                ? 'var(--accent-red, #f87171)'
-                                : 'var(--text-secondary)',
+                            color: 'var(--text-primary)',
                             background: 'var(--body-bg)',
                             fontSize: '0.74rem',
                           }}
                         >
-                          {remoteTransport === 'redis'
-                            ? 'Redis fast path is active'
-                            : remoteTransport === 'postgresql'
-                              ? remoteRedisConfigured === false
-                                ? 'Redis credentials are missing on this deployment'
-                                : 'Redis is configured; this request used the PostgreSQL fallback'
-                              : 'Refresh devices to test the Redis connection'}
+                          <div>
+                            <span style={{ color: 'var(--text-muted)', fontSize: '0.68rem' }}>
+                              Playback command route
+                            </span>
+                            <strong
+                              style={{
+                                display: 'block',
+                                color: selectedRemoteDeviceId ? 'var(--accent-pink)' : 'var(--text-secondary)',
+                                marginTop: '2px',
+                              }}
+                            >
+                              {remoteCommandRouteLabel}
+                            </strong>
+                          </div>
+                          <div style={{ borderTop: '1px solid var(--border-color)', marginTop: '8px', paddingTop: '8px' }}>
+                            <span style={{ color: 'var(--text-muted)', fontSize: '0.68rem' }}>
+                              Cloud signaling and fallback
+                            </span>
+                            <span style={{ display: 'block', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                              {remoteCloudPathLabel}
+                            </span>
+                          </div>
                         </div>
+                        <p style={{ color: 'var(--text-muted)', fontSize: '0.7rem', lineHeight: 1.4, margin: '9px 0 0 0' }}>
+                          The direct path uses local-only WebRTC host candidates; cloud signaling authenticates the peer and remains the fallback. The playback route above updates only after the direct data channel is verified, so a command can use cloud while that link is still negotiating. The Android app uses the same direct protocol.
+                        </p>
                       </div>
 
                       <div style={{ border: '1px solid var(--border-color)', borderRadius: '12px', padding: '16px', background: 'var(--body-bg)' }}>
@@ -16002,11 +16305,11 @@ const getMaskedEmail = (email: string) => {
                             </div>
 
                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-                              <button className="btn btn--ghost" onClick={() => sendRemoteCommand('previous')} style={{ padding: '8px 12px' }}>{Icons.prev} Previous</button>
-                              <button className="btn btn--primary" onClick={() => sendRemoteCommand(selectedRemoteDevice.isPlaying ? 'pause' : 'play')} style={{ padding: '8px 14px' }}>
+                              <button className="btn btn--ghost" onClick={handleReceiverPrev} style={{ padding: '8px 12px' }}>{Icons.prev} Previous</button>
+                              <button className="btn btn--primary" onClick={toggleReceiverPlayPause} style={{ padding: '8px 14px' }}>
                                 {selectedRemoteDevice.isPlaying ? Icons.pause : Icons.play} {selectedRemoteDevice.isPlaying ? 'Pause' : 'Play'}
                               </button>
-                              <button className="btn btn--ghost" onClick={() => sendRemoteCommand('next')} style={{ padding: '8px 12px' }}>{Icons.next} Next</button>
+                              <button className="btn btn--ghost" onClick={handleReceiverNext} style={{ padding: '8px 12px' }}>{Icons.next} Next</button>
                               <button className="btn btn--ghost" onClick={() => sendRemoteCommand('seek', { progress: Math.max(0, selectedRemoteDevice.progress - 15) })} style={{ padding: '8px 12px' }}>-15s</button>
                               <button className="btn btn--ghost" onClick={() => sendRemoteCommand('seek', { progress: Math.min(selectedRemoteDevice.duration || selectedRemoteDevice.progress + 15, selectedRemoteDevice.progress + 15) })} style={{ padding: '8px 12px' }}>+15s</button>
                             </div>
@@ -18568,6 +18871,75 @@ const getMaskedEmail = (email: string) => {
           </div>
 
         </div>
+      )}
+      {remoteTransportDiagnosticsEnabled && (
+        <aside
+          aria-label="Spice Connect transport diagnostics"
+          style={{
+            position: 'fixed',
+            right: '18px',
+            top: '76px',
+            zIndex: 10020,
+            width: 'min(330px, calc(100vw - 36px))',
+            padding: '12px 14px',
+            borderRadius: '12px',
+            border: '1px solid var(--border-color)',
+            background: 'var(--card-bg)',
+            color: 'var(--text-primary)',
+            boxShadow: '0 12px 32px rgba(0, 0, 0, 0.35)',
+            fontFamily: 'Outfit, sans-serif',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <strong style={{ flex: 1, fontSize: '0.78rem', letterSpacing: '0.08em' }}>
+              SPICE CONNECT TRACE
+            </strong>
+            <button
+              type="button"
+              aria-label="Hide Spice Connect transport diagnostics"
+              title="Hide diagnostics (Ctrl+Shift+Alt+L)"
+              onClick={() => {
+                setRemoteTransportDiagnosticsEnabled(false);
+                localStorage.setItem(SPICE_CONNECT_TRANSPORT_DIAGNOSTICS_STORAGE_KEY, 'false');
+              }}
+              style={{
+                border: 'none',
+                background: 'transparent',
+                color: 'var(--text-secondary)',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                padding: '2px',
+              }}
+            >
+              {Icons.close}
+            </button>
+          </div>
+          <div style={{ marginTop: '8px', fontSize: '0.76rem', lineHeight: 1.55 }}>
+            <div>
+              Route:{' '}
+              <strong style={{ color: 'var(--accent-pink)' }}>
+                {selectedRemoteDeviceId
+                  ? selectedRemoteDeviceUsesLan
+                    ? 'LOCAL NETWORK DIRECT'
+                    : 'CLOUD SERVER FALLBACK'
+                  : 'NO RECEIVER SELECTED'}
+              </strong>
+            </div>
+            {selectedRemoteDeviceId && remoteLanLatencyMsByDevice[selectedRemoteDeviceId] !== undefined && (
+              <div>LAN round trip: {remoteLanLatencyMsByDevice[selectedRemoteDeviceId]} ms</div>
+            )}
+            <div style={{ marginTop: '5px', color: 'var(--text-secondary)' }}>
+              {remoteTransportDiagnostic
+                ? `${remoteTransportDiagnostic.direction === 'sent' ? 'Sent' : 'Received'} ${remoteTransportDiagnostic.command} via ${remoteTransportDiagnostic.transport === 'lan' ? 'local network' : 'cloud server'}${remoteTransportDiagnostic.latencyMs !== undefined ? ` (${remoteTransportDiagnostic.latencyMs} ms)` : ''}`
+                : 'No playback command observed yet.'}
+            </div>
+            {remoteTransportDiagnostic && (
+              <div style={{ color: 'var(--text-muted)', fontSize: '0.68rem' }}>
+                Peer {remoteTransportDiagnostic.peerDeviceId.slice(0, 18)} · {new Date(remoteTransportDiagnostic.observedAt).toLocaleTimeString()}
+              </div>
+            )}
+          </div>
+        </aside>
       )}
       {/* Mobile Bottom Navigation Bar (Visible only on screens <= 600px via media query) */}
       <div

@@ -11,11 +11,19 @@ This note ranks additional features that could move from the hosted cloud lane t
 | 3 | Local-only settings, themes, queue state, and backup import/export | Low to medium | Low | Keeps personal playback UX private and avoids cloud writes for routine UI state. | Keep optional cloud sync as an explicit account action. |
 | 4 | Playback history aggregation before sync | Medium | Medium | Batch uploads reduce Neon writes and Vercel invocations. | Requires a durable local queue and conflict rules for multi-device users. |
 | 5 | Last.fm and ListenBrainz submission queue | Medium | Medium | Local queueing avoids cloud work during playback and can retry from the PC. | Cloud should still store OAuth/session secrets unless a desktop secret store is added. |
-| 6 | Spice Connect device presence polling | Medium | Medium to high | Local discovery can reduce cloud polling when devices are on the same LAN. | Remote cross-network control still needs a cloud rendezvous path. |
+| 6 | Spice Connect same-network transport | Medium | Medium to high | A direct data channel reduces cloud command and state traffic when devices are on the same LAN. | First phase implemented for opted-in desktop/web and Android peers; remote cross-network control still needs the cloud rendezvous and fallback path. |
 | 7 | Shared-playlist edit queue | Medium to high | Medium | Offline-first edits can batch database writes. | Needs conflict handling, permissions validation, and replay failure UX. |
 | 8 | Listen Together session transport | High | High | Realtime state can become expensive on serverless/database polling. | A local/LAN path helps only nearby devices; internet sessions still need a relay or managed realtime service. |
 | 9 | Account/profile cache with offline mode | High | High | Fewer cloud reads and faster startup. | Needs encryption, invalidation, sign-out cleanup, and stale-account behavior. |
 | 10 | Cloud auth replacement | Very high | Very high | Would reduce Vercel auth work but creates security and account-recovery burden. | Not recommended now; keep auth in Vercel. |
+
+### Spice Connect LAN first phase
+
+Opted-in desktop, web, and Android peers now use the existing authenticated cloud command queue only to exchange a bounded WebRTC offer or answer. The resulting data channel is session-bound, verifies the expected device IDs before accepting messages, and carries commands plus receiver state directly. The peer connection deliberately configures no STUN or TURN servers, so it gathers local host candidates only and cannot become an unapproved internet relay. If negotiation fails, every control continues through the existing cloud transport.
+
+This phase does not remove cloud discovery, presence heartbeats, realtime wakeups, or cross-network fallback. Both peers must enable Spice Connect before the direct path can start. Android uses a pinned, namespace-isolated WebRTC data-channel runtime and labels a selected receiver as either `Same-network direct` or `Cloud fallback`. The app currently targets Android 16 / API 36, where its existing internet permission covers local-network access; a future target-SDK 37 upgrade must add Android's runtime local-network permission flow before shipping.
+
+Queue transitions remain receiver-authoritative across both transports: controllers do not guess the result of next or previous because restart thresholds, shuffle history, repeat boundaries, and personalized continuation are local playback decisions. Desktop testers can toggle a themed transport trace with `Ctrl+Shift+Alt+L`; it reports the actual command path and measured LAN round-trip or cloud request/queue delay without exposing credentials or payload contents.
 
 ## Performance Expectations
 
