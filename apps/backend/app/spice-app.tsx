@@ -1320,6 +1320,20 @@ interface PendingSpiceConnectHandoff {
   completeTimeoutId: number | null;
 }
 
+function clearPendingSpiceConnectHandoffTimers(
+  pending: PendingSpiceConnectHandoff | null,
+) {
+  if (!pending) return;
+  if (pending.acceptTimeoutId !== null) {
+    window.clearTimeout(pending.acceptTimeoutId);
+    pending.acceptTimeoutId = null;
+  }
+  if (pending.completeTimeoutId !== null) {
+    window.clearTimeout(pending.completeTimeoutId);
+    pending.completeTimeoutId = null;
+  }
+}
+
 interface UserProfile {
   id: string;
   displayName: string;
@@ -3084,6 +3098,9 @@ export default function SpiceApp() {
     targetDeviceId?: string,
     quiet?: boolean,
   ) => Promise<boolean>>(async () => false);
+  const addTrackToPlaylistRef = useRef<(track: Track, playlistId: string) => Promise<boolean>>(
+    async () => false,
+  );
 
   const handleAudioEndedRef = useRef<(
     slot?: 0 | 1,
@@ -5784,7 +5801,7 @@ export default function SpiceApp() {
       clearTimeout(remoteTargetRefreshTimeoutRef.current);
       remoteTargetRefreshTimeoutRef.current = null;
     }
-    clearPendingSpiceConnectHandoffTimers();
+    clearPendingSpiceConnectHandoffTimers(pendingSpiceConnectHandoffRef.current);
     preparedSpiceConnectHandoffsRef.current.clear();
   }, []);
 
@@ -7182,22 +7199,34 @@ export default function SpiceApp() {
     return true;
   };
 
-  function clearPendingSpiceConnectHandoffTimers(
-    pending = pendingSpiceConnectHandoffRef.current,
-  ) {
-    if (!pending) return;
-    if (pending.acceptTimeoutId !== null) {
-      window.clearTimeout(pending.acceptTimeoutId);
-      pending.acceptTimeoutId = null;
-    }
-    if (pending.completeTimeoutId !== null) {
-      window.clearTimeout(pending.completeTimeoutId);
-      pending.completeTimeoutId = null;
-    }
+  function patchRemoteDevice(deviceId: string, updates: Partial<RemoteDevice>) {
+    if (!deviceId) return;
+    const previousOptimisticState = optimisticRemoteDeviceStateRef.current;
+    const previousUpdates = previousOptimisticState?.deviceId === deviceId
+      && previousOptimisticState.expiresAt > currentTimestampMs()
+      ? previousOptimisticState.updates
+      : {};
+    optimisticRemoteDeviceStateRef.current = {
+      deviceId,
+      expiresAt: currentTimestampMs() + SPICE_CONNECT_OPTIMISTIC_STATE_WINDOW_MS,
+      updates: { ...previousUpdates, ...updates },
+    };
+    setRemoteDevices((devices) => devices.map((device) => (
+      device.deviceId === deviceId
+        ? {
+          ...device,
+          ...updates,
+          updatedAt: new Date().toISOString(),
+          lastSeenSeconds: 0,
+          isOnline: true,
+          syncedAtMs: currentTimestampMs(),
+        }
+        : device
+    )));
   }
 
   const clearPendingSpiceConnectHandoff = () => {
-    clearPendingSpiceConnectHandoffTimers();
+    clearPendingSpiceConnectHandoffTimers(pendingSpiceConnectHandoffRef.current);
     pendingSpiceConnectHandoffRef.current = null;
   };
 
@@ -7544,7 +7573,7 @@ export default function SpiceApp() {
           : '';
         if (payloadTrack && typeof payloadTrack === 'object' && payloadTrack.id && playlistId) {
           const hydratedTrack = enrichTrackSnapshot(payloadTrack as Track);
-          void addTrackToPlaylist(hydratedTrack, playlistId).then((added) => {
+          void addTrackToPlaylistRef.current(hydratedTrack, playlistId).then((added) => {
             showSpiceNotice(
               added
                 ? `Added "${hydratedTrack.title}" to the selected playlist from Spice Connect.`
@@ -7828,9 +7857,11 @@ export default function SpiceApp() {
     }
   }
 
-  sendRemoteCommandRef.current = sendRemoteCommand;
-  applyRemoteCommandRef.current = applyRemoteCommand;
-  handleRemoteLanStateRef.current = handleRemoteLanState;
+  useEffect(() => {
+    sendRemoteCommandRef.current = sendRemoteCommand;
+    applyRemoteCommandRef.current = applyRemoteCommand;
+    handleRemoteLanStateRef.current = handleRemoteLanState;
+  });
 
   const handleEmailVerificationSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -9268,6 +9299,10 @@ export default function SpiceApp() {
     return wasAdded;
   };
 
+  useEffect(() => {
+    addTrackToPlaylistRef.current = addTrackToPlaylist;
+  });
+
   const openPlaylistPicker = (track: Track) => {
     if (!track || track.id === 'placeholder' || track.id === 'spice-connect-placeholder') return;
     setPlaylistPickerSavingId(null);
@@ -10426,32 +10461,6 @@ export default function SpiceApp() {
       setRemoteStatus('Player controls now target this device.');
     }
   };
-
-  function patchRemoteDevice(deviceId: string, updates: Partial<RemoteDevice>) {
-    if (!deviceId) return;
-    const previousOptimisticState = optimisticRemoteDeviceStateRef.current;
-    const previousUpdates = previousOptimisticState?.deviceId === deviceId
-      && previousOptimisticState.expiresAt > currentTimestampMs()
-      ? previousOptimisticState.updates
-      : {};
-    optimisticRemoteDeviceStateRef.current = {
-      deviceId,
-      expiresAt: currentTimestampMs() + SPICE_CONNECT_OPTIMISTIC_STATE_WINDOW_MS,
-      updates: { ...previousUpdates, ...updates },
-    };
-    setRemoteDevices((devices) => devices.map((device) => (
-      device.deviceId === deviceId
-        ? {
-          ...device,
-          ...updates,
-          updatedAt: new Date().toISOString(),
-          lastSeenSeconds: 0,
-          isOnline: true,
-          syncedAtMs: currentTimestampMs(),
-        }
-        : device
-    )));
-  }
 
   const patchSelectedRemoteDevice = (updates: Partial<RemoteDevice>) => {
     patchRemoteDevice(selectedRemoteDeviceId, updates);

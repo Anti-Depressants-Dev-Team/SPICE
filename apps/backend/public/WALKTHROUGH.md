@@ -1,5 +1,10 @@
 # SPICE Walkthrough
 
+## v1.0.163
+
+- [Spice.Connect main] Keep LAN transport cleanup, optimistic receiver updates, and playlist command handlers ordered for the React compiler, and refresh callback refs after render so the receiver always uses the latest committed state.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.163`.
+
 ## v1.0.162
 
 - [Spice.Connect main] Sync explicit Like, add-to-playlist, and download actions from the Android controller to the selected desktop or mobile receiver over the same LAN-first transport with cloud fallback.
