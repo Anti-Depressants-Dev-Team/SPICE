@@ -32,6 +32,7 @@ private val spiceConnectLanCommands = setOf(
     "shuffle",
     "repeat",
     "play_track",
+    "play_queue_index",
     "set_like",
     "add_to_playlist",
     "download",

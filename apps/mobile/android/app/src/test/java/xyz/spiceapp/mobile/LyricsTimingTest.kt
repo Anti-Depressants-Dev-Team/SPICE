@@ -34,4 +34,21 @@ class LyricsTimingTest {
         assertEquals(0, activeTimedLyricIndex(lines, 1_000L))
         assertEquals(1, activeTimedLyricIndex(lines, 4_000L))
     }
+
+    @Test
+    fun blankTimedLinesClearTheActiveLyricDuringInstrumentalGaps() {
+        val lines = parseTimedLyrics("[00:01.00]Verse\n[00:10.00]\n[00:20.00]Chorus")
+        assertEquals(
+            listOf(
+                TimedLyricLine(1_000L, "Verse"),
+                TimedLyricLine(10_000L, ""),
+                TimedLyricLine(20_000L, "Chorus"),
+            ),
+            lines,
+        )
+        assertEquals(0, activeTimedLyricIndex(lines, 9_999L))
+        assertEquals(-1, activeTimedLyricIndex(lines, 10_000L))
+        assertEquals(-1, activeTimedLyricIndex(lines, 19_999L))
+        assertEquals(2, activeTimedLyricIndex(lines, 20_000L))
+    }
 }

@@ -151,6 +151,7 @@ data class SpiceUiState(
     val downloadPlaylistId: String? = null,
     val downloadPlaylistCompleted: Int = 0,
     val downloadPlaylistTotal: Int = 0,
+    val pendingRemoteDownloadTrack: Track? = null,
     val lyricsTrackId: String? = null,
     val lyricsPayload: LyricsPayload? = null,
     val lyricsLoading: Boolean = false,
@@ -210,6 +211,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
     private var updateDownloadJob: Job? = null
     private var autoHistorySyncJob: Job? = null
     private var autoTasteSyncJob: Job? = null
+    private var lyricsJob: Job? = null
     private var homeLoadJob: Job? = null
     private var transitionPreparationJob: Job? = null
     private var preparedTransition: PreparedMobileTransition? = null
@@ -222,6 +224,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
     private var feedbackRecordedForCurrentPlayback = false
     private var lastObservedShuffleEnabled = false
     private val cloudLibrarySyncMutex = Mutex()
+    private val remoteLibraryMutationMutex = Mutex()
     private var optimisticRemoteDeviceId: String? = null
     private var optimisticRemoteStateUntilElapsedMs: Long = 0L
     private var optimisticRemoteTrackChanged: Boolean = false
@@ -490,13 +493,17 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun play(track: Track, queue: List<Track> = listOf(track)) {
+    fun play(track: Track, queue: List<Track> = listOf(track), queueIndexHint: Int? = null) {
         activeRemoteTargetId()?.let { targetDeviceId ->
-            playOnRemoteDevice(targetDeviceId, track, queue)
+            if (queueIndexHint != null) {
+                playQueueIndexOnRemoteDevice(targetDeviceId, track, queueIndexHint)
+            } else {
+                playOnRemoteDevice(targetDeviceId, track, queue)
+            }
             return
         }
         val normalizedQueue = normalizeQueue(queue, track)
-        val nextIndex = normalizedQueue.indexOfFirst { it.queueKey() == track.queueKey() }.takeIf { it >= 0 } ?: 0
+        val nextIndex = resolveQueueSelectionIndex(normalizedQueue, track, queueIndexHint)
         val departure = _uiState.value.currentTrack?.let { pendingManualPlaybackDeparture() }
         playQueueIndex(normalizedQueue, nextIndex, manualDeparture = departure)
     }
@@ -854,6 +861,19 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
         if (_uiState.value.resolvingTrackId != null) {
             _uiState.value = _uiState.value.copy(resolvingTrackId = null)
         }
+    }
+
+    fun approvePendingRemoteDownload() {
+        val track = _uiState.value.pendingRemoteDownloadTrack ?: return
+        _uiState.value = _uiState.value.copy(pendingRemoteDownloadTrack = null)
+        downloadTrack(track)
+    }
+
+    fun denyPendingRemoteDownloadPermission() {
+        _uiState.value = _uiState.value.copy(
+            pendingRemoteDownloadTrack = null,
+            message = "Storage permission is required to save downloads on Android 7-9.",
+        )
     }
 
     fun downloadTrack(track: Track) {
@@ -2324,9 +2344,11 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
             lyricsLoading = true,
             message = null,
         )
-        viewModelScope.launch {
+        lyricsJob?.cancel()
+        lyricsJob = viewModelScope.launch {
             runCatching { api.fetchLyrics(track) }
                 .onSuccess { lyrics ->
+                    if (_uiState.value.lyricsTrackId != track.id) return@onSuccess
                     _uiState.value = _uiState.value.copy(
                         lyricsPayload = lyrics,
                         lyricsLoading = false,
@@ -2338,6 +2360,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
                 .onFailure { error ->
+                    if (error is CancellationException || _uiState.value.lyricsTrackId != track.id) return@onFailure
                     _uiState.value = _uiState.value.copy(
                         lyricsLoading = false,
                         message = error.message ?: "Could not load lyrics.",
@@ -2347,6 +2370,8 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun dismissLyrics() {
+        lyricsJob?.cancel()
+        lyricsJob = null
         _uiState.value = _uiState.value.copy(lyricsTrackId = null, lyricsPayload = null, lyricsLoading = false)
     }
 
@@ -2729,6 +2754,29 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
                 .put("queueIndex", queueIndex),
         )
         _uiState.value = _uiState.value.copy(connectStatus = "Sent ${track.title} to ${target.displayName}.")
+    }
+
+    private fun playQueueIndexOnRemoteDevice(targetDeviceId: String, track: Track, queueIndex: Int) {
+        val target = _uiState.value.remoteDevices.firstOrNull { it.deviceId == targetDeviceId }
+        if (target == null || !target.isOnline || queueIndex !in target.queue.indices) {
+            unavailableRemoteTarget()
+            return
+        }
+        patchRemoteDevice(targetDeviceId) {
+            it.copy(
+                currentTrack = track,
+                queueIndex = queueIndex,
+                isPlaying = true,
+                progressMs = 0,
+                durationMs = track.durationMs,
+            )
+        }
+        sendRemoteCommand(
+            targetDeviceId,
+            "play_queue_index",
+            JSONObject().put("queueIndex", queueIndex),
+        )
+        _uiState.value = _uiState.value.copy(connectStatus = "Selected ${track.title} on ${target.displayName}.")
     }
 
     private fun patchRemoteDevice(deviceId: String, transform: (RemoteDevice) -> RemoteDevice) {
@@ -3416,9 +3464,21 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+    private fun enqueueRemoteLibraryMutation(block: suspend () -> Unit) {
+        viewModelScope.launch {
+            remoteLibraryMutationMutex.withLock { block() }
+        }
+    }
+
     private suspend fun applyIncomingPlaylistAddCommand(command: RemoteCommand) {
         val track = command.payloadTrack ?: return
-        val playlist = _uiState.value.playlists.firstOrNull { it.id == command.playlistId }
+        val normalizedTitle = command.playlistTitle.trim()
+        val playlist = findPortableSpiceConnectPlaylist(
+            _uiState.value.playlists,
+            command.playlistId,
+            normalizedTitle,
+        )
+            ?: normalizedTitle.takeIf { it.isNotEmpty() }?.let { libraryRepository.createPlaylist(it) }
         if (playlist == null) {
             _uiState.value = _uiState.value.copy(
                 message = "The selected playlist is not available on this device.",
@@ -3486,9 +3546,20 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
                     val trackIndex = queue.indexOfFirst { it.queueKey() == track.queueKey() }.takeIf { it >= 0 }
                     playQueueIndex(queue, requestedIndex ?: trackIndex ?: 0)
                 }
-                "set_like" -> applyIncomingLikeCommand(command)
-                "add_to_playlist" -> applyIncomingPlaylistAddCommand(command)
-                "download" -> command.payloadTrack?.let(::downloadTrack)
+                "play_queue_index" -> {
+                    val state = _uiState.value
+                    command.payloadQueueIndex.takeIf { it in state.playbackQueue.indices }?.let { queueIndex ->
+                        playQueueIndex(state.playbackQueue, queueIndex)
+                    }
+                }
+                "set_like" -> enqueueRemoteLibraryMutation { applyIncomingLikeCommand(command) }
+                "add_to_playlist" -> enqueueRemoteLibraryMutation { applyIncomingPlaylistAddCommand(command) }
+                "download" -> command.payloadTrack?.let { track ->
+                    _uiState.value = _uiState.value.copy(
+                        pendingRemoteDownloadTrack = track,
+                        message = "Spice Connect requested a download for ${track.title}.",
+                    )
+                }
                 "handoff_prepare" -> {
                     val transferId = normalizeSpiceConnectTransferId(command.transferId)
                     if (transferId.isNotEmpty()) {

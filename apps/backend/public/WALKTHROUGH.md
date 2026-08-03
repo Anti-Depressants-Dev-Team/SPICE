@@ -1,5 +1,11 @@
 # SPICE Walkthrough
 
+## v1.0.164
+
+- [Spice.Connect main] Preserve receiver-owned queues when selecting duplicate or long-queue entries, serialize receiver library mutations, and keep downloads and library actions safe across command batches and startup reloads.
+- [Spice.Connect main] Match or create private playlists by portable title for pairing-only devices, refresh open mobile lyrics when the receiver advances, and clear highlighting during timed instrumental gaps.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.164`.
+
 ## v1.0.163
 
 - [Spice.Connect main] Keep LAN transport cleanup, optimistic receiver updates, and playlist command handlers ordered for the React compiler, and refresh callback refs after render so the receiver always uses the latest committed state.

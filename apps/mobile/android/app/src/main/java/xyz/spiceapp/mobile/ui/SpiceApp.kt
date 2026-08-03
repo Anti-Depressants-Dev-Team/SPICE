@@ -173,6 +173,7 @@ fun SpiceApp(
     onSearchQueryChanged: (String) -> Unit,
     onSearch: (String) -> Unit,
     onTrackSelected: (Track, List<Track>) -> Unit,
+    onQueueTrackSelected: (Track, List<Track>, Int) -> Unit,
     onTogglePlayback: () -> Unit,
     onPlayNext: () -> Unit,
     onPlayPrevious: () -> Unit,
@@ -280,6 +281,12 @@ fun SpiceApp(
 
     LaunchedEffect(showPlayer, activeTrack) {
         if (showPlayer && activeTrack == null) showPlayer = false
+    }
+
+    LaunchedEffect(uiState.lyricsTrackId, activeTrack?.id) {
+        if (uiState.lyricsTrackId == null) return@LaunchedEffect
+        if (activeTrack == null) onDismissLyrics()
+        else if (activeTrack.id != uiState.lyricsTrackId) onLoadLyrics()
     }
 
     Scaffold(
@@ -417,8 +424,8 @@ fun SpiceApp(
             queue = activeQueue,
             queueIndex = activeQueueIndex,
             receiverName = selectedRemoteDevice?.displayName.takeIf { isRemotePlayback },
-            onTrackSelected = { track ->
-                onTrackSelected(track, activeQueue)
+            onTrackSelected = { track, index ->
+                onQueueTrackSelected(track, activeQueue, index)
                 showQueue = false
             },
             onDismiss = { showQueue = false },
@@ -3193,7 +3200,7 @@ private fun QueueSheet(
     queue: List<Track>,
     queueIndex: Int,
     receiverName: String?,
-    onTrackSelected: (Track) -> Unit,
+    onTrackSelected: (Track, Int) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -3225,7 +3232,7 @@ private fun QueueSheet(
                                 if (current) MaterialTheme.colorScheme.primaryContainer
                                 else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
                             )
-                            .clickable { onTrackSelected(track) }
+                            .clickable { onTrackSelected(track, index) }
                             .padding(10.dp)
                             .semantics {
                                 contentDescription = if (current) {
