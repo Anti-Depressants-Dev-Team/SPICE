@@ -271,6 +271,7 @@ private fun SpiceRoot(
                 viewModel.playEngineTest()
             },
             onDownloadTrack = { track -> withLegacyDownloadPermission { viewModel.downloadTrack(track) } },
+            onDownloadTrackToReceiver = viewModel::downloadTrackOnSelectedReceiver,
             onDownloadPlaylist = { playlist -> withLegacyDownloadPermission { viewModel.downloadPlaylist(playlist) } },
             onCancelDownload = viewModel::cancelDownload,
             onLoadLyrics = viewModel::loadCurrentLyrics,

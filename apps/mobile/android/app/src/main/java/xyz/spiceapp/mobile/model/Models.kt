@@ -207,6 +207,9 @@ data class RemoteCommand(
     val repeatMode: RepeatMode? = null,
     val shouldPlay: Boolean? = null,
     val connected: Boolean? = null,
+    val liked: Boolean? = null,
+    val playlistId: String = "",
+    val playlistTitle: String = "",
     val transferId: String = "",
     val failureReason: String = "",
 )

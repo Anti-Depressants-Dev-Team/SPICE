@@ -156,6 +156,24 @@ test('Spice Connect accepts every phase of the acknowledged handoff protocol', (
   }
 });
 
+test('Spice Connect accepts receiver library and download actions', () => {
+  for (const [command, payload] of [
+    ['set_like', { track: { id: 'yt-1', title: 'Remote Like' }, liked: true }],
+    ['add_to_playlist', { track: { id: 'yt-1', title: 'Remote Save' }, playlistId: 'playlist-1' }],
+    ['download', { track: { id: 'yt-1', title: 'Remote Download' } }],
+  ]) {
+    const input = normalizeSpiceConnectCommandInput({
+      sourceDeviceId: 'phone',
+      targetDeviceId: 'desktop',
+      command,
+      payload,
+    });
+    assert.ok(!('error' in input));
+    assert.equal(input.command, command);
+    assert.deepEqual(JSON.parse(input.payloadJson), payload);
+  }
+});
+
 test('Spice Connect accepts authenticated LAN negotiation as a signaling command', () => {
   const input = normalizeSpiceConnectCommandInput({
     sourceDeviceId: 'desktop-a',

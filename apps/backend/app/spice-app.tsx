@@ -1236,6 +1236,9 @@ type RemoteCommandType =
   | 'shuffle'
   | 'repeat'
   | 'play_track'
+  | 'set_like'
+  | 'add_to_playlist'
+  | 'download'
   | 'handoff'
   | 'handoff_prepare'
   | 'handoff_ready'
@@ -1281,6 +1284,9 @@ interface RemoteCommand {
     enabled?: boolean;
     mode?: 'none' | 'all' | 'one';
     track?: Track;
+    liked?: boolean;
+    playlistId?: string;
+    playlistTitle?: string;
     queue?: Track[];
     queueIndex?: number;
     isPlaying?: boolean;
@@ -1312,6 +1318,20 @@ interface PendingSpiceConnectHandoff {
   targetName: string;
   acceptTimeoutId: number | null;
   completeTimeoutId: number | null;
+}
+
+function clearPendingSpiceConnectHandoffTimers(
+  pending: PendingSpiceConnectHandoff | null,
+) {
+  if (!pending) return;
+  if (pending.acceptTimeoutId !== null) {
+    window.clearTimeout(pending.acceptTimeoutId);
+    pending.acceptTimeoutId = null;
+  }
+  if (pending.completeTimeoutId !== null) {
+    window.clearTimeout(pending.completeTimeoutId);
+    pending.completeTimeoutId = null;
+  }
 }
 
 interface UserProfile {
@@ -3078,6 +3098,9 @@ export default function SpiceApp() {
     targetDeviceId?: string,
     quiet?: boolean,
   ) => Promise<boolean>>(async () => false);
+  const addTrackToPlaylistRef = useRef<(track: Track, playlistId: string) => Promise<boolean>>(
+    async () => false,
+  );
 
   const handleAudioEndedRef = useRef<(
     slot?: 0 | 1,
@@ -5778,7 +5801,7 @@ export default function SpiceApp() {
       clearTimeout(remoteTargetRefreshTimeoutRef.current);
       remoteTargetRefreshTimeoutRef.current = null;
     }
-    clearPendingSpiceConnectHandoffTimers();
+    clearPendingSpiceConnectHandoffTimers(pendingSpiceConnectHandoffRef.current);
     preparedSpiceConnectHandoffsRef.current.clear();
   }, []);
 
@@ -6828,14 +6851,13 @@ export default function SpiceApp() {
     handleNextRef.current = handleNext;
   });
 
-  const toggleLike = (track: Track) => {
+  const setTrackLiked = (track: Track, isLiked: boolean) => {
     rememberTrackSnapshots([track]);
     const updated = new Set(likedTracks);
-    const isLiked = !updated.has(track.id);
-    if (updated.has(track.id)) {
-      updated.delete(track.id);
-    } else {
+    if (isLiked) {
       updated.add(track.id);
+    } else {
+      updated.delete(track.id);
     }
     setLikedTracks(updated);
     logDebug('database', `${isLiked ? 'Liked' : 'Unliked'} track "${track.title}" (ID: ${track.id}) - Synchronized to active profile.`);
@@ -6854,6 +6876,10 @@ export default function SpiceApp() {
       likedTrackDetails: savedLikedDetails
     });
     autoSyncLikes(Array.from(updated), savedLikedDetails);
+  };
+
+  const toggleLike = (track: Track) => {
+    setTrackLiked(track, !likedTracks.has(track.id));
   };
 
   const seekToPosition = (seekTime: number) => {
@@ -7173,22 +7199,34 @@ export default function SpiceApp() {
     return true;
   };
 
-  function clearPendingSpiceConnectHandoffTimers(
-    pending = pendingSpiceConnectHandoffRef.current,
-  ) {
-    if (!pending) return;
-    if (pending.acceptTimeoutId !== null) {
-      window.clearTimeout(pending.acceptTimeoutId);
-      pending.acceptTimeoutId = null;
-    }
-    if (pending.completeTimeoutId !== null) {
-      window.clearTimeout(pending.completeTimeoutId);
-      pending.completeTimeoutId = null;
-    }
+  function patchRemoteDevice(deviceId: string, updates: Partial<RemoteDevice>) {
+    if (!deviceId) return;
+    const previousOptimisticState = optimisticRemoteDeviceStateRef.current;
+    const previousUpdates = previousOptimisticState?.deviceId === deviceId
+      && previousOptimisticState.expiresAt > currentTimestampMs()
+      ? previousOptimisticState.updates
+      : {};
+    optimisticRemoteDeviceStateRef.current = {
+      deviceId,
+      expiresAt: currentTimestampMs() + SPICE_CONNECT_OPTIMISTIC_STATE_WINDOW_MS,
+      updates: { ...previousUpdates, ...updates },
+    };
+    setRemoteDevices((devices) => devices.map((device) => (
+      device.deviceId === deviceId
+        ? {
+          ...device,
+          ...updates,
+          updatedAt: new Date().toISOString(),
+          lastSeenSeconds: 0,
+          isOnline: true,
+          syncedAtMs: currentTimestampMs(),
+        }
+        : device
+    )));
   }
 
   const clearPendingSpiceConnectHandoff = () => {
-    clearPendingSpiceConnectHandoffTimers();
+    clearPendingSpiceConnectHandoffTimers(pendingSpiceConnectHandoffRef.current);
     pendingSpiceConnectHandoffRef.current = null;
   };
 
@@ -7515,6 +7553,49 @@ export default function SpiceApp() {
         }
         break;
       }
+      case 'set_like': {
+        const payloadTrack = command.payload?.track;
+        const liked = command.payload?.liked;
+        if (payloadTrack && typeof payloadTrack === 'object' && payloadTrack.id && typeof liked === 'boolean') {
+          const hydratedTrack = enrichTrackSnapshot(payloadTrack as Track);
+          if (likedTracks.has(hydratedTrack.id) !== liked) setTrackLiked(hydratedTrack, liked);
+          showSpiceNotice(
+            `${liked ? 'Liked' : 'Unliked'} "${hydratedTrack.title}" from Spice Connect.`,
+            'success',
+          );
+        }
+        break;
+      }
+      case 'add_to_playlist': {
+        const payloadTrack = command.payload?.track;
+        const playlistId = typeof command.payload?.playlistId === 'string'
+          ? command.payload.playlistId.trim()
+          : '';
+        if (payloadTrack && typeof payloadTrack === 'object' && payloadTrack.id && playlistId) {
+          const hydratedTrack = enrichTrackSnapshot(payloadTrack as Track);
+          void addTrackToPlaylistRef.current(hydratedTrack, playlistId).then((added) => {
+            showSpiceNotice(
+              added
+                ? `Added "${hydratedTrack.title}" to the selected playlist from Spice Connect.`
+                : `"${hydratedTrack.title}" is already in that playlist, or the playlist is unavailable here.`,
+              added ? 'success' : 'warning',
+            );
+          });
+        }
+        break;
+      }
+      case 'download': {
+        const payloadTrack = command.payload?.track;
+        if (payloadTrack && typeof payloadTrack === 'object' && payloadTrack.id) {
+          const hydratedTrack = enrichTrackSnapshot(payloadTrack as Track);
+          void downloadTrackToOfflineLibrary(hydratedTrack).catch((error) => {
+            const message = error instanceof Error ? error.message : 'Unknown error';
+            logDebug('error', `Spice Connect download failed: ${message}`);
+            showSpiceNotice(`Failed to download audio: ${message}`, 'danger');
+          });
+        }
+        break;
+      }
       case 'handoff_prepare': {
         const transferId = normalizeSpiceConnectTransferId(command.payload?.transferId);
         if (!transferId) return;
@@ -7776,9 +7857,11 @@ export default function SpiceApp() {
     }
   }
 
-  sendRemoteCommandRef.current = sendRemoteCommand;
-  applyRemoteCommandRef.current = applyRemoteCommand;
-  handleRemoteLanStateRef.current = handleRemoteLanState;
+  useEffect(() => {
+    sendRemoteCommandRef.current = sendRemoteCommand;
+    applyRemoteCommandRef.current = applyRemoteCommand;
+    handleRemoteLanStateRef.current = handleRemoteLanState;
+  });
 
   const handleEmailVerificationSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -9216,6 +9299,10 @@ export default function SpiceApp() {
     return wasAdded;
   };
 
+  useEffect(() => {
+    addTrackToPlaylistRef.current = addTrackToPlaylist;
+  });
+
   const openPlaylistPicker = (track: Track) => {
     if (!track || track.id === 'placeholder' || track.id === 'spice-connect-placeholder') return;
     setPlaylistPickerSavingId(null);
@@ -10374,32 +10461,6 @@ export default function SpiceApp() {
       setRemoteStatus('Player controls now target this device.');
     }
   };
-
-  function patchRemoteDevice(deviceId: string, updates: Partial<RemoteDevice>) {
-    if (!deviceId) return;
-    const previousOptimisticState = optimisticRemoteDeviceStateRef.current;
-    const previousUpdates = previousOptimisticState?.deviceId === deviceId
-      && previousOptimisticState.expiresAt > currentTimestampMs()
-      ? previousOptimisticState.updates
-      : {};
-    optimisticRemoteDeviceStateRef.current = {
-      deviceId,
-      expiresAt: currentTimestampMs() + SPICE_CONNECT_OPTIMISTIC_STATE_WINDOW_MS,
-      updates: { ...previousUpdates, ...updates },
-    };
-    setRemoteDevices((devices) => devices.map((device) => (
-      device.deviceId === deviceId
-        ? {
-          ...device,
-          ...updates,
-          updatedAt: new Date().toISOString(),
-          lastSeenSeconds: 0,
-          isOnline: true,
-          syncedAtMs: currentTimestampMs(),
-        }
-        : device
-    )));
-  }
 
   const patchSelectedRemoteDevice = (updates: Partial<RemoteDevice>) => {
     patchRemoteDevice(selectedRemoteDeviceId, updates);

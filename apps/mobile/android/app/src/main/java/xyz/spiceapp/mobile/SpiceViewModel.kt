@@ -1018,6 +1018,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
             likeMutationRevisions[track.id] = revision
             val session = _uiState.value.accountSession
             if (session == null) {
+                syncLikeToActiveReceiver(track, liked)
                 _uiState.value = _uiState.value.copy(
                     message = if (liked) "Saved ${track.title} to Liked." else "Removed ${track.title} from Liked.",
                 )
@@ -1038,6 +1039,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
                 ) {
                     LikeMutationResolution.Confirm -> {
                         libraryRepository.markLikeMutationSynced(track.id)
+                        syncLikeToActiveReceiver(track, liked)
                         _uiState.value = _uiState.value.copy(
                             message = if (liked) "Saved ${track.title} to Liked." else "Removed ${track.title} from Liked.",
                         )
@@ -1110,6 +1112,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             val added = libraryRepository.addTrackToPlaylist(playlistId, track)
+            if (added) syncPlaylistAddToActiveReceiver(track, playlist)
             _uiState.value = _uiState.value.copy(
                 message = if (added) {
                     "Added ${track.title} to ${playlist?.title ?: "playlist"}."
@@ -1149,6 +1152,7 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 SharedTrackEditResult(refresh.summary, liveTracks)
             }.onSuccess { result ->
+                syncPlaylistAddToActiveReceiver(track, playlist)
                 _uiState.value = _uiState.value.copy(
                     sharedPlaylistTracks = result.tracks ?: _uiState.value.sharedPlaylistTracks,
                     sharedTrackActionLoading = false,
@@ -2755,6 +2759,32 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
     private fun activeRemoteTargetId(): String? =
         _uiState.value.selectedPlaybackDeviceId.takeIf { it.isNotBlank() }
 
+    private fun syncLikeToActiveReceiver(track: Track, liked: Boolean) {
+        val deviceId = activeRemoteTargetId() ?: return
+        sendRemoteCommand(
+            deviceId = deviceId,
+            command = "set_like",
+            payload = JSONObject()
+                .put("track", track.toRemoteTrackJson())
+                .put("liked", liked),
+            quiet = true,
+        )
+    }
+
+    private fun syncPlaylistAddToActiveReceiver(track: Track, playlist: Playlist?) {
+        val deviceId = activeRemoteTargetId() ?: return
+        val playlistId = playlist?.id?.takeIf { it.isNotBlank() } ?: return
+        sendRemoteCommand(
+            deviceId = deviceId,
+            command = "add_to_playlist",
+            payload = JSONObject()
+                .put("track", track.toRemoteTrackJson())
+                .put("playlistId", playlistId)
+                .put("playlistTitle", playlist.title),
+            quiet = true,
+        )
+    }
+
     private fun selectedRemoteDevice(): RemoteDevice? {
         val state = _uiState.value
         return state.remoteDevices.firstOrNull { it.deviceId == state.selectedPlaybackDeviceId }
@@ -3126,6 +3156,23 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun downloadTrackOnSelectedReceiver(track: Track) {
+        val deviceId = activeRemoteTargetId()
+        if (deviceId == null) {
+            _uiState.value = _uiState.value.copy(message = "Choose a Spice Connect receiver first.")
+            return
+        }
+        val receiverName = selectedRemoteDevice()?.displayName ?: "the selected receiver"
+        sendRemoteCommand(
+            deviceId = deviceId,
+            command = "download",
+            payload = JSONObject().put("track", track.toRemoteTrackJson()),
+            onSuccess = {
+                _uiState.value = _uiState.value.copy(message = "Asked $receiverName to download ${track.title}.")
+            },
+        )
+    }
+
     private fun resetSpiceConnectLanTransport() {
         disposeSpiceConnectLanTransport()
         if (!shouldStartSpiceConnect()) return
@@ -3347,6 +3394,63 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
         return true
     }
 
+    private suspend fun applyIncomingLikeCommand(command: RemoteCommand) {
+        val track = command.payloadTrack ?: return
+        val liked = command.liked ?: return
+        libraryRepository.setLiked(track, liked)
+        val session = _uiState.value.accountSession
+        if (session == null) {
+            _uiState.value = _uiState.value.copy(
+                message = if (liked) "Liked ${track.title} from Spice Connect." else "Unliked ${track.title} from Spice Connect.",
+            )
+            return
+        }
+        runCatching { api.setTrackLiked(session.token, track, liked) }
+            .onSuccess { libraryRepository.markLikeMutationSynced(track.id) }
+            .onFailure {
+                libraryRepository.markLikeMutationPending(track.id)
+                scheduleTasteSync()
+            }
+        _uiState.value = _uiState.value.copy(
+            message = if (liked) "Liked ${track.title} from Spice Connect." else "Unliked ${track.title} from Spice Connect.",
+        )
+    }
+
+    private suspend fun applyIncomingPlaylistAddCommand(command: RemoteCommand) {
+        val track = command.payloadTrack ?: return
+        val playlist = _uiState.value.playlists.firstOrNull { it.id == command.playlistId }
+        if (playlist == null) {
+            _uiState.value = _uiState.value.copy(
+                message = "The selected playlist is not available on this device.",
+            )
+            return
+        }
+        if (playlist.shared) {
+            val session = _uiState.value.accountSession
+            if (session == null || playlist.shareRole !in setOf("owner", "editor")) {
+                _uiState.value = _uiState.value.copy(message = "This device cannot edit ${playlist.title}.")
+                return
+            }
+            runCatching {
+                api.addSharedPlaylistTrack(session.token, playlist.id, track)
+                refreshCloudLibrary(session)
+            }.onSuccess {
+                _uiState.value = _uiState.value.copy(message = "Added ${track.title} to ${playlist.title} from Spice Connect.")
+            }.onFailure { error ->
+                _uiState.value = _uiState.value.copy(message = error.message ?: "Could not update ${playlist.title}.")
+            }
+            return
+        }
+        val added = libraryRepository.addTrackToPlaylist(playlist.id, track)
+        _uiState.value = _uiState.value.copy(
+            message = if (added) {
+                "Added ${track.title} to ${playlist.title} from Spice Connect."
+            } else {
+                "${track.title} is already in ${playlist.title}."
+            },
+        )
+    }
+
     private suspend fun applyRemoteCommands(commands: List<RemoteCommand>) {
         commands.forEach { command ->
             if (appliedRemoteCommandIds.contains(command.id)) {
@@ -3382,6 +3486,9 @@ class SpiceViewModel(application: Application) : AndroidViewModel(application) {
                     val trackIndex = queue.indexOfFirst { it.queueKey() == track.queueKey() }.takeIf { it >= 0 }
                     playQueueIndex(queue, requestedIndex ?: trackIndex ?: 0)
                 }
+                "set_like" -> applyIncomingLikeCommand(command)
+                "add_to_playlist" -> applyIncomingPlaylistAddCommand(command)
+                "download" -> command.payloadTrack?.let(::downloadTrack)
                 "handoff_prepare" -> {
                     val transferId = normalizeSpiceConnectTransferId(command.transferId)
                     if (transferId.isNotEmpty()) {

@@ -1,5 +1,18 @@
 # SPICE Walkthrough
 
+## v1.0.163
+
+- [Spice.Connect main] Keep LAN transport cleanup, optimistic receiver updates, and playlist command handlers ordered for the React compiler, and refresh callback refs after render so the receiver always uses the latest committed state.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.163`.
+
+## v1.0.162
+
+- [Spice.Connect main] Sync explicit Like, add-to-playlist, and download actions from the Android controller to the selected desktop or mobile receiver over the same LAN-first transport with cloud fallback.
+- [Spice.Mobile main] Add a themed, accessible queue sheet for the active phone or receiver queue and let any queued track become the receiver-authoritative selection.
+- [Spice.Mobile main] Follow the active receiver's playback position in the lyrics sheet, highlight timed LRC lines, and automatically keep the current line in view while retaining plain-lyrics fallback.
+- [Spice.Mobile main] Ask whether a remote track download belongs on the phone or the selected receiver instead of silently choosing a device.
+- [Spice.Music main] Bump the visible diagnostics version to `Spice Media Core v1.0.162`.
+
 ## v1.0.161
 
 - [Spice.Connect main] Prefer a verified, host-only WebRTC data channel for same-network desktop, web, and Android playback commands and receiver state while retaining authenticated cloud discovery, signaling, and fallback.

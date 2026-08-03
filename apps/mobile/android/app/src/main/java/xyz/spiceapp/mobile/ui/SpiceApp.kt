@@ -26,12 +26,15 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
+import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Album
@@ -130,11 +133,13 @@ import coil3.compose.AsyncImage
 import kotlinx.coroutines.delay
 import xyz.spiceapp.mobile.BuildConfig
 import xyz.spiceapp.mobile.SpiceUiState
+import xyz.spiceapp.mobile.activeTimedLyricIndex
 import xyz.spiceapp.mobile.readableMobileReleaseNotes
 import xyz.spiceapp.mobile.formatSpiceConnectPairingCodeInput
 import xyz.spiceapp.mobile.isCompleteSpiceConnectPairingCode
 import xyz.spiceapp.mobile.normalizeSpiceConnectPairingCodeInput
 import xyz.spiceapp.mobile.projectedSpiceConnectProgressMs
+import xyz.spiceapp.mobile.parseTimedLyrics
 import xyz.spiceapp.mobile.sanitizeSpiceConnectPairingCodeEdit
 import xyz.spiceapp.mobile.spiceConnectDeviceStatus
 import xyz.spiceapp.mobile.data.update.AppUpdateUiState
@@ -229,6 +234,7 @@ fun SpiceApp(
     onHandoffPlayback: () -> Unit,
     onTestEngine: () -> Unit,
     onDownloadTrack: (Track) -> Unit,
+    onDownloadTrackToReceiver: (Track) -> Unit,
     onDownloadPlaylist: (Playlist) -> Unit,
     onCancelDownload: () -> Unit,
     onLoadLyrics: () -> Unit,
@@ -246,6 +252,7 @@ fun SpiceApp(
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
     var showPlayer by remember { mutableStateOf(false) }
+    var showQueue by remember { mutableStateOf(false) }
     var showProfile by remember { mutableStateOf(false) }
     var showNotifications by remember { mutableStateOf(false) }
     val selectedRemoteDevice = uiState.remoteDevices.firstOrNull {
@@ -259,7 +266,8 @@ fun SpiceApp(
     } else {
         playerState
     }
-    val activeQueueSize = if (isRemotePlayback) selectedRemoteDevice?.queue?.size ?: 0 else uiState.playbackQueue.size
+    val activeQueue = if (isRemotePlayback) selectedRemoteDevice?.queue.orEmpty() else uiState.playbackQueue
+    val activeQueueSize = activeQueue.size
     val activeQueueIndex = if (isRemotePlayback) selectedRemoteDevice?.queueIndex ?: -1 else uiState.queueIndex
     val message = uiState.message ?: playerState.error.takeUnless { isRemotePlayback }
 
@@ -389,6 +397,7 @@ fun SpiceApp(
             downloadTrackId = uiState.downloadTrackId,
             downloadProgress = uiState.downloadProgress,
             onDownload = { onDownloadTrack(activeTrack) },
+            onDownloadToReceiver = { onDownloadTrackToReceiver(activeTrack) },
             onCancelDownload = onCancelDownload,
             onRefreshDevices = onRefreshSpiceConnect,
             onDeviceSelected = onPlaybackDeviceSelected,
@@ -396,6 +405,23 @@ fun SpiceApp(
             onRemoteVolumeChanged = onRemoteVolumeChanged,
             onHandoffPlayback = onHandoffPlayback,
             onAddTrackToPlaylist = onAddTrackToPlaylist,
+            onOpenQueue = {
+                showPlayer = false
+                showQueue = true
+            },
+        )
+    }
+
+    if (showQueue) {
+        QueueSheet(
+            queue = activeQueue,
+            queueIndex = activeQueueIndex,
+            receiverName = selectedRemoteDevice?.displayName.takeIf { isRemotePlayback },
+            onTrackSelected = { track ->
+                onTrackSelected(track, activeQueue)
+                showQueue = false
+            },
+            onDismiss = { showQueue = false },
         )
     }
 
@@ -429,7 +455,8 @@ fun SpiceApp(
 
     if (uiState.lyricsTrackId != null) {
         LyricsSheet(
-            track = uiState.currentTrack,
+            track = activeTrack,
+            positionMs = activePlayer.positionMs,
             loading = uiState.lyricsLoading,
             lyrics = uiState.lyricsPayload,
             onDismiss = onDismissLyrics,
@@ -2916,6 +2943,7 @@ private fun FullPlayer(
     downloadTrackId: String?,
     downloadProgress: String?,
     onDownload: () -> Unit,
+    onDownloadToReceiver: () -> Unit,
     onCancelDownload: () -> Unit,
     onRefreshDevices: () -> Unit,
     onDeviceSelected: (String?) -> Unit,
@@ -2923,9 +2951,11 @@ private fun FullPlayer(
     onRemoteVolumeChanged: (Int) -> Unit,
     onHandoffPlayback: () -> Unit,
     onAddTrackToPlaylist: (String, Track) -> Unit,
+    onOpenQueue: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var playlistPickerTrack by remember { mutableStateOf<Track?>(null) }
+    var showDownloadTarget by remember { mutableStateOf(false) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -2973,7 +3003,7 @@ private fun FullPlayer(
                     modifier = Modifier.size(40.dp),
                 )
                 IconButton(
-                    onClick = onDownload,
+                    onClick = { if (remotePlayback) showDownloadTarget = true else onDownload() },
                     enabled = !downloading,
                     modifier = Modifier.size(40.dp),
                 ) {
@@ -2985,6 +3015,9 @@ private fun FullPlayer(
                 }
                 IconButton(onClick = onLyrics, modifier = Modifier.size(40.dp)) {
                     Icon(Icons.Rounded.MusicNote, "Lyrics")
+                }
+                IconButton(onClick = onOpenQueue, modifier = Modifier.size(40.dp)) {
+                    Icon(Icons.AutoMirrored.Rounded.QueueMusic, "Open queue")
                 }
                 IconButton(onClick = { playlistPickerTrack = track }, modifier = Modifier.size(40.dp)) {
                     Icon(Icons.Rounded.BookmarkBorder, "Save to playlist")
@@ -3123,19 +3156,136 @@ private fun FullPlayer(
             },
         )
     }
+
+    if (showDownloadTarget) {
+        AlertDialog(
+            onDismissRequest = { showDownloadTarget = false },
+            title = { Text("Where should Spice download it?") },
+            text = {
+                Text(
+                    "Save ${track.title} on this phone or ask ${selectedRemoteDevice?.displayName ?: "the selected receiver"} to download it.",
+                    color = SpiceTextMuted,
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDownloadTarget = false
+                        onDownload()
+                    },
+                ) { Text("This phone") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showDownloadTarget = false
+                        onDownloadToReceiver()
+                    },
+                ) { Text(selectedRemoteDevice?.displayName ?: "Receiver") }
+            },
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun QueueSheet(
+    queue: List<Track>,
+    queueIndex: Int,
+    receiverName: String?,
+    onTrackSelected: (Track) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = SpiceSurface) {
+        LazyColumn(
+            contentPadding = PaddingValues(start = 18.dp, end = 18.dp, bottom = 30.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            item {
+                Text("Queue", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text(
+                    receiverName?.let { "Playing on $it" } ?: "Playing on this phone",
+                    color = SpiceTextMuted,
+                )
+            }
+            if (queue.isEmpty()) {
+                item { Text("The queue is empty.", color = SpiceTextMuted, modifier = Modifier.padding(vertical = 28.dp)) }
+            } else {
+                itemsIndexed(
+                    items = queue,
+                    key = { index, track -> "${track.sourceId}:${track.id}:$index" },
+                ) { index, track ->
+                    val current = index == queueIndex
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(
+                                if (current) MaterialTheme.colorScheme.primaryContainer
+                                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                            )
+                            .clickable { onTrackSelected(track) }
+                            .padding(10.dp)
+                            .semantics {
+                                contentDescription = if (current) {
+                                    "Now playing ${track.title} by ${track.artist}"
+                                } else {
+                                    "Play ${track.title} by ${track.artist}"
+                                }
+                            },
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        AsyncImage(
+                            model = track.artworkUrl,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.size(52.dp).clip(RoundedCornerShape(8.dp)),
+                        )
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                track.title,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                fontWeight = if (current) FontWeight.Bold else FontWeight.Medium,
+                                color = if (current) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                            )
+                            Text(
+                                track.artist,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                color = if (current) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f) else SpiceTextMuted,
+                                fontSize = 12.sp,
+                            )
+                        }
+                        Text("${index + 1}", color = SpiceTextMuted, fontSize = 12.sp)
+                    }
+                }
+            }
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun LyricsSheet(
     track: Track?,
+    positionMs: Long,
     loading: Boolean,
     lyrics: LyricsPayload?,
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val listState = rememberLazyListState()
+    val timedLines = remember(lyrics?.syncedLyrics) { parseTimedLyrics(lyrics?.syncedLyrics) }
+    val activeLineIndex = activeTimedLyricIndex(timedLines, positionMs)
+    LaunchedEffect(activeLineIndex, timedLines.size) {
+        if (activeLineIndex >= 0) listState.animateScrollToItem(activeLineIndex + 1)
+    }
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = SpiceSurface) {
         LazyColumn(
+            state = listState,
             contentPadding = PaddingValues(start = 22.dp, end = 22.dp, bottom = 30.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -3152,13 +3302,34 @@ private fun LyricsSheet(
                     }
                 }
             } else {
-                val text = lyrics?.syncedLyrics?.takeIf { it.isNotBlank() }
-                    ?: lyrics?.plainLyrics?.takeIf { it.isNotBlank() }
-                if (text.isNullOrBlank()) {
+                val plainText = lyrics?.plainLyrics?.takeIf { it.isNotBlank() }
+                    ?: lyrics?.syncedLyrics?.takeIf { it.isNotBlank() }
+                if (timedLines.isNotEmpty()) {
+                    itemsIndexed(timedLines) { index, line ->
+                        val active = index == activeLineIndex
+                        Text(
+                            line.text,
+                            color = if (active) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                            fontSize = if (active) 17.sp else 15.sp,
+                            fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(
+                                    if (active) MaterialTheme.colorScheme.primaryContainer
+                                    else Color.Transparent,
+                                )
+                                .padding(horizontal = 10.dp, vertical = 8.dp)
+                                .semantics {
+                                    if (active) contentDescription = "Current lyric: ${line.text}"
+                                },
+                        )
+                    }
+                } else if (plainText.isNullOrBlank()) {
                     item { Text("No lyrics found.", color = SpiceTextMuted) }
                 } else {
-                    items(text.lines().filter { it.isNotBlank() }) { line ->
-                        Text(cleanLyricLine(line), color = Color.White, fontSize = 15.sp)
+                    items(plainText.lines().filter { it.isNotBlank() }) { line ->
+                        Text(cleanLyricLine(line), color = MaterialTheme.colorScheme.onSurface, fontSize = 15.sp)
                     }
                 }
             }
