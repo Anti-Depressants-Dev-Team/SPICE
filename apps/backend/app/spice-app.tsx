@@ -1236,6 +1236,9 @@ type RemoteCommandType =
   | 'shuffle'
   | 'repeat'
   | 'play_track'
+  | 'set_like'
+  | 'add_to_playlist'
+  | 'download'
   | 'handoff'
   | 'handoff_prepare'
   | 'handoff_ready'
@@ -1281,6 +1284,9 @@ interface RemoteCommand {
     enabled?: boolean;
     mode?: 'none' | 'all' | 'one';
     track?: Track;
+    liked?: boolean;
+    playlistId?: string;
+    playlistTitle?: string;
     queue?: Track[];
     queueIndex?: number;
     isPlaying?: boolean;
@@ -6828,14 +6834,13 @@ export default function SpiceApp() {
     handleNextRef.current = handleNext;
   });
 
-  const toggleLike = (track: Track) => {
+  const setTrackLiked = (track: Track, isLiked: boolean) => {
     rememberTrackSnapshots([track]);
     const updated = new Set(likedTracks);
-    const isLiked = !updated.has(track.id);
-    if (updated.has(track.id)) {
-      updated.delete(track.id);
-    } else {
+    if (isLiked) {
       updated.add(track.id);
+    } else {
+      updated.delete(track.id);
     }
     setLikedTracks(updated);
     logDebug('database', `${isLiked ? 'Liked' : 'Unliked'} track "${track.title}" (ID: ${track.id}) - Synchronized to active profile.`);
@@ -6854,6 +6859,10 @@ export default function SpiceApp() {
       likedTrackDetails: savedLikedDetails
     });
     autoSyncLikes(Array.from(updated), savedLikedDetails);
+  };
+
+  const toggleLike = (track: Track) => {
+    setTrackLiked(track, !likedTracks.has(track.id));
   };
 
   const seekToPosition = (seekTime: number) => {
@@ -7512,6 +7521,49 @@ export default function SpiceApp() {
             hydratedQueue.length > 0 ? hydratedQueue : [hydratedTrack],
             Number.isInteger(queueIndexHint) ? queueIndexHint : undefined,
           );
+        }
+        break;
+      }
+      case 'set_like': {
+        const payloadTrack = command.payload?.track;
+        const liked = command.payload?.liked;
+        if (payloadTrack && typeof payloadTrack === 'object' && payloadTrack.id && typeof liked === 'boolean') {
+          const hydratedTrack = enrichTrackSnapshot(payloadTrack as Track);
+          if (likedTracks.has(hydratedTrack.id) !== liked) setTrackLiked(hydratedTrack, liked);
+          showSpiceNotice(
+            `${liked ? 'Liked' : 'Unliked'} "${hydratedTrack.title}" from Spice Connect.`,
+            'success',
+          );
+        }
+        break;
+      }
+      case 'add_to_playlist': {
+        const payloadTrack = command.payload?.track;
+        const playlistId = typeof command.payload?.playlistId === 'string'
+          ? command.payload.playlistId.trim()
+          : '';
+        if (payloadTrack && typeof payloadTrack === 'object' && payloadTrack.id && playlistId) {
+          const hydratedTrack = enrichTrackSnapshot(payloadTrack as Track);
+          void addTrackToPlaylist(hydratedTrack, playlistId).then((added) => {
+            showSpiceNotice(
+              added
+                ? `Added "${hydratedTrack.title}" to the selected playlist from Spice Connect.`
+                : `"${hydratedTrack.title}" is already in that playlist, or the playlist is unavailable here.`,
+              added ? 'success' : 'warning',
+            );
+          });
+        }
+        break;
+      }
+      case 'download': {
+        const payloadTrack = command.payload?.track;
+        if (payloadTrack && typeof payloadTrack === 'object' && payloadTrack.id) {
+          const hydratedTrack = enrichTrackSnapshot(payloadTrack as Track);
+          void downloadTrackToOfflineLibrary(hydratedTrack).catch((error) => {
+            const message = error instanceof Error ? error.message : 'Unknown error';
+            logDebug('error', `Spice Connect download failed: ${message}`);
+            showSpiceNotice(`Failed to download audio: ${message}`, 'danger');
+          });
         }
         break;
       }

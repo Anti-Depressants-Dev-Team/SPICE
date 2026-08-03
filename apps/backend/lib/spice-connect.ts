@@ -9,6 +9,9 @@ export type SpiceConnectCommandType =
   | 'shuffle'
   | 'repeat'
   | 'play_track'
+  | 'set_like'
+  | 'add_to_playlist'
+  | 'download'
   | 'handoff'
   | 'handoff_prepare'
   | 'handoff_ready'
@@ -199,6 +202,9 @@ const allowedCommands = new Set<SpiceConnectCommandType>([
   'shuffle',
   'repeat',
   'play_track',
+  'set_like',
+  'add_to_playlist',
+  'download',
   'handoff',
   'handoff_prepare',
   'handoff_ready',
